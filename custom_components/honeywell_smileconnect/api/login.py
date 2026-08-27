@@ -12,6 +12,43 @@ see docs/protocol.md for the full write-up. Summary:
   same way as standard HeatApp (AES-256-CBC, key = SHA-256(password), fixed
   IV) - this has NOT yet been independently reconfirmed against a Honeywell
   gateway and should be validated before relying on it in production.
+
+The password-hashing scheme below has been confirmed by extracting the
+gateway's own JS implementation via its admin console (see CLAUDE.md for the
+reverse-engineering method):
+
+    request.hashAuthenticationToken = function(a, b) {
+        return a = request.stringToCharcodes(a),
+               b = request.stringToCharcodes(b),
+               Crypt.pbkdf2(a, "" + b)
+    }
+
+    request.stringToCharcodes = function(a) {
+        var b = "";
+        if (a.length > 0)
+            for (var c = 0; c < a.length; c++) {
+                for (var d = "" + a.charCodeAt(c); d.length < 3;)
+                    d = "0" + d;
+                b += d
+            }
+        return b
+    }
+
+    Crypt.pbkdf2 = function(a, b, c) {
+        c || (c = "base64");
+        var d = CryptoJS.PBKDF2(a, b, {
+            hasher: CryptoJS.algo.SHA512,
+            keySize: 16,   // CryptoJS counts in 32-bit words -> 64 bytes
+            iterations: 1  // yes, really just 1 iteration
+        });
+        return d.toString(CryptoJS.enc.Base64)
+    }
+
+i.e. hashed = Base64(PBKDF2-HMAC-SHA512(
+        password = charcodes(password),
+        salt     = charcodes(challenge_token),
+        iterations = 1,
+        dkLen    = 64 bytes))
 """
 from __future__ import annotations
 
@@ -21,9 +58,8 @@ import logging
 
 import requests
 from Crypto.Cipher import AES
-from Crypto.Hash import SHA256
+from Crypto.Hash import SHA256, SHA512
 from Crypto.Protocol.KDF import PBKDF2
-from Crypto.Hash import SHA512
 
 from .credentials import Credentials
 
@@ -42,13 +78,8 @@ DEVICE_NAME = "Computer"
 # verify against a live login capture before trusting this in production.
 _STATIC_IV_B64 = "D3GC5NQEFH13is04KD2tOg=="
 
-# TODO VERIFY: exact PBKDF2 parameters (iteration count, salt, derived key
-# length) as used by the gateway's own JS (oem.min.js / assets.min.js). The
-# values below are placeholders based on common defaults and MUST be
-# reconfirmed via the browser-console reverse engineering method described
-# in CLAUDE.md before this is considered correct.
-_PBKDF2_ITERATIONS = 1000
-_PBKDF2_KEYLEN = 64  # bytes (SHA-512 digest size)
+_PBKDF2_ITERATIONS = 1
+_PBKDF2_DKLEN = 64  # bytes (CryptoJS keySize: 16 words * 4 bytes/word)
 
 
 class Login:
@@ -100,34 +131,28 @@ class Login:
         return credentials
 
     def _hash_auth_token(self, password: str, device_token: str) -> str:
-        """Honeywell-specific password hashing.
-
-        TODO VERIFY: this is a best-effort reconstruction based on partial
-        reverse engineering (PBKDF2/SHA-512 with a "stringToCharcodes"
-        pre-processing step observed in the gateway's minified JS). Confirm
-        against a live capture using CryptoJS in the admin console before
-        relying on this for anything beyond local experimentation.
+        """Reproduces request.hashAuthenticationToken() from the gateway's
+        own JS (see module docstring for the extracted source).
         """
-        charcodes = self._string_to_charcodes(password + device_token)
+        password_codes = self._string_to_charcodes(password)
+        token_codes = self._string_to_charcodes(device_token)
+
         derived = PBKDF2(
-            charcodes,
-            salt=device_token.encode("utf-8"),
-            dkLen=_PBKDF2_KEYLEN,
+            password_codes.encode("utf-8"),
+            salt=token_codes.encode("utf-8"),
+            dkLen=_PBKDF2_DKLEN,
             count=_PBKDF2_ITERATIONS,
             hmac_hash_module=SHA512,
         )
-        return derived.hex()
+        return base64.b64encode(derived).decode("ascii")
 
     @staticmethod
-    def _string_to_charcodes(value: str) -> bytes:
-        """Mirrors a `stringToCharcodes`-style JS helper: each character's
-        char code, concatenated, re-encoded as bytes.
-
-        TODO VERIFY exact transformation against the gateway's own JS
-        implementation - this is currently a reasonable guess, not a
-        confirmed reproduction.
+    def _string_to_charcodes(value: str) -> str:
+        """Reproduces request.stringToCharcodes(): each character's char
+        code, zero-padded to (at least) 3 digits, concatenated into one
+        string.
         """
-        return "".join(str(ord(c)) for c in value).encode("utf-8")
+        return "".join(str(ord(c)).zfill(3) for c in value)
 
     def _decrypt_devicetoken(self, encrypted_data: str, decrypt_key: str) -> str:
         crypt_key = SHA256.new(decrypt_key.encode("utf-8")).digest()
@@ -136,3 +161,4 @@ class Login:
         # Standard HeatApp strips a literal \x10 padding byte rather than
         # using proper PKCS7 unpadding - mirrored here pending verification.
         return decrypted.decode("ascii").strip("\x10")
+
