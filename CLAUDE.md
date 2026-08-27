@@ -306,9 +306,45 @@ GET  /admin/login/index            (returns HTML of the config menu)
   presumably just re-login every refresh cycle on failure; this works but
   is inefficient and not a deliberate design. Worth revisiting once basic
   functionality is solid.
-- **Unit tests for `api/crypto.py`** — given how much back-and-forth it
-  took to get the login/signing crypto right, it deserves regression tests
-  with known input/output pairs before any further refactoring touches it.
+
+## Test Suite
+
+`tests/` contains regression tests for the HA-independent `api/` layer
+(crypto, login, request signing, response parsing). Run with:
+
+```bash
+pytest tests/ -v
+```
+
+- `tests/fixtures/` holds **real payloads captured from a live Honeywell
+  gateway** (`192.168.1.132`) during development — `challenge_response.json`,
+  `login_response.json`, `room_list_response.json`. These are genuine
+  recorded API responses, not hand-written approximations, and are safe to
+  keep in the repo (no real password or long-lived secret is contained in
+  them; the captured devicetoken/challenge values are single-use and
+  already expired).
+- `test_crypto.py` — locks in the PBKDF2/SHA-512/Base64 scheme against an
+  independent hashlib-based reference computation, so a future refactor
+  can't silently reintroduce the original MD5-based signature bug.
+- `test_login.py` — parses the real challenge/login fixtures; verifies AES
+  decrypt/PKCS7 handling via a self-constructed round trip (a real password
+  is never available to, or stored in, this repo, so this can't test
+  against the real fixture's actual encrypted value directly).
+- `test_api_request.py` — locks in the pipe-string signature construction
+  rules (sorting, array rendering, `None`-filtering) and the `reqcount`
+  post-increment ordering that caused the original "session is finished"
+  bug.
+- `test_api_methods.py` — parses the real `room_list_response.json`
+  fixture; specifically asserts `actualTemperature` is genuinely absent
+  (not just `None`) on this hardware, guarding against reintroducing the
+  `KeyError` crash that was hit in `climate.py` before it switched to
+  `.get()`.
+
+**When adding a new endpoint or fixing a parsing bug:** capture the real
+request/response via the browser-console technique or a live debug-log
+session, add it as a new fixture under `tests/fixtures/`, and add a test
+that exercises the actual parsing code against it — this is the pattern to
+follow going forward, not just for the crypto layer.
 
 ## Reverse-Engineering Method (for further, still-unknown endpoints)
 

@@ -1,0 +1,9 @@
+{
+  "_comment": "Real response captured from a live Honeywell Smile Connect gateway (192.168.1.132) during development. See CLAUDE.md 'Core Finding' section for the full protocol write-up this was used to verify.",
+  "success": true,
+  "message": "",
+  "loginRejected": false,
+  "devicetoken": "9c2281c6820383c0427d3a7d6990c007",
+  "language": "en",
+  "performance": 0.025
+}

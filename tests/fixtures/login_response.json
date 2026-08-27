@@ -1,0 +1,10 @@
+{
+  "_comment": "Real response captured from a live Honeywell Smile Connect gateway (192.168.1.132) during development, corresponding to challenge_response.json. The devicetoken_encrypted value can only be decrypted with the real account password, which is intentionally not stored anywhere in this repo.",
+  "success": true,
+  "message": "",
+  "loginRejected": false,
+  "devicetoken_encrypted": "fBNYJQoPYAPyS7ZKr566c1dFrz1Gq4yfoYSkJNzRrUiULtc6UT35LwZZnn/ZwPYt",
+  "userid": 1,
+  "language": "en",
+  "performance": 0.117
+}

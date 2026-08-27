@@ -1,0 +1,38 @@
+{
+  "_comment": "Real response captured from a live Honeywell Smile Connect gateway (192.168.1.132) during development. Notably this real-world room has NO 'actualTemperature' field, unlike the generic HeatApp reference fixtures this project was originally bootstrapped from - this fixture is what caught that discrepancy and is kept here specifically to prevent regressing it.",
+  "success": true,
+  "message": "",
+  "loginRejected": false,
+  "groups": [
+    {
+      "groupid": 1,
+      "name": "rooms",
+      "rooms": [
+        {
+          "id": 1,
+          "appid": "01010002",
+          "isComfortMode": false,
+          "desiredTemperature": 12,
+          "roomstatus": 12,
+          "desiredTempDay": 21,
+          "desiredTempDay2": 18.5,
+          "desiredTempNight": 12,
+          "scheduleTempMin": 12,
+          "scheduleTempMax": 25,
+          "minTemperature": 12,
+          "maxTemperature": 12,
+          "imagepath": "/assets/images/room/default.png",
+          "name": "Haus",
+          "orderindex": 1,
+          "originalName": "Regler MK1",
+          "status": "new",
+          "groupid": 1,
+          "windowPosition": null
+        }
+      ],
+      "orderindex": 1
+    }
+  ],
+  "language": "en",
+  "performance": 0.147
+}
