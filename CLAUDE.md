@@ -455,6 +455,11 @@ against the gateway before it is adopted into the integration.
   This applies to any file being modified, not just newly created ones —
   when editing an existing file that doesn't yet have a change-log block,
   add one and backfill at least the current change.
+  **Exception:** JSON files (`manifest.json`, `hacs.json`,
+  `translations/*.json`) have no comment syntax, so this rule cannot apply
+  to them literally. For those, the version bump (see "Versioning &
+  Branching Strategy" below) plus the commit message serve as the
+  traceability mechanism instead.
 
 ## Localization (GUI-facing strings)
 

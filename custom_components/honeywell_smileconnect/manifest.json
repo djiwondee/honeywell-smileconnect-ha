@@ -10,9 +10,10 @@
   "integration_type": "hub",
   "iot_class": "local_polling",
   "requirements": [
-    "pycryptodome>=3.19.0"
+    "pycryptodome>=3.19.0",
+    "requests>=2.31.0"
   ],
-  "version": "0.0.1",
+  "version": "0.0.2",
   "ssdp": [],
   "zeroconf": []
 }
