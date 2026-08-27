@@ -1,0 +1,21 @@
+#!/usr/bin/env bash
+# Runs once when the devcontainer is created.
+set -e
+
+python3 -m pip install --upgrade pip
+pip install homeassistant pycryptodome
+pip install -r requirements_test.txt 2>/dev/null || true
+
+mkdir -p config
+if [ ! -f config/configuration.yaml ]; then
+  cat > config/configuration.yaml <<'YAML'
+default_config:
+
+logger:
+  default: info
+  logs:
+    custom_components.honeywell_smileconnect: debug
+YAML
+fi
+
+echo "Setup complete. Run 'scripts/develop' to start Home Assistant."

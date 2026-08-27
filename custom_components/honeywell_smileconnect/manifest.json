@@ -1,0 +1,18 @@
+{
+  "domain": "honeywell_smileconnect",
+  "name": "Honeywell Smile Connect",
+  "codeowners": [
+    "@djiwondee"
+  ],
+  "config_flow": true,
+  "documentation": "https://github.com/djiwondee/honeywell-smileconnect-ha",
+  "issue_tracker": "https://github.com/djiwondee/honeywell-smileconnect-ha/issues",
+  "integration_type": "hub",
+  "iot_class": "local_polling",
+  "requirements": [
+    "pycryptodome>=3.19.0"
+  ],
+  "version": "0.0.1",
+  "ssdp": [],
+  "zeroconf": []
+}
