@@ -58,9 +58,10 @@ import logging
 
 import requests
 from Crypto.Cipher import AES
-from Crypto.Hash import SHA256, SHA512
-from Crypto.Protocol.KDF import PBKDF2
+from Crypto.Hash import SHA256
+from Crypto.Util.Padding import unpad
 
+from . import crypto
 from .credentials import Credentials
 
 _LOGGER = logging.getLogger(__name__)
@@ -73,13 +74,9 @@ HEADERS = {
 FIXED_UDID = "web"
 DEVICE_NAME = "Computer"
 
-# Preshared IV used by the standard HeatApp protocol for AES decryption of
-# devicetoken_encrypted. NOT YET CONFIRMED identical on Honeywell hardware -
-# verify against a live login capture before trusting this in production.
+# Preshared IV used for AES decryption of devicetoken_encrypted. Confirmed
+# against the gateway's own Crypt.aes256decrypt implementation.
 _STATIC_IV_B64 = "D3GC5NQEFH13is04KD2tOg=="
-
-_PBKDF2_ITERATIONS = 1
-_PBKDF2_DKLEN = 64  # bytes (CryptoJS keySize: 16 words * 4 bytes/word)
 
 
 class Login:
@@ -132,33 +129,24 @@ class Login:
 
     def _hash_auth_token(self, password: str, device_token: str) -> str:
         """Reproduces request.hashAuthenticationToken() from the gateway's
-        own JS (see module docstring for the extracted source).
+        own JS: pbkdf2(charcodes(password), charcodes(challenge_token)).
         """
-        password_codes = self._string_to_charcodes(password)
-        token_codes = self._string_to_charcodes(device_token)
-
-        derived = PBKDF2(
-            password_codes.encode("utf-8"),
-            salt=token_codes.encode("utf-8"),
-            dkLen=_PBKDF2_DKLEN,
-            count=_PBKDF2_ITERATIONS,
-            hmac_hash_module=SHA512,
-        )
-        return base64.b64encode(derived).decode("ascii")
-
-    @staticmethod
-    def _string_to_charcodes(value: str) -> str:
-        """Reproduces request.stringToCharcodes(): each character's char
-        code, zero-padded to (at least) 3 digits, concatenated into one
-        string.
-        """
-        return "".join(str(ord(c)).zfill(3) for c in value)
+        password_codes = crypto.string_to_charcodes(password)
+        token_codes = crypto.string_to_charcodes(device_token)
+        return crypto.pbkdf2_base64(password_codes, token_codes)
 
     def _decrypt_devicetoken(self, encrypted_data: str, decrypt_key: str) -> str:
+        """Reproduces Crypt.aes256decrypt(): key = SHA-256(password), fixed
+        IV, AES-256-CBC. Confirmed against the gateway's own JS.
+
+        CryptoJS.toString(Utf8) implicitly strips standard PKCS7 padding -
+        pycryptodome does not do this automatically, so it's done explicitly
+        here via Crypto.Util.Padding.unpad rather than the fragile
+        "\\x10"-stripping hack seen in the generic HeatApp reference code
+        (which only happens to work when the padding is exactly 16 bytes).
+        """
         crypt_key = SHA256.new(decrypt_key.encode("utf-8")).digest()
         cipher = AES.new(crypt_key, AES.MODE_CBC, base64.b64decode(_STATIC_IV_B64))
         decrypted = cipher.decrypt(base64.b64decode(encrypted_data))
-        # Standard HeatApp strips a literal \x10 padding byte rather than
-        # using proper PKCS7 unpadding - mirrored here pending verification.
-        return decrypted.decode("ascii").strip("\x10")
-
+        decrypted = unpad(decrypted, AES.block_size)
+        return decrypted.decode("utf-8")
