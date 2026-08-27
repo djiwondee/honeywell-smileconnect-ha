@@ -1,5 +1,8 @@
 #!/usr/bin/env bash
 # Runs once when the devcontainer is created.
+
+sudo apt-get update && sudo apt-get install -y ffmpeg libturbojpeg0
+
 set -e
 
 python3 -m pip install --upgrade pip
