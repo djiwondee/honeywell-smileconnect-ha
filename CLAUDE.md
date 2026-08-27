@@ -416,6 +416,11 @@ against the gateway before it is adopted into the integration.
   variables inside the dev container.
 - CI (GitHub Actions) validates on every push via `hassfest` and
   `hacs/action` that the manifest/repo stays HACS-compliant.
+  `script.hassfest` cannot be run locally in this dev container — it only
+  exists inside a full `home-assistant/core` checkout, not in the
+  `homeassistant` PyPI package installed here. Rely on the GitHub Action
+  (`.github/workflows/validate.yml`) after pushing instead of trying to
+  invoke it locally.
 
 ## Conventions
 
@@ -507,7 +512,17 @@ must not proceed carelessly.
    wait for confirmation rather than assuming approval.
 6. **After completing a feature, bugfix, or release in a given chat/session,
    always**:
-   - Remind the person to run a `hassfest` validation check, and
+   - Remind the person to check that the `hassfest` GitHub Action passes
+     after pushing — **not** to run `python3 -m script.hassfest` locally.
+     `script.hassfest` only exists inside a full `home-assistant/core` git
+     checkout, not in the `homeassistant` PyPI package this project's dev
+     container installs, so it is not available locally without cloning
+     all of `home-assistant/core` separately (impractical for routine use).
+     The repo's `.github/workflows/validate.yml` already runs the
+     equivalent `home-assistant/actions/hassfest` action on every push —
+     check the "Actions" tab on GitHub after pushing instead. This was
+     confirmed the hard way during development (`ModuleNotFoundError: No
+     module named 'script'` when attempted inside the dev container).
    - Propose an English-language commit message summarizing the change.
 
 ## Versioning & Branching Strategy
