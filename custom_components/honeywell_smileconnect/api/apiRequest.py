@@ -1,4 +1,3 @@
-=== apiRequest.py ===
 """Signed request execution against the Smile Connect gateway.
 
 Signing was confirmed by extracting the gateway's own JS
