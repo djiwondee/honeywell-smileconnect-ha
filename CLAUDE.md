@@ -389,3 +389,98 @@ against the gateway before it is adopted into the integration.
   code.
 - Commit messages in English; docs/comments should also default to English
   for upstream compatibility (HA contributions).
+
+## Code Standards (mandatory for all code in this repo)
+
+- **Follow official Home Assistant custom integration standards and HACS
+  standards** at all times (entity naming, config flow patterns, unique IDs,
+  device registry usage, `manifest.json` requirements, `hacs.json`
+  requirements, etc.). When in doubt, check the current Home Assistant
+  developer docs and HACS publishing requirements rather than guessing.
+- **All identifiers in code are in English** — variable names, function
+  names, class names, constants, file names. No German (or any other
+  non-English language) in code identifiers, regardless of what language
+  the surrounding chat/discussion happens to be in.
+- **Code must be adequately commented in English.** Non-obvious logic,
+  protocol quirks, and anything a future reader (human or Claude) would
+  need to understand without re-deriving it from scratch must have an
+  English comment explaining it. This project's cryptography section above
+  is the model to follow: explain the "why", not just the "what".
+- **Every changed module must carry a change-log comment at the top of the
+  file** documenting what changed and why, so changes remain traceable over
+  time without needing to dig through git blame. Add a new entry rather
+  than replacing prior ones. A simple format is sufficient, e.g.:
+  ```python
+  # Change log:
+  # - 2026-08-27: Fixed request signature to use PBKDF2/SHA-512 instead of
+  #   MD5 (confirmed against gateway JS). See CLAUDE.md for details.
+  # - 2026-08-20: Initial implementation (untested crypto assumptions).
+  ```
+  This applies to any file being modified, not just newly created ones —
+  when editing an existing file that doesn't yet have a change-log block,
+  add one and backfill at least the current change.
+
+## Localization (GUI-facing strings)
+
+- **Never hardcode end-user-facing text.** Any label, error message, form
+  field name, or other string that appears in the Home Assistant UI must go
+  through Home Assistant's standard localization mechanism (the
+  `strings.json` / `translations/<lang>.json` pattern used by
+  `config_flow.py`, entity names, etc.) so it is translatable — never
+  hardcoded English (or German) strings directly in Python logic that
+  reaches the UI.
+- **Minimum supported languages: English, German, Spanish, French.** Every
+  user-facing string added or changed must have translations added for at
+  least `en`, `de`, `es`, and `fr` under
+  `custom_components/honeywell_smileconnect/translations/`. Additional
+  languages are welcome but these four are the floor, not the ceiling.
+- Code identifiers themselves (see Code Standards above) stay in English
+  regardless of this — localization applies only to strings actually
+  rendered to the end user, not to internal naming.
+
+## Session Workflow (applies to every new chat/session on this project)
+
+These rules govern how any assistant (Claude in chat, or Claude Code)
+should operate at the start of, and during, a work session on this repo —
+because each session typically results in changes to the main codebase and
+must not proceed carelessly.
+
+1. **At the start of every new chat/session in this project, read the
+   underlying GitHub repository first**, not just this file from memory.
+   `CLAUDE.md` reflects the state as of its last edit, but the actual repo
+   may have moved on since (other commits, manual edits, a previous
+   session's uncommitted work). Check the current state of the relevant
+   files before assuming anything about them.
+2. **Explicitly check for updated files in the GitHub repository at the
+   start of each new chat/session** — don't rely solely on what's described
+   in this document or in prior chat history. Verify against the actual
+   current file contents.
+3. **Before making any code change for a new feature, propose a plan
+   first** and get it confirmed before touching code.
+4. **Before making any code change for a bugfix, propose a plan first** and
+   get it confirmed before touching code.
+5. **For every change (feature or bugfix), propose one or more solution
+   options and explicitly ask which option to implement** before writing
+   code — do not silently pick one approach and implement it. This applies
+   even when only one option seems reasonable; state it as a proposal and
+   wait for confirmation rather than assuming approval.
+6. **After completing a feature, bugfix, or release in a given chat/session,
+   always**:
+   - Remind the person to run a `hassfest` validation check, and
+   - Propose an English-language commit message summarizing the change.
+
+## Versioning & Branching Strategy
+
+- The integration's version follows `x.y.z` (see `manifest.json`
+  `"version"` field).
+- **From version `x.1.y` onward, the codebase is considered to be in beta
+  status.** Once beta status is reached, direct development on `main` is no
+  longer permitted. All further feature work and bugfixes must happen on a
+  dedicated feature or bugfix branch and be merged via pull request rather
+  than committed straight to `main`.
+- Before beta status (i.e. `x.0.y`), direct commits to `main` are
+  acceptable for rapid early-stage iteration, as has been the practice so
+  far in this project.
+- When proposing a plan (per the Session Workflow rules above), also
+  propose the appropriate version bump and, once beta status applies,
+  the branch name to use.
