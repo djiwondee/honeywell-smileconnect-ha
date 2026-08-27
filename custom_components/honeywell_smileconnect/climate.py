@@ -101,19 +101,23 @@ class SmileConnectClimate(CoordinatorEntity, ClimateEntity):
 
     @property
     def current_temperature(self):
-        return self._room["data"]["actualTemperature"]
+        # This gateway's room data does not always include actualTemperature
+        # (observed on a single-zone "Regler MK1" installation with no
+        # dedicated room sensor) - fall back to None (HA renders as unknown)
+        # rather than crashing entity setup.
+        return self._room["data"].get("actualTemperature")
 
     @property
     def target_temperature(self):
-        return self._room["data"]["desiredTemperature"]
+        return self._room["data"].get("desiredTemperature")
 
     @property
     def min_temp(self):
-        return self._room["data"]["minTemperature"]
+        return self._room["data"].get("minTemperature", super().min_temp)
 
     @property
     def max_temp(self):
-        return self._room["data"]["maxTemperature"]
+        return self._room["data"].get("maxTemperature", super().max_temp)
 
     @property
     def hvac_mode(self) -> HVACMode:
@@ -128,7 +132,7 @@ class SmileConnectClimate(CoordinatorEntity, ClimateEntity):
         return self._active_preset
 
     def _update_active_preset(self) -> None:
-        status = self._room["data"]["roomstatus"]
+        status = self._room["data"].get("roomstatus")
         if status == ROOM_STATUS_PARTY:
             self._active_preset = SceneName.PARTY.value
         elif status == ROOM_STATUS_BOOST:
