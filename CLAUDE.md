@@ -257,17 +257,32 @@ GET  /admin/login/index            (returns HTML of the config menu)
 
 ### Still untested / open
 
-- **`roomstatus` code mapping is unverified for Honeywell.** The codes
-  currently mapped in `const.py` (43=Party, 46=Boost, 127=Holiday,
-  130=Leave, 132=Standby) were carried over from the generic HeatApp
-  reference project and have NOT been confirmed against this gateway. A
-  live room was observed with `roomstatus=12` and `status: "new"`, which
-  matches none of the mapped codes and currently falls through to "no
-  preset". **To fix:** activate each scene one at a time via the API (or
-  the stock Honeywell UI) and record the resulting `roomstatus` value from
-  the debug log, OR switch entirely to a ground-truth approach: query
-  `/api/scene/getrooms` per scene and check room-ID membership instead of
-  inferring state from `roomstatus`.
+- ~~**`roomstatus` code mapping is unverified for Honeywell.**~~ **RESOLVED
+  (2026-08-27).** Live-verified via
+  `scripts/manual_probe_roomstatus_via_app.py` — modes set through the
+  Smile App itself (not our own scene_manager.py write path), while our
+  code only read `roomstatus` + `/api/scene/status` passively. Final
+  confirmed mapping: `3=Party`, `6=Boost`, `7=Holiday`, `10=Leave`,
+  `12=Standby`. **Leave vs. Holiday took three attempts to settle** — two
+  uncontrolled runs (scenes not reset between tests, so Standby stayed
+  stacked underneath) gave opposite swapped results; a third, deliberately
+  controlled run (explicit clean-Standby-only reset before testing EACH of
+  Leave/Holiday, eliminating the stacking confound) reproduced the first
+  run's values, giving 2-out-of-3 agreement with a plausible explanation
+  for the outlier — see `docs/protocol.md` §4 for the full blow-by-blow if
+  this ever needs re-litigating.
+  Also discovered along the way: scenes can be simultaneously active on
+  this gateway (Boost/Party layer on top of an active Standby baseline
+  without turning it off; Leave/Holiday appear to replace it instead) —
+  `roomstatus` itself already resolves this to one priority-appropriate
+  value, so no change to the single-preset model was needed.
+  Also confirmed: the real `/api/scene/status` scene *names* (Party,
+  Boost, Holiday, Shower, Leave, Standby, Towel) matched the generic
+  HeatApp reference project exactly and needed no correction — only the
+  *numeric roomstatus codes* were wrong, not the scene name strings. One
+  naming caveat: the Smile App's own UI labels "Leave" as "Economy" —
+  cosmetic vendor-app display label only; the API/internal name stays
+  `"Leave"`.
 - **`actualTemperature` is not always present.** Observed missing entirely
   on a single-zone "Regler MK1" (relay-only) installation with
   `roomstatus=12`. `climate.py` now uses `.get()` defensively rather than
@@ -300,8 +315,9 @@ GET  /admin/login/index            (returns HTML of the config menu)
   configured location) and was deliberately kept as-is in the fixture
   rather than anonymized, on the basis that it is expected to match the
   real HA setup's own location anyway.
-- **Verify `roomstatus` codes properly** (see above) — this both fixes
-  preset sync accuracy and is a prerequisite for trusting `hvac_mode`.
+- ~~**Verify `roomstatus` codes properly**~~ **DONE (2026-08-27)** —
+  see "Still untested / open" above for the full mapping and the
+  Leave/Holiday disambiguation story.
 - **Full temperature sync** — resolve the `actualTemperature` /
   min/max-temperature open questions above.
 - ~~**Options flow**~~ **DONE (2026-08-27).** Implemented as
@@ -578,12 +594,23 @@ construct a `device_info` dict inline.
 - `device.py` — shared `device_info` builders (`gateway_device_info()`,
   `regler_device_info()`). Single source of truth for the hub/sub-device
   hierarchy described above — see "Known Fixes".
-- `climate.py` — one `ClimateEntity` per room/regler, preset mapping onto
-  scenes (Boost/Holiday/Leave/Party/Standby). Shower/Towel are not wired up
-  for now (no test hardware available), but the protocol constants for
-  them are kept in place. Field access uses `.get()` defensively since not
-  all fields (e.g. `actualTemperature`) are guaranteed present on every
-  installation. Uses `has_entity_name = True` + `name = None` so the
+- `climate.py` — one `ClimateEntity` per room/regler. **`hvac_mode`
+  (AUTO/OFF) and `preset_mode` (Boost/Party/Leave/Holiday) are
+  deliberately independent of each other** — see `docs/protocol.md` §4c
+  for the full "what Standby actually means" explanation from the user.
+  `hvac_mode` is driven exclusively by the `Standby` scene (`OFF` =
+  schedule ignored/heating off; `AUTO` = following the per-room schedule
+  to its programmed setpoint — there is no `HEAT` mode, since there's no
+  "hold a fixed setpoint, ignore the schedule" concept here, and frost
+  protection is always enforced by the regler itself, uncontrollable via
+  the gateway). `preset_mode` reports Boost/Party/Leave/Holiday only,
+  with NO "none" entry in `preset_modes` — when none of those four scenes
+  is active, `preset_mode` returns Python `None` rather than a string.
+  `Standby` itself is intentionally NOT a preset. Shower/Towel are not
+  wired up at all (no test hardware available), but the protocol constants
+  for them are kept in place. Field access uses `.get()` defensively since
+  not all fields (e.g. `actualTemperature`) are guaranteed present on
+  every installation. Uses `has_entity_name = True` + `name = None` so the
   entity's display name simply follows its device's name (the regler /
   room name).
 - `sensor.py` — two entity groups, both attached to the **gateway**

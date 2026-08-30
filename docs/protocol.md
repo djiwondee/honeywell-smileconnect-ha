@@ -96,18 +96,57 @@ template; the Honeywell response still needs to be captured 1:1)
 The test installation has only one room ("Alle"/"All") and no Shower/Towel
 usage — these scenes are kept in code as constants but remain untested.
 
-## 4. Room Status Codes (observed, from preset mapping in the legacy code)
+## 4. Room Status Codes (live-verified against a real gateway)
 
-| Code | Meaning |
-|---|---|
-| 12 | Observed on a live Honeywell gateway room with `status: "new"` ("Regler MK1") - meaning not yet mapped to a preset, currently falls through to "no preset" |
-| 43 | Party active |
-| 46 | Boost active |
-| 99 | Error state |
-| 122, 51, 41, 131, 54, 137 | Manual/schedule mode (no preset) — exact meaning of individual codes not fully confirmed |
-| 127 | Holiday active |
-| 130 | Leave active |
-| 132 | Standby active |
+> ⚠️ The table below **replaces** an earlier version that was carried over
+> from the generic HeatApp reference project (values in the 40-140 range).
+> Those were confirmed **completely wrong** for this Honeywell variant once
+> actually tested - the real codes are single/double digits. Verified via
+> `scripts/manual_probe_roomstatus_via_app.py`: each mode was set through
+> the Smile App itself (not our own code), then `roomstatus` and
+> `/api/scene/status` were read passively.
+
+| Code | Scene | Confidence |
+|---|---|---|
+| 3 | Party | Confirmed |
+| 6 | Boost | Confirmed |
+| 7 | Holiday | Confirmed (see disambiguation note below) |
+| 10 | Leave | Confirmed (see disambiguation note below) |
+| 12 | Standby | Confirmed |
+
+**Disambiguation note (Leave vs. Holiday):** this took three attempts to
+settle, worth recording so it isn't re-litigated. Run 1 (scenes not reset
+between tests, so Standby was still stacked underneath): Leave=10,
+Holiday=7. Run 2 (also not reset between tests): the opposite, Leave=7,
+Holiday=10. A third, deliberately controlled run — explicitly resetting to
+a clean Standby-only baseline before testing EACH of Leave and Holiday
+individually, specifically to eliminate the stacking confound — reproduced
+Run 1's values (Leave=10, Holiday=7), with only one active scene reported
+each time (no stacking). 2-out-of-3 agreement, with the third run's
+deviation plausibly explained by the (since-understood) stacking confound,
+is the basis for treating **Holiday=7, Leave=10** as the final, confirmed
+mapping.
+
+Scene names themselves (`Party`, `Boost`, `Holiday`, `Shower`, `Leave`,
+`Standby`, `Towel`), as returned by `/api/scene/status`, matched the
+generic reference project exactly and needed no correction — only the
+*numeric room-status codes* were wrong, not the scene name strings.
+
+**Naming note:** the Smile App's own UI labels the `Leave` scene as
+"Economy". This is a cosmetic, vendor-app-only display label — the actual
+API scene name string is still `"Leave"`, which is what this project uses
+internally (see `const.SceneName`).
+
+**Overlapping/stacked scenes:** a real gateway can report multiple scenes
+simultaneously active. Observed: activating `Boost` or `Party` did NOT
+turn off an already-active `Standby` (both showed `isActive: true`
+together) — they behave like temporary overrides layered on top of a
+baseline. Activating `Leave` or `Holiday`, by contrast, DID make `Standby`
+disappear from the active list — these behave like full alternate modes
+that replace the baseline rather than layering on top of it. Despite this,
+`roomstatus` itself always resolved to a single, priority-appropriate
+value in every observation, so the integration's single-preset model
+(`climate.py`) did not need to change to accommodate this.
 
 ## 4b. Field availability differences vs. generic HeatApp
 
@@ -117,6 +156,42 @@ single-zone installation with no dedicated room sensor ("Regler MK1"/relay
 controller). The integration treats it as optional (falls back to unknown)
 rather than assuming it is always present, unlike the generic HeatApp
 reference code this was originally ported from.
+
+## 4c. What "Standby" actually means (and why hvac_mode ≠ preset_mode)
+
+Clarified by the user, who knows this hardware's real-world behavior
+(confirmed against their own regler configuration, not just API
+observation):
+
+- **Frost protection is always active at the regler itself** and is
+  **not controllable via the gateway/API at all**. There is no "fully off,
+  no frost protection" state reachable through this integration, by
+  design of the hardware — nor should there be.
+- **`Standby` scene ON** = the room's configured schedule
+  (Schaltzeiten, set per-room in the Smile App's time profile) is
+  **ignored**, and the regler does not heat to any schedule-driven
+  setpoint (frost protection floor still applies, per the point above).
+- **`Standby` scene OFF** = the regler follows the configured schedule,
+  heating to the programmed setpoint at the programmed times.
+
+This means `Standby` is fundamentally a **mode toggle** (schedule-following
+vs. schedule-ignoring), not a "preset" alongside Boost/Party/Leave/Holiday.
+The integration reflects this by mapping it to HA's `hvac_mode` concept
+instead of `preset_mode`:
+
+| roomstatus = Standby | HA `hvac_mode` |
+|---|---|
+| active | `OFF` |
+| inactive | `AUTO` (schedule-following — there is no `HEAT` mode here, since there's no "hold a fixed manual setpoint, ignore the schedule" concept on this hardware) |
+
+`preset_mode` is therefore driven *exclusively* by Boost/Party/Leave/
+Holiday, entirely independent of the Standby-driven `hvac_mode` — a room
+can in principle report a Boost/Party/Leave/Holiday preset regardless of
+whatever `hvac_mode` currently shows, since they answer different
+questions (schedule-following vs. schedule-ignoring, vs. which temporary
+scene override is layered on top). `preset_modes` deliberately has no
+"none" entry; when no scene is active, `preset_mode` returns Python `None`
+rather than a string, which HA renders natively as "no preset selected".
 
 ## 5. Open Items (as of project handover)
 
