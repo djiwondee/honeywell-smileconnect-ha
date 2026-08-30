@@ -150,3 +150,4 @@ class Login:
         decrypted = cipher.decrypt(base64.b64decode(encrypted_data))
         decrypted = unpad(decrypted, AES.block_size)
         return decrypted.decode("utf-8")
+

@@ -21,8 +21,8 @@ from Crypto.Cipher import AES
 from Crypto.Hash import SHA256
 from Crypto.Util.Padding import pad
 
-from conftest import load_fixture
-from honeywell_smileconnect.api.login import FIXED_UDID, Login
+from .conftest import load_fixture
+from custom_components.honeywell_smileconnect.api.login import FIXED_UDID, Login
 
 
 class _FakeResponse:

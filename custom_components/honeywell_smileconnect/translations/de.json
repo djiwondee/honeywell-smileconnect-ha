@@ -1,0 +1,62 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "data": {
+          "host": "Gateway-IP-Adresse",
+          "username": "Benutzername",
+          "password": "Passwort",
+          "interval": "Abfrageintervall (Sekunden)",
+          "ping_interval": "Ping-Intervall (Sekunden)"
+        }
+      }
+    },
+    "error": {
+      "cannot_connect": "Verbindung fehlgeschlagen",
+      "invalid_auth": "Ungültige Anmeldedaten",
+      "unknown": "Unerwarteter Fehler"
+    },
+    "abort": {
+      "already_configured": "Gerät ist bereits konfiguriert"
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "data": {
+          "host": "Gateway-IP-Adresse",
+          "username": "Benutzername",
+          "password": "Passwort",
+          "interval": "Abfrageintervall (Sekunden)",
+          "ping_interval": "Ping-Intervall (Sekunden)"
+        }
+      }
+    },
+    "error": {
+      "cannot_connect": "Verbindung fehlgeschlagen",
+      "invalid_auth": "Ungültige Anmeldedaten",
+      "unknown": "Unerwarteter Fehler"
+    }
+  },
+  "entity": {
+    "sensor": {
+      "outside_temperature": {
+        "name": "Außentemperatur"
+      },
+      "outside_temperature_min": {
+        "name": "Außentemperatur Minimum"
+      },
+      "outside_temperature_max": {
+        "name": "Außentemperatur Maximum"
+      },
+      "response_time": {
+        "name": "Gateway-Antwortzeit"
+      }
+    },
+    "binary_sensor": {
+      "connectivity": {
+        "name": "Verbindung"
+      }
+    }
+  }
+}

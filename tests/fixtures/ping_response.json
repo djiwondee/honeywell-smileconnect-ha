@@ -1,0 +1,11 @@
+{
+  "_comment": "IMPORTANT PROVENANCE NOTE: unlike the other fixtures in this directory, this was NOT live-captured during a chat session. It is transcribed from the user's own pre-existing project documentation (Known_API_Endpoints.pdf, uploaded at project start), which documents a real response from their own gateway. It has not been independently re-verified live in this chat - treat with slightly more caution than the other fixtures, and re-verify against the live gateway (e.g. via a manual_check_ping.py script analogous to manual_check_weather.py) before relying on exact field names/casing for anything beyond this test.",
+  "success": true,
+  "message": "",
+  "loginRejected": false,
+  "uniqueid": "[0134f0]",
+  "configured": true,
+  "remoteAddress": "192.168.1.55",
+  "language": "en",
+  "performance": 0.06
+}

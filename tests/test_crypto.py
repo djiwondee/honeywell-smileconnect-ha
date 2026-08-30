@@ -15,7 +15,7 @@ from __future__ import annotations
 import base64
 import hashlib
 
-from honeywell_smileconnect.api import crypto
+from custom_components.honeywell_smileconnect.api import crypto
 
 
 def _reference_pbkdf2_base64(a: str, b: str) -> str:

@@ -1,0 +1,13 @@
+{
+  "_comment": "Real response captured from a live Honeywell Smile Connect gateway (192.168.1.132) during development. 'forlocation' is intentionally left as the real captured value rather than anonymized, since it is expected to match the actual HA setup's configured location - see CLAUDE.md decision log.",
+  "success": true,
+  "message": "",
+  "loginRejected": false,
+  "min": 19.5,
+  "max": 29.5,
+  "temperature": 29.5,
+  "iconUrl": "/assets/images/weather/flat_white/cloud.png",
+  "forlocation": "65375 Oestrich-Winkel",
+  "language": "en",
+  "performance": 0.026
+}

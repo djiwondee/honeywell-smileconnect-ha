@@ -13,9 +13,9 @@ None values dropped entirely rather than rendered as "None".
 """
 from __future__ import annotations
 
-from honeywell_smileconnect.api.apiRequest import ApiRequest
-from honeywell_smileconnect.api.credentials import Credentials
-from honeywell_smileconnect.api.default_params import DefaultApiParams
+from custom_components.honeywell_smileconnect.api.apiRequest import ApiRequest
+from custom_components.honeywell_smileconnect.api.credentials import Credentials
+from custom_components.honeywell_smileconnect.api.default_params import DefaultApiParams
 
 
 class TestBuildPipeSignatureString:

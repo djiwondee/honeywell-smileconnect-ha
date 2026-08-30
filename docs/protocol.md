@@ -100,6 +100,7 @@ usage — these scenes are kept in code as constants but remain untested.
 
 | Code | Meaning |
 |---|---|
+| 12 | Observed on a live Honeywell gateway room with `status: "new"` ("Regler MK1") - meaning not yet mapped to a preset, currently falls through to "no preset" |
 | 43 | Party active |
 | 46 | Boost active |
 | 99 | Error state |
@@ -107,6 +108,15 @@ usage — these scenes are kept in code as constants but remain untested.
 | 127 | Holiday active |
 | 130 | Leave active |
 | 132 | Standby active |
+
+## 4b. Field availability differences vs. generic HeatApp
+
+Confirmed on a live Honeywell gateway: `/api/room/list` room objects do
+**not** always include `actualTemperature` - observed missing entirely on a
+single-zone installation with no dedicated room sensor ("Regler MK1"/relay
+controller). The integration treats it as optional (falls back to unknown)
+rather than assuming it is always present, unlike the generic HeatApp
+reference code this was originally ported from.
 
 ## 5. Open Items (as of project handover)
 

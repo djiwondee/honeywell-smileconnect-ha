@@ -1,0 +1,62 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "data": {
+          "host": "Adresse IP de la passerelle",
+          "username": "Nom d'utilisateur",
+          "password": "Mot de passe",
+          "interval": "Intervalle d'interrogation (secondes)",
+          "ping_interval": "Intervalle de ping (secondes)"
+        }
+      }
+    },
+    "error": {
+      "cannot_connect": "Échec de la connexion",
+      "invalid_auth": "Authentification invalide",
+      "unknown": "Erreur inattendue"
+    },
+    "abort": {
+      "already_configured": "L'appareil est déjà configuré"
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "data": {
+          "host": "Adresse IP de la passerelle",
+          "username": "Nom d'utilisateur",
+          "password": "Mot de passe",
+          "interval": "Intervalle d'interrogation (secondes)",
+          "ping_interval": "Intervalle de ping (secondes)"
+        }
+      }
+    },
+    "error": {
+      "cannot_connect": "Échec de la connexion",
+      "invalid_auth": "Authentification invalide",
+      "unknown": "Erreur inattendue"
+    }
+  },
+  "entity": {
+    "sensor": {
+      "outside_temperature": {
+        "name": "Température extérieure"
+      },
+      "outside_temperature_min": {
+        "name": "Température extérieure min"
+      },
+      "outside_temperature_max": {
+        "name": "Température extérieure max"
+      },
+      "response_time": {
+        "name": "Temps de réponse de la passerelle"
+      }
+    },
+    "binary_sensor": {
+      "connectivity": {
+        "name": "Connectivité"
+      }
+    }
+  }
+}

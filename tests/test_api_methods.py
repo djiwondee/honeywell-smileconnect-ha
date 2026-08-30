@@ -12,8 +12,8 @@ from __future__ import annotations
 
 from unittest.mock import MagicMock
 
-from conftest import load_fixture
-from honeywell_smileconnect.api.apiMethods import ApiMethods
+from .conftest import load_fixture
+from custom_components.honeywell_smileconnect.api.apiMethods import ApiMethods
 
 
 def _make_api_methods_with_mocked_request(fixture_payload: dict) -> ApiMethods:

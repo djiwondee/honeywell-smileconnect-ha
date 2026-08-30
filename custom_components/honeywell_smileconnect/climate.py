@@ -1,4 +1,18 @@
 """Climate platform for Honeywell Smile Connect."""
+# Change log:
+# - 2026-08-27 (b): Fixed device_info to use device.regler_device_info()
+#   (correct "SDC Regler" model, linked to the gateway device via
+#   via_device, suggested_area from the room name) instead of an
+#   independent, gateway-shaped device_info dict - this was the root cause
+#   of the "two unrelated devices instead of hub/sub-device" bug (see
+#   project discussion). Reads coordinator/unique_id from the new
+#   SmileConnectData wrapper in hass.data instead of the coordinator
+#   directly (see __init__.py). Switched to has_entity_name + name=None so
+#   the entity's display name simply follows the device name.
+# - 2026-08-27 (a): Adjusted for coordinator.data restructuring - rooms now
+#   live under coordinator.data["rooms"] instead of coordinator.data itself,
+#   since the coordinator now also fetches weather data for sensor.py in
+#   the same poll cycle. See coordinator.py's own change log.
 from __future__ import annotations
 
 import logging
@@ -14,6 +28,7 @@ from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
+from . import device
 from .api.scene_manager import SceneManager
 from .const import (
     DOMAIN,
@@ -36,18 +51,21 @@ async def async_setup_entry(
     config_entry: ConfigEntry,
     async_add_entities: AddEntitiesCallback,
 ) -> None:
-    coordinator: SmileConnectCoordinator = hass.data[DOMAIN][config_entry.entry_id]
+    data = hass.data[DOMAIN][config_entry.entry_id]
+    coordinator = data.coordinator
     scene_manager = SceneManager(coordinator.api)
 
     async_add_entities(
-        SmileConnectClimate(coordinator, scene_manager, idx)
-        for idx in range(len(coordinator.data))
+        SmileConnectClimate(coordinator, scene_manager, idx, data.unique_id)
+        for idx in range(len(coordinator.data["rooms"]))
     )
 
 
 class SmileConnectClimate(CoordinatorEntity, ClimateEntity):
-    """One climate entity per room reported by the gateway."""
+    """One climate entity per room/SDC Regler reported by the gateway."""
 
+    _attr_has_entity_name = True
+    _attr_name = None  # entity display name = its device's name (the regler)
     _attr_temperature_unit = UnitOfTemperature.CELSIUS
     _attr_target_temperature_step = 0.5
     _attr_supported_features = (
@@ -68,15 +86,17 @@ class SmileConnectClimate(CoordinatorEntity, ClimateEntity):
         coordinator: SmileConnectCoordinator,
         scene_manager: SceneManager,
         idx: int,
+        gateway_unique_id: str,
     ) -> None:
         super().__init__(coordinator)
         self.idx = idx
         self._scene_manager = scene_manager
         self._active_preset = PRESET_NONE
+        self._gateway_unique_id = gateway_unique_id
 
     @property
     def _room(self) -> dict:
-        return self.coordinator.data[self.idx]
+        return self.coordinator.data["rooms"][self.idx]
 
     @property
     def _room_id(self):
@@ -87,17 +107,8 @@ class SmileConnectClimate(CoordinatorEntity, ClimateEntity):
         return f"{DOMAIN}_room_{self._room_id}"
 
     @property
-    def name(self) -> str:
-        return self._room["name"]
-
-    @property
     def device_info(self):
-        return {
-            "identifiers": {(DOMAIN, str(self._room_id))},
-            "name": self._room["name"],
-            "manufacturer": "Honeywell",
-            "model": "Smile Connect (SCN-10)",
-        }
+        return device.regler_device_info(self._gateway_unique_id, self._room_id, self._room["name"])
 
     @property
     def current_temperature(self):

@@ -290,15 +290,32 @@ GET  /admin/login/index            (returns HTML of the config menu)
 
 ### Next planned work (agreed in project discussion, not yet started)
 
-- **Outside temperature sensor.** `api/apiMethods.get_weather()` already
-  exists and calls `/api/weather`, but there is no HA entity for it yet
-  (no `sensor.py` or `weather.py` platform). Straightforward addition.
+- ~~**Outside temperature sensor.**~~ **DONE (2026-08-27).** Implemented as
+  `sensor.py` with three entities (outside temperature, min, max) reading
+  from `coordinator.data["weather"]`. Real response captured manually via
+  `scripts/manual_check_weather.py` first and verified as
+  `tests/fixtures/weather_response.json` before writing any entity code —
+  see "Test Suite" section below. Decision made along the way: `forlocation`
+  in the real response contains an actual postal code/city (the account's
+  configured location) and was deliberately kept as-is in the fixture
+  rather than anonymized, on the basis that it is expected to match the
+  real HA setup's own location anyway.
 - **Verify `roomstatus` codes properly** (see above) — this both fixes
   preset sync accuracy and is a prerequisite for trusting `hvac_mode`.
 - **Full temperature sync** — resolve the `actualTemperature` /
   min/max-temperature open questions above.
-- **Options flow** so the polling interval can be changed after initial
-  setup without recreating the config entry.
+- ~~**Options flow**~~ **DONE (2026-08-27).** Implemented as
+  `OptionsFlowHandler` in `config_flow.py` — host/credentials/both poll
+  intervals (`CONF_INTERVAL`, `CONF_PING_INTERVAL`) can now be changed
+  without recreating the entry. Bundled together with the ping/connectivity
+  feature below since both needed `config_flow.py` changes anyway.
+- ~~**Ping-based connectivity binary sensor**~~ **DONE (2026-08-27).**
+  Implemented as a fully independent `SmileConnectPingCoordinator` +
+  `binary_sensor.py` (connectivity) + a diagnostic response-time entity in
+  `sensor.py` — see "Integration Architecture" above for the full design.
+  This also drove the `device.py` extraction that fixed the device-
+  structure bug, and the `config_flow.py` rework that added the
+  `/api/ping`-derived `unique_id` and the options flow together.
 - **Expose switching times** (`get_switching_times`/`set_switching_times`
   already implemented in `api/apiMethods.py`) via a service or entity — not
   currently wired to anything in the HA integration layer.
@@ -306,8 +323,80 @@ GET  /admin/login/index            (returns HTML of the config menu)
   presumably just re-login every refresh cycle on failure; this works but
   is inefficient and not a deliberate design. Worth revisiting once basic
   functionality is solid.
+- **Runtime verification of this round's changes** — see the "⚠️ Needs
+  runtime verification" callout under "Integration Architecture": the
+  `EntityCategory` import location, the `OptionsFlowHandler` base-class
+  behavior, and `suggested_area` actually triggering HA's area-suggestion
+  UI have none of them been confirmed against a live HA instance yet,
+  since this round of changes was implemented without live HA available in
+  the session.
+- **Live-verify `ping_response.json`** via `scripts/manual_check_ping.py`
+  — the current fixture is transcribed from pre-existing user
+  documentation, not captured live in a chat session (unlike every other
+  fixture in this project).
 
 ## Test Suite
+
+**Test infrastructure debugging story (2026-08-27) — read this before
+touching test import setup again:**
+
+A `ModuleNotFoundError` / raw `KeyError: 'honeywell_smileconnect'` (deep in
+`importlib` internals) appeared for several test files after
+`pytest-homeassistant-custom-component` became active. Several fixes were
+applied across multiple attempts:
+
+1. `tests/__init__.py` added (empty), making `tests/` a proper package, so
+   `from .conftest import load_fixture` (relative import) is used instead
+   of the previously fragile bare `from conftest import load_fixture`.
+2. `pytest.ini` added with `pythonpath = .` (repo root) plus a new empty
+   `custom_components/__init__.py`, so tests import via
+   `custom_components.honeywell_smileconnect.xxx` — the exact same dotted
+   path Home Assistant itself uses at runtime — instead of a test-only
+   shortcut that flattened the `custom_components.` prefix away.
+3. A `conftest.py`-level `sys.path.insert(...)` that had been kept
+   "as a redundant safety net" alongside the `pytest.ini` mechanism was
+   removed entirely (running two path-injection mechanisms for the same
+   directory at once is worth avoiding regardless, even though it turned
+   out NOT to be the deciding fix here - see below).
+4. **The failure persisted through all of the above**, identically,
+   including when reproduced with plain `python3 -c "..."` outside pytest
+   entirely - which at the time seemed to rule out pytest/plugin
+   interaction as the cause. Ultimately what resolved it was a **full,
+   clean reset of the local working copy** (`rm -rf custom_components
+   tests scripts docs` + re-extracting a complete, freshly-verified
+   project ZIP) after many rounds of incremental copy/paste patches had
+   plausibly caused local file drift (a stale or partially-overwritten
+   `api/apiMethods.py` or similar, without either side noticing).
+
+**Honest conclusion: the exact root cause was never conclusively isolated.**
+It may have been local file drift/corruption from many incremental patch
+rounds (the leading theory, given a full reset fixed it and the plain-
+python reproduction had already ruled out pytest itself), the import-path
+mismatch fixed in step 2 (possible but unconfirmed - was never re-tested
+in isolation against the old drifted files), or some combination. Both
+fixes are kept because they are good practice independent of which one
+mattered: importing via the real `custom_components.honeywell_smileconnect`
+path (matching HA's own runtime resolution) is more correct than a
+test-only shortcut regardless, and avoiding duplicate path-injection
+mechanisms is safer regardless.
+
+**Practical lesson for future sessions:** after many rounds of shipping
+incremental patch bundles for the same files across a long chat session,
+treat "the code I'm sending should already match what's in the repo" as an
+assumption worth periodically re-verifying, not a given - a full,
+clean-checkout re-sync (as eventually done here) is a legitimate and
+sometimes necessary troubleshooting step, not just a last resort. If an
+import error resists several targeted fixes and reproduces even outside
+pytest, suspect local file drift before continuing to iterate on pytest
+configuration.
+
+If tests fail again with `ModuleNotFoundError` or a raw `KeyError` for
+`honeywell_smileconnect`/`conftest`, try in this order: (1) clear caches
+(`find . -name __pycache__ -exec rm -rf {} +` and `rm -rf .pytest_cache`),
+(2) reproduce with plain `python3 -c "..."` outside pytest to isolate
+whether it's pytest-specific, (3) if the plain-python reproduction also
+fails, suspect local file drift and consider a clean re-sync before
+further config changes.
 
 `tests/` contains regression tests for the HA-independent `api/` layer
 (crypto, login, request signing, response parsing). Run with:
@@ -318,11 +407,14 @@ pytest tests/ -v
 
 - `tests/fixtures/` holds **real payloads captured from a live Honeywell
   gateway** (`192.168.1.132`) during development — `challenge_response.json`,
-  `login_response.json`, `room_list_response.json`. These are genuine
-  recorded API responses, not hand-written approximations, and are safe to
-  keep in the repo (no real password or long-lived secret is contained in
-  them; the captured devicetoken/challenge values are single-use and
-  already expired).
+  `login_response.json`, `room_list_response.json`, `weather_response.json`.
+  These are genuine recorded API responses, not hand-written
+  approximations, and are safe to keep in the repo (no real password or
+  long-lived secret is contained in them; the captured devicetoken/challenge
+  values are single-use and already expired). `weather_response.json`
+  deliberately keeps the real `forlocation` value (a real postal
+  code/city) rather than anonymizing it, since it is expected to match
+  whatever location the real HA setup itself is configured with anyway.
 - `test_crypto.py` — locks in the PBKDF2/SHA-512/Base64 scheme against an
   independent hashlib-based reference computation, so a future refactor
   can't silently reintroduce the original MD5-based signature bug.
@@ -339,12 +431,49 @@ pytest tests/ -v
   (not just `None`) on this hardware, guarding against reintroducing the
   `KeyError` crash that was hit in `climate.py` before it switched to
   `.get()`.
+- `test_weather.py` — parses the real `weather_response.json` fixture;
+  confirms `temperature`/`min`/`max` are floats on real hardware (relevant
+  to the still-open question about decimal handling on
+  `/api/room/settemperature`).
+- `test_ping.py` — verifies the unauthenticated GET request is built
+  correctly (no signature, no body, no auth headers) and confirms the
+  response shape via `ping_response.json`. **Note this fixture's provenance
+  differs from the others:** it is transcribed from the user's own
+  pre-existing PDF documentation of their gateway, not live-captured in a
+  chat session — see the fixture's own `_comment` and `scripts/
+  manual_check_ping.py` for closing that gap with a fresh live capture.
+- `test_device.py` — locks in the hub/sub-device identifier scheme
+  (`gateway_device_info()` / `regler_device_info()`), specifically that
+  `regler_device_info()`'s `via_device` actually matches
+  `gateway_device_info()`'s own identifier — this is precisely the kind of
+  mismatch that caused the original "two unrelated devices" bug, so it's
+  asserted explicitly rather than just implicitly.
 
 **When adding a new endpoint or fixing a parsing bug:** capture the real
 request/response via the browser-console technique or a live debug-log
 session, add it as a new fixture under `tests/fixtures/`, and add a test
 that exercises the actual parsing code against it — this is the pattern to
 follow going forward, not just for the crypto layer.
+
+**Not covered by automated tests (HA-dependent, no test harness set up
+yet):** `climate.py`, `sensor.py`, `binary_sensor.py`, `coordinator.py`,
+`ping_coordinator.py`, `config_flow.py` (including `OptionsFlowHandler`),
+`__init__.py`. These all import Home Assistant directly and would need
+`pytest-homeassistant-custom-component` (already listed in
+`requirements_test.txt` but not yet wired up with fixtures/conftest
+support for it) to test properly. Until that harness exists, changes to
+these files must be verified manually in the dev container — this is why
+the "⚠️ Needs runtime verification" callout exists under "Integration
+Architecture" above for the device-structure changes made in this round.
+
+**Manual capture tool:** `scripts/manual_check_weather.py` is a one-off,
+interactive diagnostic script (prompts for host/username/password via
+`getpass`, never stores credentials) that logs in and pretty-prints a raw
+endpoint response. It was used to capture `weather_response.json` before
+`sensor.py` was written. This is the reusable pattern for any future
+endpoint that needs a real fixture before entity code is written for it —
+copy/adapt this script rather than guessing at a response shape from a
+generic reference project.
 
 ## Reverse-Engineering Method (for further, still-unknown endpoints)
 
@@ -378,6 +507,38 @@ against the gateway before it is adopted into the integration.
 
 ## Integration Architecture
 
+### Physical model (see project discussion, confirmed against Honeywell's
+own "Smile Connect System" documentation the user provided)
+
+- **Smile Connect Gateway** — the single physical hub. Communicates with
+  the heat generator, talks to the SDC Regler(s) over the "Smile Bus".
+  Represents itself in HA as ONE top-level device, carrying everything
+  that is not tied to a specific room: weather sensors, ping-based
+  connectivity/response-time diagnostics.
+- **SDC Regler** — one physical controller per room/zone, connected to the
+  gateway via the Smile Bus (NOT a separate piece of hardware you'd buy
+  independently — it's the in-room thermostat/regulator). Each one
+  reported by `/api/room/list` becomes its own HA device, linked to the
+  gateway device via `via_device` (hub/sub-device hierarchy, not two
+  unrelated top-level devices — this was a real bug, see "Known Fixes"
+  below).
+- **Smile App** — Honeywell's own mobile UI. No HA equivalent; Home
+  Assistant itself fills this role for this integration's purposes.
+- **WLAN/LAN Router** — bauseitig (customer-provided), pure network
+  transport. No HA equivalent.
+
+### Known Fixes (device structure)
+
+Two devices appeared where a clean hub/sub-device hierarchy was intended,
+because `climate.py` and `sensor.py` each built their own ad-hoc
+`device_info` dict independently, using different, uncoordinated
+identifiers. Fixed by extracting **`device.py`** as the single source of
+truth for both device shapes (`gateway_device_info()` /
+`regler_device_info()`) - every platform must use these builders, never
+construct a `device_info` dict inline.
+
+### Module layout
+
 - `custom_components/honeywell_smileconnect/api/` — pure protocol layer
   (login, requests, signing), no HA dependencies. Deliberately kept as a
   standalone, testable module (potentially extractable into its own PyPI
@@ -395,14 +556,88 @@ against the gateway before it is adopted into the integration.
     getrooms/setrooms/set sequencing).
   - `credentials.py` — session state, including `reqcount` with correct
     post-increment semantics (see reqcount section above).
-- `coordinator.py` — `DataUpdateCoordinator`, polls room/scene status.
-- `climate.py` — one `ClimateEntity` per room, preset mapping onto scenes
-  (Boost/Holiday/Leave/Party/Standby). Shower/Towel are not wired up for now
-  (no test hardware available), but the protocol constants for them are kept
-  in place. Field access uses `.get()` defensively since not all fields
-  (e.g. `actualTemperature`) are guaranteed present on every installation.
-- `config_flow.py` — host/user/password/interval, validated via an actual
-  login attempt against the gateway.
+  - `ping.py` — **deliberately separate** from everything above: a plain,
+    unauthenticated `GET /api/ping`, no Login/Credentials/signing
+    involved at all. The entire point of this endpoint is to work when
+    authentication is broken - it must never gain a dependency on
+    authenticated session state.
+- `coordinator.py` — `SmileConnectCoordinator` (`DataUpdateCoordinator`),
+  polls room list AND weather in a single cycle (one shared, already-
+  logged-in session). `coordinator.data` is `{"rooms": [...], "weather":
+  {...}}` — NOT a bare room list (that was the shape before weather
+  sensors were added).
+- `ping_coordinator.py` — `SmileConnectPingCoordinator`, a **second,
+  fully independent** `DataUpdateCoordinator` that only polls `/api/ping`.
+  Deliberately does not share any state, session, or failure mode with
+  `SmileConnectCoordinator` — a broken login must never make the
+  connectivity sensor look wrong, and vice versa. Has its own configurable
+  poll interval (`CONF_PING_INTERVAL`, default 15s — see const.py; the
+  gateway's own internet-facing heartbeat is documented at ~90s, but this
+  local, unauthenticated, lightweight call is a different use case and
+  intentionally more responsive by default).
+- `device.py` — shared `device_info` builders (`gateway_device_info()`,
+  `regler_device_info()`). Single source of truth for the hub/sub-device
+  hierarchy described above — see "Known Fixes".
+- `climate.py` — one `ClimateEntity` per room/regler, preset mapping onto
+  scenes (Boost/Holiday/Leave/Party/Standby). Shower/Towel are not wired up
+  for now (no test hardware available), but the protocol constants for
+  them are kept in place. Field access uses `.get()` defensively since not
+  all fields (e.g. `actualTemperature`) are guaranteed present on every
+  installation. Uses `has_entity_name = True` + `name = None` so the
+  entity's display name simply follows its device's name (the regler /
+  room name).
+- `sensor.py` — two entity groups, both attached to the **gateway**
+  device via `device.gateway_device_info()`:
+  - Weather: outside temperature/min/max, sourced from
+    `coordinator.data["weather"]` (fed by the main, authenticated
+    coordinator). One parameterized `SmileConnectWeatherSensor` class
+    covers all three.
+  - Diagnostics: `SmileConnectPingResponseTimeSensor`
+    (`entity_category = DIAGNOSTIC`), fed by `SmileConnectPingCoordinator`
+    instead — reports the gateway's own `"performance"` field from
+    `/api/ping`.
+- `binary_sensor.py` — `SmileConnectConnectivitySensor`
+  (`device_class = CONNECTIVITY`, `entity_category = DIAGNOSTIC`), also on
+  the gateway device, fed by `SmileConnectPingCoordinator`. `uniqueid`,
+  `configured`, `remoteAddress` from the raw ping response are exposed as
+  `extra_state_attributes` rather than separate entities (deliberate
+  granularity decision from project discussion: 2 entities +
+  attributes, not N entities for every ping field).
+- `config_flow.py` — host/user/password + two poll intervals
+  (`CONF_INTERVAL`, `CONF_PING_INTERVAL`), validated via an actual login
+  attempt against the gateway. Also opportunistically calls `/api/ping`
+  during setup to capture the gateway's own `"uniqueid"` and registers it
+  as this entry's **native HA `unique_id`** via
+  `async_set_unique_id()` + `_abort_if_unique_id_configured()` (falls back
+  to a host-based id if ping fails during setup) — this also makes the
+  pre-existing `"already_configured"` abort string, which used to be dead
+  code, actually functional. Also implements `OptionsFlowHandler` so
+  host/credentials/both intervals can be changed after initial setup
+  without recreating the entry (and therefore without losing the
+  `unique_id`-based device identity).
+- `__init__.py` — creates and owns BOTH coordinators, wraps them plus the
+  entry's `unique_id` in a small `SmileConnectData` dataclass stored in
+  `hass.data[DOMAIN][entry_id]`. Every platform reads from that dataclass,
+  not from a bare coordinator reference.
+
+### ⚠️ Needs runtime verification (not yet confirmed against a real HA
+install, since this was implemented without live HA available)
+
+- `EntityCategory` is imported from `homeassistant.const` in `sensor.py`
+  and `binary_sensor.py`. This is believed correct for current HA versions
+  but was not confirmed by actually running the integration - if you hit
+  an `ImportError` here, check whether your HA version instead expects
+  `from homeassistant.helpers.entity import EntityCategory` and fix at
+  that single point (both files import from the same place).
+- The `OptionsFlowHandler` deliberately does NOT define `__init__` /
+  assign `self.config_entry` manually, relying on the base `OptionsFlow`
+  class providing `self.config_entry` automatically (current recommended
+  pattern, older manual-assignment pattern is deprecated). Confirm this
+  works as expected on first use of the options flow in the dev container.
+- `suggested_area` in `device.regler_device_info()` has not yet been
+  confirmed to actually trigger HA's area-suggestion UI on first device
+  creation — verify by deleting and re-adding the integration and checking
+  whether the regler device gets an area suggestion matching the room name.
 
 ## Development Workflow
 
@@ -483,6 +718,14 @@ against the gateway before it is adopted into the integration.
 - Code identifiers themselves (see Code Standards above) stay in English
   regardless of this — localization applies only to strings actually
   rendered to the end user, not to internal naming.
+- **Current status (as of 2026-08-27):** `en`, `de`, `es`, `fr` are all
+  present under `custom_components/honeywell_smileconnect/translations/`,
+  covering both the config flow strings and the `sensor.py` entity names
+  (`entity.sensor.*`). `strings.json` at the component root mirrors the
+  English translation as the source-of-truth file per current HA
+  convention — keep both in sync when English strings change (the
+  `translations/en.json` copy exists for compatibility with tooling that
+  still expects it there).
 
 ## Session Workflow (applies to every new chat/session on this project)
 
