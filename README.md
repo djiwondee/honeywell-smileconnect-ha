@@ -70,5 +70,9 @@ protocol documentation.
 
 ## License
 
-AGPL-3.0 (matching the licensing of the upstream projects this work builds
-conceptually upon).
+MIT — see [`LICENSE`](LICENSE). Note that this differs from the licensing
+(GPL/AGPL) of the upstream `ruby-heatapp` / `py-heatapp-de` projects this
+work conceptually builds upon; this codebase is an independent
+implementation based on original reverse-engineering (see
+[`CLAUDE.md`](CLAUDE.md) and [`docs/protocol.md`](docs/protocol.md)), not a
+fork or derivative of their code.
