@@ -1,6 +1,17 @@
 """Climate platform for Honeywell Smile Connect."""
 # Change log:
-# - 2026-08-30: Fixed entity_id/display name - was `_attr_name = None`,
+# - 2026-08-30 (b): min_temp/max_temp switched from minTemperature/
+#   maxTemperature (observed identical, 12/12 - not meaningful bounds) to
+#   scheduleTempMin/scheduleTempMax (12/25, confirmed against the real
+#   Smile App's own slider bounds by the user). Also fixed
+#   manual_check_decimal_temperature.py to actively verify Standby
+#   deactivation (poll + re-fetch) instead of a blind sleep(3) - the first
+#   test run's MISMATCH result turned out to be a false negative caused by
+#   this (Standby likely still active, using stale desiredTemperature),
+#   not a real decimal-notation problem. A follow-up manual run with
+#   Standby confirmed off showed dot notation works correctly (24.5 sent,
+#   24.5 read back) - see docs/protocol.md "Open Items".
+# - 2026-08-30 (a): Fixed entity_id/display name - was `_attr_name = None`,
 #   producing "climate.haus" (device name only, no entity name component),
 #   which violates the project's own has_entity_name convention (every
 #   other entity combines device name + entity name). Replaced with a real
@@ -173,11 +184,20 @@ class SmileConnectClimate(CoordinatorEntity, ClimateEntity):
 
     @property
     def min_temp(self):
-        return self._room["data"].get("minTemperature", super().min_temp)
+        # scheduleTempMin/scheduleTempMax are the confirmed-correct bounds
+        # (verified against the real Smile App: 12-25 on this
+        # installation) - minTemperature/maxTemperature were observed
+        # identical to each other (12/12) and are not meaningful here. See
+        # CLAUDE.md "Still untested / open" (now resolved) for the full
+        # story. Falls back to minTemperature, then HA's own default, in
+        # case scheduleTempMin is ever absent on some other installation.
+        data = self._room["data"]
+        return data.get("scheduleTempMin", data.get("minTemperature", super().min_temp))
 
     @property
     def max_temp(self):
-        return self._room["data"].get("maxTemperature", super().max_temp)
+        data = self._room["data"]
+        return data.get("scheduleTempMax", data.get("maxTemperature", super().max_temp))
 
     @property
     def hvac_mode(self) -> HVACMode:

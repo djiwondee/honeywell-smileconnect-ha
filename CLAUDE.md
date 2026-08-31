@@ -290,18 +290,44 @@ GET  /admin/login/index            (returns HTML of the config menu)
   setup). Open question: is there a different endpoint that reports actual
   temperature for this kind of installation, or does this gateway variant
   genuinely not have a room sensor?
-- **`minTemperature`/`maxTemperature` may not be meaningful on this
-  installation** — observed both equal to `12`, identical to
-  `desiredTemperature`, on a system that looks not-yet-fully-configured
-  (`status: "new"`). `scheduleTempMin`/`scheduleTempMax` (observed `12`/`25`)
-  might be the actually-relevant bounds instead. Needs checking against a
-  fully-configured room, or against the stock Honeywell UI's displayed
-  min/max.
+- ~~**`minTemperature`/`maxTemperature` may not be meaningful on this
+  installation**~~ **CONFIRMED (2026-08-30).** The user verified against
+  the real Smile App: the actual selectable range is `12`-`25`, matching
+  `scheduleTempMin`/`scheduleTempMax` exactly — `minTemperature`/
+  `maxTemperature` (observed `12`/`12`, identical to `desiredTemperature`)
+  are indeed not meaningful bounds on this installation. Code consuming
+  temperature bounds should prefer `scheduleTempMin`/`scheduleTempMax`
+  over `minTemperature`/`maxTemperature` — see
+  `scripts/manual_check_decimal_temperature.py` for the first place this
+  was applied (with a `12`/`25` fallback if those fields are ever
+  missing). ~~`climate.py`'s own `min_temp`/`max_temp` properties still use
+  `minTemperature`/`maxTemperature`~~ **FIXED (2026-08-30)** — now use
+  `scheduleTempMin`/`scheduleTempMax` with the same fallback chain.
 - Behavior of `setrooms` **before** scene activation (does order matter?)
-- Decimal temperature values (e.g. 20.5 °C) — specifically whether the
-  request expects comma or dot notation (see `_prepareRequestBodyForHash` in
-  the generic HeatApp code, which contains a commented-out attempt to
-  replace dots with commas for `temperature`)
+- ~~**Decimal temperature values (e.g. 20.5 °C)**~~ **RESOLVED
+  (2026-08-30).** Dot notation (`24.5`) is correctly interpreted by
+  `/api/room/settemperature` — no comma conversion needed, unlike the
+  generic HeatApp reference code's commented-out dot→comma attempt in
+  `_prepareRequestBodyForHash`, which turned out not to apply here.
+  Verified via `scripts/manual_check_decimal_temperature.py`, but only
+  after fixing a real bug the user spotted in that script's first version:
+  it deactivated Standby, then blindly `sleep(3)`'d and proceeded WITHOUT
+  verifying the deactivation actually took effect or re-fetching the
+  room — producing a false "MISMATCH" on the first run (Standby was very
+  likely still active when the temperature was set, which unrelated
+  behavior — see `docs/protocol.md` §4c — silently rejects temperature
+  changes). Fixed with an active poll-and-verify loop; a clean re-run with
+  Standby confirmed inactive throughout showed a correct match. **Lesson
+  for future manual scripts that toggle a mode and then test something
+  depending on it: always verify the mode change took effect (poll +
+  re-fetch) rather than sleeping a fixed duration and hoping — a sibling
+  lesson to the reqcount/signature debugging earlier in this project.**
+- **New `roomstatus` code observed: `11`.** Seen with Standby deactivated
+  and no other scene active — likely the "plain schedule-following,
+  nothing else active" baseline. Not yet given a dedicated `const.py`
+  constant since existing `hvac_mode`/`preset_mode` logic already handles
+  it correctly by omission (see `docs/protocol.md` §5) — only add one if a
+  concrete future need for a dedicated label arises.
 
 ### Next planned work (agreed in project discussion, not yet started)
 

@@ -173,6 +173,14 @@ observation):
   setpoint (frost protection floor still applies, per the point above).
 - **`Standby` scene OFF** = the regler follows the configured schedule,
   heating to the programmed setpoint at the programmed times.
+- **Confirmed (2026-08-30): `/api/room/settemperature` calls are silently
+  rejected while `Standby` is active** — matches the real Smile App's own
+  behavior (temperature cannot be changed for a room in Standby there
+  either). The gateway does not return an error for this; the request
+  appears to succeed, but `desiredTemperature` simply does not change.
+  Any future manual testing (or an eventual "why didn't my temperature
+  change stick" support question) should check `roomstatus` for Standby
+  first before suspecting anything else.
 
 This means `Standby` is fundamentally a **mode toggle** (schedule-following
 vs. schedule-ignoring), not a "preset" alongside Boost/Party/Leave/Holiday.
@@ -198,5 +206,21 @@ rather than a string, which HA renders natively as "no preset selected".
 - [ ] Verify the exact PBKDF2/SHA512 parameters for password hashing
 - [ ] Confirm the AES decrypt IV on Honeywell (identical to standard HeatApp?)
 - [ ] Test `setrooms` behavior before scene activation (order dependency)
-- [ ] Decimal temperature values (e.g. 20.5 °C) — dot vs. comma in the request
+- [x] **Decimal temperature values (e.g. 20.5 °C)** — RESOLVED
+      (2026-08-30): dot notation (`24.5`) is correctly interpreted by
+      `/api/room/settemperature`, no comma conversion needed. Verified via
+      `scripts/manual_check_decimal_temperature.py` with Standby confirmed
+      inactive throughout (an earlier run showed a false-negative
+      "MISMATCH" caused by Standby still being active during the test,
+      not a notation problem - see the script's own change log).
+- [ ] **New `roomstatus` code observed: `11`.** Seen with Standby
+      deactivated and no other scene (Boost/Party/Leave/Holiday) active -
+      likely the "plain schedule-following, nothing special active"
+      baseline state. Not yet formally added to `const.py` since the
+      existing `hvac_mode`/`preset_mode` logic already handles it
+      correctly by omission (anything that isn't `ROOM_STATUS_STANDBY`
+      falls through to `HVACMode.AUTO`, and anything that isn't one of the
+      four named scenes falls through to `preset_mode == None`) - no code
+      change needed unless a dedicated constant/label for this state
+      becomes useful later.
 - [ ] Clarify the purpose of `/api/xpertonly/start`, `/admin/sentry/*`
