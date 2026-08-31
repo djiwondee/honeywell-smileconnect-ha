@@ -3,7 +3,31 @@
 Ported and cleaned up from the original reverse-engineering scaffold.
 """
 # Change log:
-# - 2026-08-30: remove_member_from_scene() no longer calls
+# - 2026-08-30 (b): Added active poll-and-verify after every write
+#   (_wait_for_scene_active_state), matching the pattern already
+#   established and documented in scripts/manual_check_roomstatus_via_app.py
+#   etc. - now applied to PRODUCTION code for the first time. Root cause:
+#   climate.py has ZERO local/optimistic state - hvac_mode/preset_mode are
+#   computed live from coordinator.data on every access, and climate.py
+#   calls coordinator.async_request_refresh() immediately after every
+#   write. If the gateway hasn't yet internally propagated the scene
+#   change by the time that immediate refresh fires, the re-fetched data
+#   is stale, and the HA UI briefly shows the OLD state (reported by the
+#   user as "mode jumps back to Off/Auto, only correcting itself later").
+#   This adds a bounded wait (up to ~10s) INSIDE the write path itself,
+#   confirming via /api/scene/status that the change actually took effect
+#   before returning control to climate.py's subsequent refresh call -
+#   so that refresh is now much more likely to see already-correct data.
+#   Does not raise/fail if verification times out (logs a warning and
+#   proceeds) - HA's regular 30s poll cycle will still eventually pick up
+#   the change even if this bounded wait wasn't long enough.
+#   NOTE: this verifies via /api/scene/status's isActive flag, NOT
+#   /api/room/list's roomstatus field directly (which is what climate.py
+#   actually reads) - if the user still sees stale display after this fix
+#   despite scene/status confirming quickly, that would point to a
+#   SEPARATE staleness/caching quirk specific to the roomstatus field on
+#   the gateway, needing further investigation (see CLAUDE.md).
+# - 2026-08-30 (a): remove_member_from_scene() no longer calls
 #   set_scene_rooms() when the resulting room list would be EMPTY. Two
 #   consecutive live tests against the real gateway both produced a
 #   10-second ReadTimeout on /api/scene/setrooms when removing the
@@ -22,7 +46,17 @@ Ported and cleaned up from the original reverse-engineering scaffold.
 #   never produces an empty list in the first place).
 from __future__ import annotations
 
+import logging
+import time
+
 from .api_methods import ApiMethods
+
+_LOGGER = logging.getLogger(__name__)
+
+# Matches the pattern already proven out in scripts/manual_check_*.py:
+# up to ~10s total (5 waits x 2s) before giving up and proceeding anyway.
+_VERIFY_ATTEMPTS = 6
+_VERIFY_INTERVAL_SECONDS = 2.0
 
 
 class SceneManager:
@@ -35,6 +69,33 @@ class SceneManager:
     def is_scene_active(self, scene_name: str) -> bool:
         return self.api.get_specific_scene(scene_name)["isActive"]
 
+    def _wait_for_scene_active_state(self, scene_name: str, want_active: bool) -> bool:
+        """Poll /api/scene/status (via is_scene_active) until scene_name's
+        isActive matches want_active, or give up after _VERIFY_ATTEMPTS.
+        Never raises - a timeout just means the caller's subsequent
+        coordinator refresh might still show slightly-stale data, which
+        HA's regular poll cycle will self-correct shortly after anyway.
+        """
+        for attempt in range(_VERIFY_ATTEMPTS):
+            if self.is_scene_active(scene_name) == want_active:
+                return True
+            if attempt < _VERIFY_ATTEMPTS - 1:
+                time.sleep(_VERIFY_INTERVAL_SECONDS)
+
+        confirmed = self.is_scene_active(scene_name) == want_active
+        if not confirmed:
+            _LOGGER.warning(
+                "Scene '%s' did not reach active=%s on the gateway within "
+                "%d attempts (~%ds) - proceeding anyway; a later regular "
+                "poll cycle should still pick up the change once the "
+                "gateway catches up.",
+                scene_name,
+                want_active,
+                _VERIFY_ATTEMPTS,
+                int((_VERIFY_ATTEMPTS - 1) * _VERIFY_INTERVAL_SECONDS),
+            )
+        return confirmed
+
     def add_member_to_scene(self, room_id, scene_name: str) -> None:
         rooms = self.api.get_scene_rooms(scene_name)
         if room_id not in rooms:
@@ -46,6 +107,8 @@ class SceneManager:
             # Re-trigger so the new member picks up the active scene state.
             self.api.set_scene(scene_name, active=False, duration=duration)
         self.api.set_scene(scene_name, active=True, duration=duration)
+
+        self._wait_for_scene_active_state(scene_name, want_active=True)
 
     def remove_member_from_scene(self, room_id, scene_name: str) -> None:
         rooms = self.api.get_scene_rooms(scene_name)
@@ -65,4 +128,7 @@ class SceneManager:
         # gateway's firmware regardless of wire encoding; set_scene(
         # active=False) above already fully deactivates the scene.
 
-        self.api.set_scene(scene_name, active=len(remaining_rooms) > 0, duration=duration)
+        want_active = len(remaining_rooms) > 0
+        self.api.set_scene(scene_name, active=want_active, duration=duration)
+
+        self._wait_for_scene_active_state(scene_name, want_active=want_active)
