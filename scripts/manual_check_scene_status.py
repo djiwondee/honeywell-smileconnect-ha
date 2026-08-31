@@ -31,13 +31,12 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO_ROOT / "custom_components"))
 
-from honeywell_smileconnect.api.apiMethods import ApiMethods  # noqa: E402
+from honeywell_smileconnect.api.api_methods import ApiMethods  # noqa: E402
 from honeywell_smileconnect.api.login import Login  # noqa: E402
 
 
 def main() -> None:
-    host = input(
-        "Gateway host/IP [192.168.1.132]: ").strip() or "192.168.1.132"
+    host = input("Gateway host/IP [192.168.1.132]: ").strip() or "192.168.1.132"
     username = input("Username: ").strip()
     password = getpass.getpass("Password (hidden): ")
     base_url = f"http://{host}"

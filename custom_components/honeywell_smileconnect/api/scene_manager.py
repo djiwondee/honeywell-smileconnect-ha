@@ -7,7 +7,7 @@ a multi-room installation.
 """
 from __future__ import annotations
 
-from .apiMethods import ApiMethods
+from .api_methods import ApiMethods
 
 
 class SceneManager:

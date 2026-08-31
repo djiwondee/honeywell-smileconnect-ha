@@ -14,7 +14,7 @@ from datetime import timedelta
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 
-from .api.apiMethods import ApiMethods
+from .api.api_methods import ApiMethods
 from .api.login import Login
 
 _LOGGER = logging.getLogger(__name__)
@@ -62,7 +62,7 @@ class SmileConnectCoordinator(DataUpdateCoordinator):
         try:
             rooms = await self.hass.async_add_executor_job(self.api.get_rooms_list)
             weather = await self.hass.async_add_executor_job(self.api.get_weather)
-        except Exception as err:  # noqa: BLE001 - surfaced via UpdateFailed
+        except Exception as err:
             raise UpdateFailed(f"Error communicating with gateway: {err}") from err
 
         return {"rooms": rooms, "weather": weather}

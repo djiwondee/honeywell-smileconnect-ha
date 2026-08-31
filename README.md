@@ -1,6 +1,11 @@
 # Honeywell Smile Connect — Home Assistant Integration
 
 [![hacs_badge](https://img.shields.io/badge/HACS-Custom-orange.svg)](https://github.com/hacs/integration)
+[![Version](https://img.shields.io/badge/version-0.0.9-yellow.svg)](https://github.com/djiwondee/honeywell-smileconnect-ha/releases)
+[![Status](https://img.shields.io/badge/status-pre--alpha-orange.svg)](CLAUDE.md#versioning--branching-strategy)
+[![License](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
+[![Validate](https://github.com/djiwondee/honeywell-smileconnect-ha/actions/workflows/validate.yml/badge.svg)](https://github.com/djiwondee/honeywell-smileconnect-ha/actions/workflows/validate.yml)
+[![Lint](https://github.com/djiwondee/honeywell-smileconnect-ha/actions/workflows/lint.yml/badge.svg)](https://github.com/djiwondee/honeywell-smileconnect-ha/actions/workflows/lint.yml)
 
 A HACS-compatible Home Assistant custom integration for the **Honeywell Smile
 Connect** heating gateway (model **SCN-10**).

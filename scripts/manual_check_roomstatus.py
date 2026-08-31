@@ -42,7 +42,7 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO_ROOT / "custom_components"))
 
-from honeywell_smileconnect.api.apiMethods import ApiMethods  # noqa: E402
+from honeywell_smileconnect.api.api_methods import ApiMethods  # noqa: E402
 from honeywell_smileconnect.api.login import Login  # noqa: E402
 from honeywell_smileconnect.api.scene_manager import SceneManager  # noqa: E402
 from honeywell_smileconnect.const import SceneName  # noqa: E402
@@ -69,8 +69,7 @@ def prompt_action(scene_name: str) -> str:
 
 
 def main() -> None:
-    host = input(
-        "Gateway host/IP [192.168.1.132]: ").strip() or "192.168.1.132"
+    host = input("Gateway host/IP [192.168.1.132]: ").strip() or "192.168.1.132"
     username = input("Username: ").strip()
     password = getpass.getpass("Password (hidden): ")
     base_url = f"http://{host}"
@@ -91,14 +90,12 @@ def main() -> None:
     print("Rooms found:")
     for i, room in enumerate(rooms):
         status = room["data"].get("roomstatus")
-        print(
-            f"  [{i}] {room['name']} (id={room['data']['id']}, current roomstatus={status})")
+        print(f"  [{i}] {room['name']} (id={room['data']['id']}, current roomstatus={status})")
 
     if len(rooms) == 1:
         room_idx = 0
     else:
-        room_idx = int(
-            input(f"Which room to test? [0-{len(rooms) - 1}]: ").strip())
+        room_idx = int(input(f"Which room to test? [0-{len(rooms) - 1}]: ").strip())
 
     room_id = rooms[room_idx]["data"]["id"]
     room_name = rooms[room_idx]["name"]
@@ -122,11 +119,9 @@ def main() -> None:
 
             print("Re-fetching room list ...")
             updated_rooms = api.get_rooms_list()
-            updated_room = next(
-                r for r in updated_rooms if r["data"]["id"] == room_id)
+            updated_room = next(r for r in updated_rooms if r["data"]["id"] == room_id)
             observed_status = updated_room["data"].get("roomstatus")
-            print(
-                f"--> Observed roomstatus while {scene_name} is active: {observed_status}")
+            print(f"--> Observed roomstatus while {scene_name} is active: {observed_status}")
             results[scene_name] = observed_status
 
         except Exception as exc:  # noqa: BLE001 - diagnostic script, show and continue
@@ -139,10 +134,8 @@ def main() -> None:
                 scene_manager.remove_member_from_scene(room_id, scene_name)
                 print("Deactivated.")
             except Exception as exc:  # noqa: BLE001
-                print(
-                    f"WARNING: could not clean up {scene_name} automatically: {exc}")
-                print(
-                    "Please check your gateway/app manually to confirm the scene is off.")
+                print(f"WARNING: could not clean up {scene_name} automatically: {exc}")
+                print("Please check your gateway/app manually to confirm the scene is off.")
 
     print(f"\n{'=' * 60}")
     print("SUMMARY: scene -> observed roomstatus")

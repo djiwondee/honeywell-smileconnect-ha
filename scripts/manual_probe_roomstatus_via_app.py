@@ -43,7 +43,7 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO_ROOT / "custom_components"))
 
-from honeywell_smileconnect.api.apiMethods import ApiMethods  # noqa: E402
+from honeywell_smileconnect.api.api_methods import ApiMethods  # noqa: E402
 from honeywell_smileconnect.api.login import Login  # noqa: E402
 
 # Shower/Towel deliberately excluded - no hot water control on this
@@ -57,15 +57,13 @@ def read_state(api: ApiMethods, room_id) -> dict:
     roomstatus = room["data"].get("roomstatus")
 
     scene_status = api.get_scene_status()
-    active_scenes = [s["name"]
-                     for s in scene_status.get("scenes", []) if s.get("isActive")]
+    active_scenes = [s["name"] for s in scene_status.get("scenes", []) if s.get("isActive")]
 
     return {"roomstatus": roomstatus, "active_scenes": active_scenes}
 
 
 def main() -> None:
-    host = input(
-        "Gateway host/IP [192.168.1.132]: ").strip() or "192.168.1.132"
+    host = input("Gateway host/IP [192.168.1.132]: ").strip() or "192.168.1.132"
     username = input("Username: ").strip()
     password = getpass.getpass("Password (hidden): ")
     base_url = f"http://{host}"
@@ -88,8 +86,7 @@ def main() -> None:
     if len(rooms) == 1:
         room_idx = 0
     else:
-        room_idx = int(input(
-            f"Which room will you be changing modes for? [0-{len(rooms) - 1}]: ").strip())
+        room_idx = int(input(f"Which room will you be changing modes for? [0-{len(rooms) - 1}]: ").strip())
     room_id = rooms[room_idx]["data"]["id"]
     room_name = rooms[room_idx]["name"]
     print(f"\nProbing against room: {room_name} (id={room_id})\n")
@@ -98,30 +95,25 @@ def main() -> None:
 
     for mode in MODES_TO_PROBE:
         print(f"\n{'=' * 60}")
-        print(
-            f"Please set room '{room_name}' to mode '{mode}' now, via the Smile App")
+        print(f"Please set room '{room_name}' to mode '{mode}' now, via the Smile App")
         print("(remember to select the correct room in the app).")
         print(f"{'=' * 60}")
-        answer = input(
-            "Press Enter once done, or type 's' to skip this mode: ").strip().lower()
+        answer = input("Press Enter once done, or type 's' to skip this mode: ").strip().lower()
         if answer == "s":
             print(f"Skipped {mode}.")
             results[mode] = {"roomstatus": "SKIPPED", "active_scenes": []}
             continue
 
         state = read_state(api, room_id)
-        print(
-            f"--> roomstatus = {state['roomstatus']}, gateway-reported active scene(s) = {state['active_scenes']}")
+        print(f"--> roomstatus = {state['roomstatus']}, gateway-reported active scene(s) = {state['active_scenes']}")
         results[mode] = state
 
     print(f"\n{'=' * 60}")
     print("SUMMARY: mode (set via app) -> roomstatus / gateway-active scene(s)")
     print(f"{'=' * 60}")
     for mode in MODES_TO_PROBE:
-        r = results.get(
-            mode, {"roomstatus": "NOT TESTED", "active_scenes": []})
-        print(
-            f"  {mode:10s} -> roomstatus={r['roomstatus']!s:6s}  active_scenes={r['active_scenes']}")
+        r = results.get(mode, {"roomstatus": "NOT TESTED", "active_scenes": []})
+        print(f"  {mode:10s} -> roomstatus={r['roomstatus']!s:6s}  active_scenes={r['active_scenes']}")
     print(f"{'=' * 60}")
     print("\nThis script changed nothing - please set the room back to your")
     print("normal/preferred mode via the Smile App now if needed.")

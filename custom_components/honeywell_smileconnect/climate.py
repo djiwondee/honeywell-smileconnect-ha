@@ -39,6 +39,7 @@
 from __future__ import annotations
 
 import logging
+from typing import ClassVar
 
 from homeassistant.components.climate import (
     ClimateEntity,
@@ -103,9 +104,9 @@ class SmileConnectClimate(CoordinatorEntity, ClimateEntity):
     # schedule and stay off" (OFF, Standby scene active). Frost protection
     # is always enforced by the regler itself regardless of either state
     # and is not something the gateway/this integration can control.
-    _attr_hvac_modes = [HVACMode.AUTO, HVACMode.OFF]
+    _attr_hvac_modes: ClassVar[list[HVACMode]] = [HVACMode.AUTO, HVACMode.OFF]
     # No "none"/PRESET_NONE entry here on purpose - see class docstring.
-    _attr_preset_modes = [
+    _attr_preset_modes: ClassVar[list[str]] = [
         SceneName.BOOST.value,
         SceneName.HOLIDAY.value,
         SceneName.LEAVE.value,

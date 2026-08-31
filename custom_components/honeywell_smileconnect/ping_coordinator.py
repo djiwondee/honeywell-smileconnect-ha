@@ -43,7 +43,7 @@ class SmileConnectPingCoordinator(DataUpdateCoordinator):
     async def _async_update_data(self) -> dict:
         try:
             return await self.hass.async_add_executor_job(ping_api.ping, self.base_url)
-        except Exception as err:  # noqa: BLE001
+        except Exception as err:
             # A failed ping is meaningful data (gateway unreachable), but
             # UpdateFailed is still the correct HA mechanism here: it marks
             # the connectivity/response-time entities "unavailable" rather

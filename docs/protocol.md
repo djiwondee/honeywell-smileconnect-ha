@@ -64,7 +64,7 @@ After a successful login, the client holds:
 ```
 
 > ⚠️ Difference from the generic HeatApp protocol: standard HeatApp replaces
-> `&` with `|` for the signature computation (see `apiRequest.py` in the
+> `&` with `|` for the signature computation (see `api_request.py` in the
 > legacy code: `.replace('&', '|')`), which is structurally equivalent to
 > "building with pipes from the start". On Honeywell this was observed as
 > pipe-native directly in the admin console code — functionally equivalent,

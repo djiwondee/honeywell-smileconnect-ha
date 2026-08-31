@@ -32,7 +32,7 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO_ROOT / "custom_components"))
 
-from honeywell_smileconnect.api.apiMethods import ApiMethods  # noqa: E402
+from honeywell_smileconnect.api.api_methods import ApiMethods  # noqa: E402
 from honeywell_smileconnect.api.login import Login  # noqa: E402
 
 

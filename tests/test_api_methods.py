@@ -4,7 +4,7 @@
 #   kind of test that would have caught the missing-actualTemperature
 #   KeyError regression before it reached a live Home Assistant instance -
 #   see CLAUDE.md "Still untested / open" -> now resolved for this field.
-"""Tests for honeywell_smileconnect.api.apiMethods, using a real gateway
+"""Tests for honeywell_smileconnect.api.api_methods, using a real gateway
 response fixture rather than the generic (and, as it turned out,
 inaccurate) HeatApp reference fixtures this project was bootstrapped from.
 """
@@ -13,7 +13,7 @@ from __future__ import annotations
 from unittest.mock import MagicMock
 
 from .conftest import load_fixture
-from custom_components.honeywell_smileconnect.api.apiMethods import ApiMethods
+from custom_components.honeywell_smileconnect.api.api_methods import ApiMethods
 
 
 def _make_api_methods_with_mocked_request(fixture_payload: dict) -> ApiMethods:

@@ -10,7 +10,10 @@ from __future__ import annotations
 
 import logging
 
-from homeassistant.components.binary_sensor import BinarySensorDeviceClass, BinarySensorEntity
+from homeassistant.components.binary_sensor import (
+    BinarySensorDeviceClass,
+    BinarySensorEntity,
+)
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import EntityCategory
 from homeassistant.core import HomeAssistant
@@ -18,7 +21,7 @@ from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
 from . import device
-from .const import DOMAIN, BINARY_SENSOR_TRANSLATION_KEY_CONNECTIVITY
+from .const import BINARY_SENSOR_TRANSLATION_KEY_CONNECTIVITY, DOMAIN
 from .ping_coordinator import SmileConnectPingCoordinator
 
 _LOGGER = logging.getLogger(__name__)

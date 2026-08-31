@@ -2,7 +2,7 @@
 # - 2026-08-27: Initial version. Uses the real /api/weather response
 #   captured manually via scripts/manual_check_weather.py (see CLAUDE.md
 #   "Test Suite" section for the capture-then-test pattern this follows).
-"""Tests for honeywell_smileconnect.api.apiMethods.get_weather(), using a
+"""Tests for honeywell_smileconnect.api.api_methods.get_weather(), using a
 real gateway response fixture rather than an unverified assumption.
 """
 from __future__ import annotations
@@ -10,7 +10,7 @@ from __future__ import annotations
 from unittest.mock import MagicMock
 
 from .conftest import load_fixture
-from custom_components.honeywell_smileconnect.api.apiMethods import ApiMethods
+from custom_components.honeywell_smileconnect.api.api_methods import ApiMethods
 
 
 class TestGetWeatherWithRealFixture:

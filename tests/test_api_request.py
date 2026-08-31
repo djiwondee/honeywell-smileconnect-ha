@@ -3,7 +3,7 @@
 #   construction rules extracted from request.getRequestSignature() (see
 #   CLAUDE.md "Pipe-string construction" section). Locks in sorting, array
 #   rendering, and None-filtering behaviour.
-"""Tests for honeywell_smileconnect.api.apiRequest._build_pipe_signature_string.
+"""Tests for honeywell_smileconnect.api.api_request._build_pipe_signature_string.
 
 These encode the exact rules reverse-engineered from the gateway's own JS:
 keys sorted alphabetically, values joined as key=value|key=value|...| with
@@ -13,7 +13,7 @@ None values dropped entirely rather than rendered as "None".
 """
 from __future__ import annotations
 
-from custom_components.honeywell_smileconnect.api.apiRequest import ApiRequest
+from custom_components.honeywell_smileconnect.api.api_request import ApiRequest
 from custom_components.honeywell_smileconnect.api.credentials import Credentials
 from custom_components.honeywell_smileconnect.api.default_params import DefaultApiParams
 

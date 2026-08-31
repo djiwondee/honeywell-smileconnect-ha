@@ -1,6 +1,6 @@
 """Unauthenticated /api/ping endpoint - gateway reachability check.
 
-Deliberately independent from login.py/credentials.py/apiRequest.py: the
+Deliberately independent from login.py/credentials.py/api_request.py: the
 whole point of this endpoint is to report reachability even when
 authentication itself is broken, so it must not depend on any authenticated
 session state, device token, or signing logic. See CLAUDE.md "Known API

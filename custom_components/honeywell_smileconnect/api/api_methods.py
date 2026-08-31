@@ -5,9 +5,15 @@ original reverse-engineering scaffold. Endpoints marked "verified" have been
 tested against a real SCN-10 gateway; others are ports of the generic
 HeatApp shape and should be re-verified before relying on them.
 """
+# Change log:
+# - 2026-08-30: Renamed from apiMethods.py to api_methods.py for PEP 8 /
+#   ruff N999 compliance (module names must be snake_case). The ApiMethods
+#   class name itself is unchanged - only the file/import path changed.
+#   All internal and external references updated in the same commit; see
+#   CLAUDE.md for the full list of touched files.
 from __future__ import annotations
 
-from .apiRequest import ApiRequest
+from .api_request import ApiRequest
 from .credentials import Credentials
 from .default_params import DefaultApiParams
 

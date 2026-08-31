@@ -142,7 +142,7 @@ function(devicetoken, params) {
 }
 ```
 
-Rules, all implemented in `api/apiRequest.py`:
+Rules, all implemented in `api/api_request.py`:
 - Parameters sorted alphabetically by key.
 - `None`/`undefined` values are dropped **entirely** — both from the
   signature string and from the actual request body (never send a
@@ -333,7 +333,7 @@ GET  /admin/login/index            (returns HTML of the config menu)
   structure bug, and the `config_flow.py` rework that added the
   `/api/ping`-derived `unique_id` and the options flow together.
 - **Expose switching times** (`get_switching_times`/`set_switching_times`
-  already implemented in `api/apiMethods.py`) via a service or entity — not
+  already implemented in `api/api_methods.py`) via a service or entity — not
   currently wired to anything in the HA integration layer.
 - **Reconnect/error handling strategy** — currently the coordinator would
   presumably just re-login every refresh cycle on failure; this works but
@@ -382,7 +382,7 @@ applied across multiple attempts:
    tests scripts docs` + re-extracting a complete, freshly-verified
    project ZIP) after many rounds of incremental copy/paste patches had
    plausibly caused local file drift (a stale or partially-overwritten
-   `api/apiMethods.py` or similar, without either side noticing).
+   `api/api_methods.py` or similar, without either side noticing).
 
 **Honest conclusion: the exact root cause was never conclusively isolated.**
 It may have been local file drift/corruption from many incremental patch
@@ -560,14 +560,23 @@ construct a `device_info` dict inline.
   standalone, testable module (potentially extractable into its own PyPI
   package later, similar to `py-heatapp-de`, but under a new name to avoid
   any compatibility confusion).
+  > **Historical note (2026-08-30):** `api_methods.py`/`api_request.py`
+  > were originally named `apiMethods.py`/`apiRequest.py` (camelCase,
+  > left over from the very first bootstrap). Renamed to snake_case for
+  > PEP 8 / `ruff` `N999` compliance, once `lint.yml` CI was added and
+  > flagged it. The `ApiMethods`/`ApiRequest` **class names** did NOT
+  > change, only the file names and their import paths — if you ever see
+  > a reference to `apiMethods.py`/`apiRequest.py` (e.g. in an old commit,
+  > an old chat, or muscle memory), it means `api_methods.py`/
+  > `api_request.py` now.
   - `crypto.py` — shared PBKDF2/SHA-512 primitives (`string_to_charcodes`,
-    `pbkdf2_base64`), used by both `login.py` and `apiRequest.py`. Keep
+    `pbkdf2_base64`), used by both `login.py` and `api_request.py`. Keep
     this the single source of truth for the crypto scheme — do not
     reimplement it inline elsewhere.
   - `login.py` — challenge/response login, password hashing, AES devicetoken
     decryption.
-  - `apiRequest.py` — signs and executes authenticated requests.
-  - `apiMethods.py` — high-level per-endpoint methods.
+  - `api_request.py` — signs and executes authenticated requests.
+  - `api_methods.py` — high-level per-endpoint methods.
   - `scene_manager.py` — add/remove a room from a scene (handles the
     getrooms/setrooms/set sequencing).
   - `credentials.py` — session state, including `reqcount` with correct
@@ -683,6 +692,29 @@ install, since this was implemented without live HA available)
   `homeassistant` PyPI package installed here. Rely on the GitHub Action
   (`.github/workflows/validate.yml`) after pushing instead of trying to
   invoke it locally.
+- A separate `.github/workflows/lint.yml` runs `ruff check` against
+  `custom_components/` only on every push/PR — deliberately scoped to just
+  the actually-shipped integration code, not `tests/` or `scripts/` (those
+  are dev-only helpers never loaded by Home Assistant or checked by
+  `hassfest`/HACS, and the manual diagnostic scripts in particular use a
+  deliberately loose style — broad `except Exception`, interactive
+  prompts — that isn't worth linting for a HACS integration). This CAN and
+  SHOULD be run locally before pushing — `pip install ruff && ruff check
+  custom_components/` — since `ruff` has no dependency on a full Home
+  Assistant checkout.
+- **`BLE001` ("do not catch blind exception") is genuinely active** in
+  ruff's default rule set — a broad `except Exception` is only flagged
+  when it is the SOLE handler in its `try` (no more specific `except`
+  before it) AND does not re-raise. Broad excepts that re-raise a more
+  specific exception, or that follow other specific `except` clauses in
+  the same `try`, are correctly left unflagged. `config_flow.py`'s
+  `validate_input()` ping-fallback is the one deliberate exception to
+  this in the codebase — a standalone broad catch, by design, so setup
+  never blocks just because the diagnostic `/api/ping` call had a
+  hiccup — and carries a justified `# noqa: BLE001` for exactly that
+  reason. Don't remove it, and don't add new bare `# noqa: BLE001`
+  comments elsewhere without first checking whether `ruff` actually
+  flags that specific line (most won't need one).
 
 ## Conventions
 
@@ -810,3 +842,11 @@ must not proceed carelessly.
 - When proposing a plan (per the Session Workflow rules above), also
   propose the appropriate version bump and, once beta status applies,
   the branch name to use.
+- **README badge maintenance:** `README.md`'s badge row includes a static
+  `version-x.y.z` badge (not auto-updating) and a `status-pre--alpha`/
+  `status-beta` badge reflecting the tier above. Whenever `manifest.json`'s
+  `version` is bumped, update the version badge to match in the same
+  commit; whenever the project actually transitions from pre-alpha to
+  beta status, update the status badge's text/color/link accordingly
+  (e.g. to `status-beta-yellow.svg` or similar) rather than leaving it
+  saying "pre-alpha" past that point.

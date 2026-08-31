@@ -25,7 +25,7 @@
 #   work").
 """Shared pytest fixtures and import path setup for this project's tests.
 
-The `api/` layer (crypto, login, apiRequest, apiMethods, credentials,
+The `api/` layer (crypto, login, api_request, api_methods, credentials,
 scene_manager, ping) and `device.py` have no Home Assistant dependency by
 design (see CLAUDE.md, "Integration Architecture"), so these tests import
 them directly without requiring the full pytest-homeassistant-custom-

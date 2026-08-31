@@ -75,7 +75,7 @@ async def validate_input(hass: core.HomeAssistant, data: dict) -> dict:
         await hass.async_add_executor_job(login.authorize, data[CONF_USER], data[CONF_PASSWORD])
     except ValueError as err:
         raise InvalidAuth from err
-    except Exception as err:  # noqa: BLE001
+    except Exception as err:
         raise CannotConnect from err
 
     unique_id = f"host:{data[CONF_HOST]}"
@@ -83,7 +83,11 @@ async def validate_input(hass: core.HomeAssistant, data: dict) -> dict:
         ping_response = await hass.async_add_executor_job(ping_api.ping, base_url)
         if ping_response.get("uniqueid"):
             unique_id = ping_response["uniqueid"]
-    except Exception as err:  # noqa: BLE001
+    except Exception as err:  # noqa: BLE001 - deliberately broad: any failure
+        # here (timeout, network error, malformed JSON, ...) must fall back
+        # to a host-based id rather than block setup, since the login above
+        # already proved the gateway itself is reachable and configured
+        # correctly - a diagnostic-endpoint hiccup shouldn't be fatal here.
         _LOGGER.warning(
             "Could not reach /api/ping during setup to capture a stable "
             "device id; falling back to a host-based id. Error: %s",
@@ -109,7 +113,7 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             errors["base"] = "cannot_connect"
         except InvalidAuth:
             errors["base"] = "invalid_auth"
-        except Exception:  # noqa: BLE001
+        except Exception:
             _LOGGER.exception("Unexpected exception during config flow")
             errors["base"] = "unknown"
         else:
@@ -125,7 +129,7 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     @callback
     def async_get_options_flow(
         config_entry: config_entries.ConfigEntry,
-    ) -> "OptionsFlowHandler":
+    ) -> OptionsFlowHandler:
         return OptionsFlowHandler()
 
 
@@ -150,7 +154,7 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
                 errors["base"] = "cannot_connect"
             except InvalidAuth:
                 errors["base"] = "invalid_auth"
-            except Exception:  # noqa: BLE001
+            except Exception:
                 _LOGGER.exception("Unexpected exception during options flow")
                 errors["base"] = "unknown"
             else:

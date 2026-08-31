@@ -20,6 +20,10 @@ CLAUDE.md and docs/protocol.md):
    form is only used to compute the signature), plus request_signature
    appended as an extra field.
 """
+# Change log:
+# - 2026-08-30: Renamed from apiRequest.py to api_request.py for PEP 8 /
+#   ruff N999 compliance (module names must be snake_case). The ApiRequest
+#   class name itself is unchanged - only the file/import path changed.
 from __future__ import annotations
 
 import json
