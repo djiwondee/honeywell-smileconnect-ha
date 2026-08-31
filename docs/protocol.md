@@ -49,12 +49,30 @@ After a successful login, the client holds:
 ```
 1. Sort all body parameters alphabetically by key.
 2. Serialize values to strings:
-   - Arrays: "[a,b,c]" (brackets, comma-separated, no spaces)
+   - Booleans: lowercase "true"/"false" — NOT Python's capitalized
+     "True"/"False" and NOT "1"/"0". Mirrors JavaScript's own string-
+     coercion (`"active=" + false` → `"active=false"` in JS). Getting
+     this wrong caused a real production bug: `/api/scene/set(active=
+     False)` always returned `success:true` while the gateway silently
+     never actually changed the scene's active state - see CLAUDE.md for
+     the full story.
+   - Arrays with 2+ elements: "[a,b,c]" (brackets, comma-separated, no spaces)
    - single-element array: just the value, no brackets
-   - scalars: plain string representation
+   - EMPTY array: the literal string "undefined" — NOT an empty string.
+     Mirrors the gateway's own JS exactly: `g.length<2 ? f+"="+g[0] : ...`
+     - for an empty array, `g[0]` is JavaScript's `undefined`, and string-
+     concatenation coerces it into the literal text "undefined". Getting
+     this wrong (sending a genuinely empty value) caused a real production
+     bug: the gateway's firmware hangs/times out (10s ReadTimeout observed)
+     rather than returning a clean error when `/api/scene/setrooms`
+     receives an empty `rooms=` value - see CLAUDE.md for the full story.
+   - scalars (numbers, strings): plain string representation
 3. Build the data string: "key1=val1|key2=val2|...|"   (pipe, NOT &, with
    a trailing pipe)
-4. Signature = MD5(data_string + devicetoken)
+4. Signature = Base64(PBKDF2-HMAC-SHA512(...)) — see §1 above for the full
+   scheme; this is NOT plain MD5(data_string + devicetoken), which was an
+   early, incorrect assumption carried over from the generic HeatApp
+   reference project.
 5. Insert additional required fields BEFORE computing the signature:
    udid, userid, reqcount  (reqcount incremented per request)
 6. Final request body: all original parameters + udid + userid + reqcount
@@ -205,7 +223,25 @@ rather than a string, which HA renders natively as "no preset selected".
 
 - [ ] Verify the exact PBKDF2/SHA512 parameters for password hashing
 - [ ] Confirm the AES decrypt IV on Honeywell (identical to standard HeatApp?)
-- [ ] Test `setrooms` behavior before scene activation (order dependency)
+- [x] **`setrooms` behavior before scene activation** — RESOLVED
+      (2026-08-30), but not the way originally framed: it was never an
+      ordering question, and it wasn't purely a wire-encoding problem
+      either (though a real encoding bug was found and fixed along the
+      way — array-valued parameters like `rooms` were rendered via
+      Python's default `str()` on the raw list instead of the protocol's
+      actual format, and empty arrays specifically needed the literal
+      string `"undefined"`, not an empty string, matching the gateway's
+      own JS `undefined`-coercion behavior). **The actual root cause:**
+      `/api/scene/setrooms` with a genuinely empty room list appears to
+      hang the gateway's firmware itself (10-second `ReadTimeout`,
+      reproduced identically under two different encodings of the empty
+      value) — this is a device-side limitation, not something fixable
+      via request formatting. **Real fix:** avoid ever calling
+      `/api/scene/setrooms` with an empty list — when removing the
+      last/only room from a scene, `/api/scene/set(active=false)` alone
+      is sufficient to deactivate it; there is no need to also clear room
+      membership to zero. See `api_request.py`'s and `scene_manager.py`'s
+      change logs, and CLAUDE.md, for the full multi-round story.
 - [x] **Decimal temperature values (e.g. 20.5 °C)** — RESOLVED
       (2026-08-30): dot notation (`24.5`) is correctly interpreted by
       `/api/room/settemperature`, no comma conversion needed. Verified via

@@ -303,7 +303,104 @@ GET  /admin/login/index            (returns HTML of the config menu)
   missing). ~~`climate.py`'s own `min_temp`/`max_temp` properties still use
   `minTemperature`/`maxTemperature`~~ **FIXED (2026-08-30)** — now use
   `scheduleTempMin`/`scheduleTempMax` with the same fallback chain.
-- Behavior of `setrooms` **before** scene activation (does order matter?)
+- ~~Behavior of `setrooms` **before** scene activation (does order
+  matter?)~~ **SUPERSEDED (2026-08-30) by a much more significant finding:**
+  it wasn't an ordering question at all — `api_request.py`'s HTTP body
+  construction had a real bug where array-valued parameters (like
+  `scene/setrooms`'s `rooms` field) were sent using Python's default
+  `str()` on the raw list, producing `"[1]"` for a single room (should be
+  the bare `"1"`) and `"[6, 7, 8, 9]"` with spaces for multiple rooms
+  (should be `"[6,7,8,9]"`, no spaces) — diverging from both the signature
+  string AND the protocol's documented wire format. Since this project's
+  test installation has exactly one room, **every single scene
+  add/remove call** went through the single-element-list bug path,
+  plausibly explaining several previously-observed anomalies attributed
+  to other causes (Standby-stacking, timing) at the time — including
+  production HA reports of inconsistent preset/hvac_mode switching
+  (sometimes working, sometimes not) and possibly the very first
+  `manual_check_roomstatus.py` run showing `roomstatus` stuck at
+  `12`/Standby regardless of which scene was toggled. Fixed by extracting
+  a single `_render_value()` helper used for BOTH the signature string and
+  the actual body now, so they cannot diverge again by construction. See
+  `api_request.py`'s own change log and `tests/test_api_request.py`'s new
+  `TestRequestBodyMatchesSignature` class (which inspects the actual body
+  sent, not just the signature computation — a test that only covered
+  `_build_pipe_signature_string()` in isolation would NOT have caught
+  this, since that function itself was always correct).
+- **Follow-up to the above, found immediately after deploying the first
+  fix (2026-08-30): a second, more subtle bug in the same area.** The
+  first fix's `_render_value()` rendered an EMPTY array as an empty
+  string (`""`). Re-deriving the exact JS one more time
+  (`g.length<2 ? f+"="+g[0] : ...`) revealed that for an empty array,
+  `g[0]` is JavaScript's `undefined`, and JS string-concatenation coerces
+  `undefined` into the literal text `"undefined"` — NOT an empty string.
+  This wrong assumption was present from the very first version of
+  `api_request.py` and had never been exercised against a live gateway
+  until the user tried deactivating `Standby` on this single-room
+  installation (which calls `set_scene_rooms("Standby", [])` — the empty-
+  list case) and got a 10-second `ReadTimeout` from the gateway — its
+  firmware appears to hang on a genuinely empty `rooms=` value rather
+  than returning a clean error. Fixed: empty arrays now render as the
+  literal string `"undefined"`, matching the real JS behavior exactly.
+  **Lesson: when re-deriving protocol behavior from extracted JS, trace
+  through JavaScript's own type-coercion rules literally (e.g. what does
+  `x[0]` evaluate to on an empty array, and what does string-concatenating
+  that actually produce) rather than substituting the "obviously sensible"
+  Python equivalent (empty string) — the two are not always the same, and
+  this project has now hit that gap twice in the same function.**
+- **Third round on the same issue (2026-08-30): the `"undefined"` fix
+  above did NOT resolve the timeout.** The exact same 10-second
+  `ReadTimeout` on `/api/scene/setrooms` recurred, with the corrected
+  wire encoding in place — proving conclusively that this was never a
+  wire-format/encoding problem at all. **The gateway's firmware appears
+  unable to handle `/api/scene/setrooms` with a genuinely empty room list
+  under any encoding.** The `_render_value()`/`"undefined"` fix is still
+  correct and kept (it fixes the signature/body consistency issue, a
+  real bug in its own right), but it does not address this deeper
+  limitation. **Real fix: avoid calling `/api/scene/setrooms` with an
+  empty list at all.** `scene_manager.remove_member_from_scene()` now
+  skips that call entirely when removing the last room from a scene —
+  the same failing production log showed `/api/scene/set(active=False)`
+  completing successfully just before the `setrooms` call that hung, so
+  deactivating the scene alone is apparently sufficient; there is no need
+  to also clear room membership to zero. See `scene_manager.py`'s own
+  change log and the new `tests/test_scene_manager.py` (this project's
+  first tests for that module at all — a real gap, given how much this
+  function has been at the center of production bugs). **Lesson: don't
+  assume a fix is complete just because it's principled and well-derived
+  — verify against the real gateway before declaring victory, especially
+  for anything involving edge cases (empty collections, boundary values)
+  that a generic reference implementation may never have exercised either.**
+- **Fourth round on the same issue (2026-08-30): a fourth, DIFFERENT bug
+  in the same function, found immediately after the empty-list-skip fix
+  eliminated the timeout.** No more timeout, but `/api/scene/set(active=
+  False)` always returned `success:true` while the scene never actually
+  deactivated — confirmed via live log: a `scene/status` poll immediately
+  after showed `Standby` still `isActive:true`, repeatedly, across
+  multiple user attempts. Root cause: `active` is a Python `bool`, and
+  `_render_value()` fell through to plain `str()` for it — producing
+  `"True"`/`"False"` (Python-capitalized). The gateway's own JS coerces
+  booleans to lowercase `"true"`/`"false"` in string concatenation
+  (`"active=" + false` → `"active=false"` in JS) — same class of bug as
+  the empty-array case two rounds ago (Python's "obviously equivalent"
+  stringification differing from JavaScript's actual coercion rules), just
+  affecting a different value type. Fixed by adding an explicit `bool`
+  branch to `_render_value()`, checked before the list/tuple and generic
+  `str()` branches (`bool` is a subclass of `int` in Python — must never
+  render as `"1"`/`"0"` either). Verified this was the ONLY boolean
+  write-parameter in the entire codebase (`params.active` in
+  `api_methods.set_scene()`), so the fix's blast radius is fully
+  understood. **This makes it four real, previously-undiscovered
+  protocol bugs found in one single function (`api_request.py`'s request
+  body construction) within about two hours of live production testing —
+  all stemming from the same root pattern: assuming Python's default
+  stringification of a value matches what the gateway's own JavaScript
+  would produce, when it silently doesn't for arrays and booleans
+  specifically. Numbers and plain strings were never a problem. If a
+  FIFTH such type ever needs sending (e.g. `None`/null, though that's
+  already handled separately by being filtered out entirely), check its
+  JS string-coercion behavior explicitly before assuming str() is
+  correct.**
 - ~~**Decimal temperature values (e.g. 20.5 °C)**~~ **RESOLVED
   (2026-08-30).** Dot notation (`24.5`) is correctly interpreted by
   `/api/room/settemperature` — no comma conversion needed, unlike the
