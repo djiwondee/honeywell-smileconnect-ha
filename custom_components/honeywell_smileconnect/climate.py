@@ -1,5 +1,35 @@
 """Climate platform for Honeywell Smile Connect."""
 # Change log:
+# - 2026-08-31: Fixed hvac_mode display staleness when leaving Standby
+#   (Off -> Auto). Live-verified via scripts/manual_check_standby_
+#   deactivation_timing.py and scripts/manual_check_standby_nudge.py: the
+#   gateway does NOT recompute roomstatus on its own after a scene
+#   deactivation alone - it stayed stuck at 12 (Standby) for 55+s in
+#   testing, despite /api/scene/status already correctly reporting
+#   isActive=False for Standby the whole time (which is what
+#   SceneManager._wait_for_scene_active_state() checks - so that
+#   verification alone could never have caught this; it was checking the
+#   wrong field). Sending back the SAME desiredTemperature value also did
+#   nothing (the gateway's own response to that call already echoed back
+#   the stale roomstatus:12, confirming it treats an unchanged value as a
+#   no-op). Only a genuinely CHANGED desiredTemperature write caused
+#   roomstatus to move (confirmed moving to 11, "plain schedule-
+#   following" baseline, within the very next poll - effectively
+#   immediate). Fix: when leaving Standby, explicitly nudge
+#   desiredTemperature to scheduleTempMax (via the existing max_temp
+#   property) - this exactly mirrors the Smile App's own confirmed
+#   behavior (user-verified daily use: the App always jumps to the
+#   maximum when leaving Standby, and the room's schedule reliably
+#   corrects it back down shortly after - not just a lab observation).
+#   Deliberately NOT modeled as a new entity or config option: this is a
+#   pure protocol workaround for a gateway-side recompute quirk, not a
+#   value any user meaningfully sets themselves - see project discussion.
+#   The nudge call is wrapped in a broad except (deliberate, matches the
+#   existing config_flow.py::validate_input() precedent for a standalone
+#   non-fatal broad catch) since a failure here must not surface as an
+#   error for the hvac_mode switch itself, which already succeeded via
+#   the scene deactivation above regardless of whether this secondary
+#   nudge call works.
 # - 2026-08-30 (b): min_temp/max_temp switched from minTemperature/
 #   maxTemperature (observed identical, 12/12 - not meaningful bounds) to
 #   scheduleTempMin/scheduleTempMax (12/25, confirmed against the real
@@ -262,4 +292,36 @@ class SmileConnectClimate(CoordinatorEntity, ClimateEntity):
             await self.hass.async_add_executor_job(
                 self._scene_manager.remove_member_from_scene, self._room_id, SceneName.STANDBY.value
             )
+            await self._nudge_temperature_after_leaving_standby()
         await self.coordinator.async_request_refresh()
+
+    async def _nudge_temperature_after_leaving_standby(self) -> None:
+        """Force the gateway to recompute roomstatus after leaving Standby.
+
+        Live-verified (scripts/manual_check_standby_nudge.py): the gateway
+        does not recompute roomstatus on its own after a scene
+        deactivation alone, and a re-sent UNCHANGED desiredTemperature is
+        treated as a no-op (no recompute either) - only a genuinely
+        changed value triggers it, immediately. Mirrors the Smile App's
+        own confirmed behavior of always jumping to the maximum when
+        leaving Standby and relying on the schedule to correct it back
+        down shortly after.
+
+        Deliberately non-fatal: this is a secondary display-correctness
+        nudge, not the primary action (the scene deactivation above
+        already succeeded regardless of this call's outcome). A failure
+        here should not surface as an error for the hvac_mode switch
+        itself - worst case, the display just stays stale until the next
+        organic temperature change or the schedule's next switching time,
+        exactly like before this fix.
+        """
+        try:
+            await self.hass.async_add_executor_job(
+                self.coordinator.api.set_temperature, self.max_temp, self._room_id
+            )
+        except Exception:  # noqa: BLE001 - deliberate, see method docstring
+            _LOGGER.warning(
+                "Failed to nudge temperature after leaving Standby for room %s; "
+                "hvac_mode display may stay stale until the next change.",
+                self._room_id,
+            )
