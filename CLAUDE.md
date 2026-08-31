@@ -335,6 +335,25 @@ GET  /admin/login/index            (returns HTML of the config menu)
 - **Expose switching times** (`get_switching_times`/`set_switching_times`
   already implemented in `api/api_methods.py`) via a service or entity — not
   currently wired to anything in the HA integration layer.
+- **Possible future gateway-attached entities from `/api/weather`'s
+  remaining fields** (`iconUrl`, `forlocation`) — deliberately NOT
+  implemented now. Per project discussion: the outside
+  temperature/min/max sensors were confirmed to belong on the **regler**
+  device (the physical sensor hardware is regler-side; the gateway only
+  relays the reading via `/api/weather`) and were deliberately kept there
+  rather than moved to match, specifically to avoid ambiguity if a future
+  installation ever has multiple reglers (the gateway has no way to tell
+  us which regler physically owns a given weather reading, so binding
+  weather sensors to "the first reported room" would be a coin-flip on
+  such a setup — single-regler installations like the current one don't
+  expose this problem, but it would silently misattribute data on a
+  multi-regler one). `iconUrl` (a weather icon/condition) and
+  `forlocation` (the configured location name) are different in kind,
+  though: they are genuinely internet-weather-service data the *gateway*
+  itself fetches (not a regler-side physical measurement), so if/when
+  these are ever turned into entities, they belong on the **gateway**
+  device, not the regler — noted here so a future session doesn't have to
+  re-derive this reasoning.
 - **Reconnect/error handling strategy** — currently the coordinator would
   presumably just re-login every refresh cycle on failure; this works but
   is inefficient and not a deliberate design. Worth revisiting once basic

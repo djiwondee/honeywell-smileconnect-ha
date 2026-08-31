@@ -1,5 +1,13 @@
 """Climate platform for Honeywell Smile Connect."""
 # Change log:
+# - 2026-08-30: Fixed entity_id/display name - was `_attr_name = None`,
+#   producing "climate.haus" (device name only, no entity name component),
+#   which violates the project's own has_entity_name convention (every
+#   other entity combines device name + entity name). Replaced with a real
+#   `_attr_translation_key` ("thermostat"), matching the pattern used
+#   throughout sensor.py/binary_sensor.py - see const.py's own comment for
+#   why "thermostat" was chosen over the German-specific "Regler" for this
+#   particular label (works naturally across all four supported languages).
 # - 2026-08-27 (e): Decoupled hvac_mode from preset_mode entirely, based on
 #   the user's explanation of how "Standby" actually behaves on this
 #   hardware: frost protection is always active at the regler itself and
@@ -55,6 +63,7 @@ from homeassistant.helpers.update_coordinator import CoordinatorEntity
 from . import device
 from .api.scene_manager import SceneManager
 from .const import (
+    CLIMATE_TRANSLATION_KEY_THERMOSTAT,
     DOMAIN,
     ROOM_STATUS_BOOST,
     ROOM_STATUS_HOLIDAY,
@@ -92,7 +101,15 @@ class SmileConnectClimate(CoordinatorEntity, ClimateEntity):
     """
 
     _attr_has_entity_name = True
-    _attr_name = None  # entity display name = its device's name (the regler)
+    # Was previously `_attr_name = None` (entity display name = device name
+    # only), which produced entity_ids like "climate.haus" - violating our
+    # own has_entity_name convention (device name + entity name combined).
+    # Fixed by giving the entity a real translation_key, same pattern as
+    # every other entity in this project. Produces e.g. "climate.haus_
+    # thermostat", displayed as "Haus Thermostat" - see const.py's own
+    # comment for why "thermostat" (not the German-specific "Regler") was
+    # chosen for this particular label.
+    _attr_translation_key = CLIMATE_TRANSLATION_KEY_THERMOSTAT
     _attr_temperature_unit = UnitOfTemperature.CELSIUS
     _attr_target_temperature_step = 0.5
     _attr_supported_features = (

@@ -50,16 +50,25 @@ DEFAULT_PING_INTERVAL = 15  # seconds
 FIXED_UDID = "web"
 DEVICE_NAME = "Computer"
 
-# Translation keys for sensor.py / binary_sensor.py entities (has_entity_name
-# + translation_key pattern). Keys must match translations/<lang>.json under
-# "entity" -> "sensor" or "entity" -> "binary_sensor" -> <key> -> "name" for
-# every supported language (see CLAUDE.md "Localization" section: en, de,
-# es, fr minimum).
+# Translation keys for sensor.py / binary_sensor.py / climate.py entities
+# (has_entity_name + translation_key pattern). Keys must match
+# translations/<lang>.json under "entity" -> "sensor"/"binary_sensor"/
+# "climate" -> <key> -> "name" for every supported language (see
+# CLAUDE.md "Localization" section: en, de, es, fr minimum).
 SENSOR_TRANSLATION_KEY_OUTSIDE_TEMPERATURE = "outside_temperature"
 SENSOR_TRANSLATION_KEY_OUTSIDE_TEMPERATURE_MIN = "outside_temperature_min"
 SENSOR_TRANSLATION_KEY_OUTSIDE_TEMPERATURE_MAX = "outside_temperature_max"
 SENSOR_TRANSLATION_KEY_RESPONSE_TIME = "response_time"
 BINARY_SENSOR_TRANSLATION_KEY_CONNECTIVITY = "connectivity"
+# "thermostat" was chosen over the German-specific "Regler"/"Heizungsregler"
+# for the *entity* display name specifically so it reads naturally in all
+# four supported languages ("Thermostat" is spelled identically or near-
+# identically in de/en/fr; "Termostato" in es) - per project discussion.
+# The device MODEL name ("SDC Regler", device.py) is intentionally left
+# as the German-rooted product term, since that's this hardware's actual
+# name on the box - only the generic entity label uses the more universal
+# term.
+CLIMATE_TRANSLATION_KEY_THERMOSTAT = "thermostat"
 
 
 class SceneName(str, Enum):

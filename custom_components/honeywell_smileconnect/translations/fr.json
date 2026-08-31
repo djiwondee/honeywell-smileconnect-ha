@@ -57,6 +57,11 @@
       "connectivity": {
         "name": "Connectivité"
       }
+    },
+    "climate": {
+      "thermostat": {
+        "name": "Thermostat"
+      }
     }
   }
 }
