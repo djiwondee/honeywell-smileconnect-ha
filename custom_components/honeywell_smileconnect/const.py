@@ -1,5 +1,26 @@
 """Constants for the Honeywell Smile Connect integration."""
 # Change log:
+# - 2026-09-01: Added SCENE_ACTIVATION_DURATION and TRACKED_SCENE_NAMES.
+#   Live investigation (docs/protocol.md §4d) found that the duration
+#   value scene_manager.py must SEND to activate a preset is not its
+#   real-world duration - each scene applies its own multiplicative
+#   factor, three of four capped at a hard maximum - and that resending
+#   whatever /api/scene/duration reports for an inactive scene (always 0
+#   or meaningless noise) causes the gateway to silently reject
+#   activation. SCENE_ACTIVATION_DURATION holds the confirmed send-values
+#   for each scene's real, vendor-documented default. Separately (§4e/§4f),
+#   roomstatus was found unreliable for compound states (a still-active
+#   Standby can be masked by a preset; Holiday specifically never resolves
+#   via roomstatus at all while Standby is simultaneously active - a
+#   genuine gateway firmware quirk). TRACKED_SCENE_NAMES lists the scenes
+#   coordinator.py now polls room-membership for directly, so climate.py's
+#   hvac_mode/preset_mode can read ground truth instead of roomstatus.
+#   Also corrected an outdated note below (see inline) that claimed
+#   activating Leave/Holiday makes Standby "disappear from the active
+#   list" - compound-state testing (§4e) showed Standby's isActive flag
+#   actually stays True in the background for ALL FOUR presets, not just
+#   Boost/Party as previously believed; it just happened to never be
+#   directly observed for Leave/Holiday until this session.
 # - 2026-08-27 (e): FINAL correction after a third, deliberately controlled
 #   test run (explicit clean-Standby-baseline reset before testing EACH of
 #   Leave/Holiday individually, to eliminate the scene-stacking confound
@@ -99,6 +120,35 @@ class SceneName(str, Enum):
     TOWEL = "Towel"
 
 
+# Confirmed live (docs/protocol.md §4d): the value sent to activate a
+# preset is NOT its real-world duration - each scene applies its own
+# multiplicative factor, three of four capped at a hard maximum. These are
+# the confirmed send-values that produce each scene's real, vendor-
+# documented default duration (each verified via >=2 independent live data
+# points, at least one below the scene's cap). Standby is included only so
+# lookups never need a special case - ApiMethods.set_scene() already
+# hardcodes duration=1 for Standby regardless of what's passed here.
+SCENE_ACTIVATION_DURATION: dict[SceneName, float] = {
+    SceneName.LEAVE: 2,  # -> 6h real (factor x3, cap 12h)
+    SceneName.HOLIDAY: 0.5,  # -> 15d real (factor x30, cap 30d)
+    SceneName.PARTY: 0.5,  # -> 6h real (factor x12, cap 12h)
+    SceneName.BOOST: 0.5,  # -> 60min real (factor x120, cap 120min)
+    SceneName.STANDBY: 1,
+}
+
+# Scenes tracked room-by-room every coordinator poll cycle for hvac_mode/
+# preset_mode (docs/protocol.md §4e/§4f) - excludes Shower/Towel, which
+# remain unverified/unused on current hardware (see SceneName docstring
+# above).
+TRACKED_SCENE_NAMES: tuple[SceneName, ...] = (
+    SceneName.STANDBY,
+    SceneName.LEAVE,
+    SceneName.HOLIDAY,
+    SceneName.PARTY,
+    SceneName.BOOST,
+)
+
+
 # Room status codes -> scene membership (see docs/protocol.md and
 # CLAUDE.md "Core Finding" for the full verification story). Confirmed
 # live via scripts/manual_probe_roomstatus_via_app.py by setting each mode
@@ -124,10 +174,18 @@ ROOM_STATUS_HOLIDAY = 7
 ROOM_STATUS_LEAVE = 10
 
 # Also observed: Boost and Party can be simultaneously active alongside
-# Standby (the gateway reports isActive=true for both at once) - they
-# appear to be temporary overrides layered on top of a Standby baseline,
-# whereas activating Leave/Holiday appears to actually replace Standby
-# (Standby disappears from the active list). roomstatus itself already
-# resolves this to a single, priority-appropriate value, so this doesn't
-# require any change to how climate.py determines a single preset_mode -
-# noted here for context only.
+# Standby (the gateway reports isActive=true for both at once) - they act
+# as temporary overrides layered on top of a Standby baseline. roomstatus
+# itself resolves this to a single, priority-appropriate value for
+# Boost/Party/Leave - but NOT for Holiday, which is the one confirmed
+# exception (see docs/protocol.md §4f): roomstatus never resolves to
+# Holiday's code while Standby is simultaneously active, staying stuck at
+# 12 indefinitely. This CORRECTS an earlier, wrong belief recorded here
+# that activating Leave/Holiday makes Standby "disappear from the active
+# list" - a full compound-state probe (docs/protocol.md §4e,
+# scripts/manual_probe_roomstatus_compound.py) confirmed Standby's own
+# isActive flag stays True in the background for ALL FOUR presets,
+# including Leave - it was simply never directly observed for Leave/
+# Holiday until that later, more thorough test. climate.py no longer
+# relies on roomstatus for hvac_mode/preset_mode as of this session - see
+# SCENE_ACTIVATION_DURATION/TRACKED_SCENE_NAMES above.

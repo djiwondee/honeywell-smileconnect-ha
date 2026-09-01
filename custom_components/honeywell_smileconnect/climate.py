@@ -1,5 +1,42 @@
 """Climate platform for Honeywell Smile Connect."""
 # Change log:
+# - 2026-09-01 (b): Added PRESET_NONE ("none") as a selectable preset_mode
+#   entry - supersedes the 2026-08-27 (e) entry below, which deliberately
+#   left it out on the assumption that Python `None` alone was sufficient
+#   ("HA renders this natively as 'no preset selected'"). Live testing
+#   after the (a) fix below (presets actually working now) surfaced the
+#   gap that assumption missed: HA's preset dropdown only ever offers
+#   entries present in preset_modes, so without a "none" entry there was
+#   no way to clear an active preset from the UI without picking a
+#   different one. preset_mode's property now returns PRESET_NONE instead
+#   of Python None when nothing is active (so the dropdown highlights
+#   "None" correctly); _update_active_preset()'s internal
+#   self._active_preset representation is unchanged (still str | None).
+#   async_set_preset_mode() treats preset_mode == PRESET_NONE as "remove
+#   the current preset, activate nothing" instead of trying to activate a
+#   nonexistent "none" gateway scene.
+# - 2026-09-01 (a): hvac_mode and _update_active_preset() (feeding preset_mode)
+#   no longer read roomstatus at all - both now read
+#   coordinator.data["scene_active_rooms"] (new field, see coordinator.py's
+#   own change log), the ground-truth per-scene room membership fetched
+#   directly from /api/scene/status + /api/scene/getrooms. Root cause:
+#   roomstatus cannot be trusted for compound states - a still-active
+#   Standby can be masked by a preset (its own isActive flag stays True in
+#   the background, invisible via roomstatus alone), and Holiday
+#   specifically never resolves via roomstatus at all while Standby is
+#   simultaneously active (a confirmed gateway firmware quirk - docs/
+#   protocol.md §4e/§4f). An earlier fix attempt forcibly deactivated
+#   Standby whenever Holiday was selected, as a workaround - rejected
+#   during planning: Leave/Boost/Holiday/Party must all stay genuinely
+#   independent of Standby, and a fix must work uniformly for all four,
+#   not special-case Holiday by mutating Standby's state as a side effect.
+#   Reading ground-truth scene membership directly (instead of roomstatus)
+#   fixes the masking problem for all four presets uniformly and never
+#   touches Standby. async_set_hvac_mode(), async_set_preset_mode(), and
+#   _nudge_temperature_after_leaving_standby() are UNCHANGED - this is a
+#   read-path-only fix, per an explicit constraint that the already-
+#   working Standby on/off toggle (see the 2026-08-31 entry below) must
+#   not regress.
 # - 2026-08-31: Fixed hvac_mode display staleness when leaving Standby
 #   (Off -> Auto). Live-verified via scripts/manual_check_standby_
 #   deactivation_timing.py and scripts/manual_check_standby_nudge.py: the
@@ -91,6 +128,7 @@ import logging
 from typing import ClassVar
 
 from homeassistant.components.climate import (
+    PRESET_NONE,
     ClimateEntity,
     ClimateEntityFeature,
     HVACMode,
@@ -106,11 +144,6 @@ from .api.scene_manager import SceneManager
 from .const import (
     CLIMATE_TRANSLATION_KEY_THERMOSTAT,
     DOMAIN,
-    ROOM_STATUS_BOOST,
-    ROOM_STATUS_HOLIDAY,
-    ROOM_STATUS_LEAVE,
-    ROOM_STATUS_PARTY,
-    ROOM_STATUS_STANDBY,
     SceneName,
 )
 from .coordinator import SmileConnectCoordinator
@@ -163,8 +196,12 @@ class SmileConnectClimate(CoordinatorEntity, ClimateEntity):
     # is always enforced by the regler itself regardless of either state
     # and is not something the gateway/this integration can control.
     _attr_hvac_modes: ClassVar[list[HVACMode]] = [HVACMode.AUTO, HVACMode.OFF]
-    # No "none"/PRESET_NONE entry here on purpose - see class docstring.
+    # PRESET_NONE ("none") IS included, as of 2026-09-01 (b) - without it,
+    # nothing in this list represents "no preset", so HA's UI had no way
+    # to clear an active preset without picking a different one. See this
+    # module's change log.
     _attr_preset_modes: ClassVar[list[str]] = [
+        PRESET_NONE,
         SceneName.BOOST.value,
         SceneName.HOLIDAY.value,
         SceneName.LEAVE.value,
@@ -231,33 +268,50 @@ class SmileConnectClimate(CoordinatorEntity, ClimateEntity):
 
     @property
     def hvac_mode(self) -> HVACMode:
-        # Deliberately checks roomstatus directly, NOT self._active_preset:
-        # hvac_mode is governed exclusively by the Standby scene, entirely
-        # independent of whether Boost/Party/Leave/Holiday also happen to
-        # be active at the same time.
-        status = self._room["data"].get("roomstatus")
-        return HVACMode.OFF if status == ROOM_STATUS_STANDBY else HVACMode.AUTO
+        # Reads Standby's ground-truth room membership from the
+        # coordinator's dedicated scene-status poll (docs/protocol.md
+        # §4e), NOT roomstatus - roomstatus can mask a still-active
+        # Standby underneath any preset (its isActive flag stays True in
+        # the background, invisible via roomstatus alone). Independent of
+        # whether Boost/Party/Leave/Holiday also happen to be active at
+        # the same time - see class docstring.
+        standby_rooms = self.coordinator.data.get("scene_active_rooms", {}).get(
+            SceneName.STANDBY.value, set()
+        )
+        return HVACMode.OFF if self._room_id in standby_rooms else HVACMode.AUTO
 
     @property
-    def preset_mode(self) -> str | None:
+    def preset_mode(self) -> str:
+        # Returns PRESET_NONE (not Python None) when nothing is active, so
+        # HA's dropdown correctly highlights "None" as the selected entry
+        # - self._active_preset itself stays str | None internally (see
+        # _update_active_preset() below), only this property's return
+        # value is translated.
         self._update_active_preset()
-        return self._active_preset
+        return self._active_preset or PRESET_NONE
 
     def _update_active_preset(self) -> None:
-        status = self._room["data"].get("roomstatus")
-        if status == ROOM_STATUS_PARTY:
-            self._active_preset = SceneName.PARTY.value
-        elif status == ROOM_STATUS_BOOST:
-            self._active_preset = SceneName.BOOST.value
-        elif status == ROOM_STATUS_HOLIDAY:
-            self._active_preset = SceneName.HOLIDAY.value
-        elif status == ROOM_STATUS_LEAVE:
-            self._active_preset = SceneName.LEAVE.value
-        else:
-            # Covers both "Standby is active" and "plain schedule-
-            # following, no scene active" - neither is a selectable preset
-            # on this entity, so there is nothing meaningful to report.
-            self._active_preset = None
+        # Reads each preset's ground-truth room membership directly (docs/
+        # protocol.md §4e/§4f) instead of roomstatus, which cannot be
+        # trusted for compound states - this is what makes Holiday work
+        # correctly even while Standby is simultaneously active (a
+        # confirmed gateway firmware quirk in roomstatus itself, not
+        # something fixable by changing what we send), without ever
+        # touching Standby. Checked in this fixed order only for the
+        # never-confirmed edge case of two presets somehow being active
+        # for the same room at once (HA itself never requests more than
+        # one at a time via async_set_preset_mode) - arbitrary but
+        # deterministic, no worse than roomstatus's own opaque priority
+        # resolution.
+        active_rooms = self.coordinator.data.get("scene_active_rooms", {})
+        for scene in (SceneName.PARTY, SceneName.BOOST, SceneName.HOLIDAY, SceneName.LEAVE):
+            if self._room_id in active_rooms.get(scene.value, set()):
+                self._active_preset = scene.value
+                return
+        # Covers both "Standby is active" and "plain schedule-following,
+        # no scene active" - neither is a selectable preset on this
+        # entity, so there is nothing meaningful to report.
+        self._active_preset = None
 
     async def async_set_temperature(self, **kwargs) -> None:
         temperature = kwargs.get(ATTR_TEMPERATURE)
@@ -274,10 +328,14 @@ class SmileConnectClimate(CoordinatorEntity, ClimateEntity):
             await self.hass.async_add_executor_job(
                 self._scene_manager.remove_member_from_scene, self._room_id, previous
             )
-        await self.hass.async_add_executor_job(
-            self._scene_manager.add_member_to_scene, self._room_id, preset_mode
-        )
-        self._active_preset = preset_mode
+        if preset_mode != PRESET_NONE:
+            # PRESET_NONE isn't a real gateway scene - selecting it only
+            # clears whatever preset was active (handled above); there is
+            # nothing to activate.
+            await self.hass.async_add_executor_job(
+                self._scene_manager.add_member_to_scene, self._room_id, preset_mode
+            )
+        self._active_preset = None if preset_mode == PRESET_NONE else preset_mode
         await self.coordinator.async_request_refresh()
 
     async def async_set_hvac_mode(self, hvac_mode: HVACMode) -> None:

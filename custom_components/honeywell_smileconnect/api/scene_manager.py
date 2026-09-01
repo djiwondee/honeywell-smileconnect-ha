@@ -3,6 +3,18 @@
 Ported and cleaned up from the original reverse-engineering scaffold.
 """
 # Change log:
+# - 2026-09-01: Fixed add_member_to_scene() root-cause bug behind presets
+#   appearing to "revert" after selection in HA: it resent whatever
+#   get_scene_duration() reported for the scene - which is 0 (or
+#   meaningless noise) while inactive - and set_scene(active=True,
+#   duration=0) is silently rejected by the gateway (success:true, but
+#   isActive never flips). Now uses the confirmed, factor-corrected
+#   send-values from const.SCENE_ACTIVATION_DURATION instead. Full
+#   investigation (including the per-scene multiplicative factors and
+#   caps) in docs/protocol.md §4d. remove_member_from_scene()'s own
+#   get_scene_duration() call is deliberately left untouched - only
+#   ACTIVATION with duration=0 was ever shown to be silently rejected,
+#   not deactivation.
 # - 2026-08-30 (b): Added active poll-and-verify after every write
 #   (_wait_for_scene_active_state), matching the pattern already
 #   established and documented in scripts/manual_check_roomstatus_via_app.py
@@ -49,6 +61,7 @@ from __future__ import annotations
 import logging
 import time
 
+from ..const import SCENE_ACTIVATION_DURATION
 from .api_methods import ApiMethods
 
 _LOGGER = logging.getLogger(__name__)
@@ -102,7 +115,12 @@ class SceneManager:
             rooms.append(room_id)
             self.api.set_scene_rooms(scene_name, rooms)
 
-        duration = self.api.get_scene_duration(scene_name)
+        # NOT self.api.get_scene_duration(scene_name) - that call is
+        # confirmed unreliable in every tested state (returns 0 or
+        # meaningless noise) and resending it caused activation to be
+        # silently rejected by the gateway. See this module's change log
+        # and docs/protocol.md §4d.
+        duration = SCENE_ACTIVATION_DURATION[scene_name]
         if self.is_scene_active(scene_name):
             # Re-trigger so the new member picks up the active scene state.
             self.api.set_scene(scene_name, active=False, duration=duration)

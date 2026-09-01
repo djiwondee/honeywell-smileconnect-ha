@@ -1,4 +1,10 @@
 # Change log:
+# - 2026-09-01: Added TestAddMemberToSceneUsesCorrectedDuration, locking in
+#   the fix for add_member_to_scene() resending an unreliable
+#   get_scene_duration() value (always 0/noise for an inactive scene,
+#   causing the gateway to silently reject activation) instead of the
+#   confirmed, factor-corrected SCENE_ACTIVATION_DURATION table - see
+#   scene_manager.py's own change log and docs/protocol.md §4d.
 # - 2026-08-30: Initial version. Created alongside the fix for a real
 #   production bug: remove_member_from_scene() calling set_scene_rooms()
 #   with an empty room list caused the gateway's firmware to hang/timeout
@@ -18,6 +24,7 @@ from __future__ import annotations
 from unittest.mock import MagicMock
 
 from custom_components.honeywell_smileconnect.api.scene_manager import SceneManager
+from custom_components.honeywell_smileconnect.const import SCENE_ACTIVATION_DURATION, SceneName
 
 
 def _make_api(scene_rooms: list, is_active: bool) -> MagicMock:
@@ -103,3 +110,32 @@ class TestAddMemberToScene:
         manager.add_member_to_scene(1, "Boost")
 
         api.set_scene_rooms.assert_not_called()
+
+
+class TestAddMemberToSceneUsesCorrectedDuration:
+    """Regression test for the root-cause bug behind presets appearing to
+    "revert" after selection in HA: add_member_to_scene() used to resend
+    api.get_scene_duration()'s value, which is unreliable (0/noise) for an
+    inactive scene and caused the gateway to silently reject activation.
+    It must now use the confirmed SCENE_ACTIVATION_DURATION table instead
+    - see docs/protocol.md §4d for the live-verified factor/cap data these
+    values are derived from.
+    """
+
+    def test_sends_factor_corrected_duration_for_each_preset(self):
+        for scene, expected_duration in SCENE_ACTIVATION_DURATION.items():
+            api = _make_api(scene_rooms=[], is_active=False)
+            manager = SceneManager(api)
+
+            manager.add_member_to_scene(1, scene.value)
+
+            last_call = api.set_scene.call_args_list[-1]
+            assert last_call.kwargs["duration"] == expected_duration
+
+    def test_does_not_call_get_scene_duration(self):
+        api = _make_api(scene_rooms=[], is_active=False)
+        manager = SceneManager(api)
+
+        manager.add_member_to_scene(1, SceneName.HOLIDAY.value)
+
+        api.get_scene_duration.assert_not_called()
