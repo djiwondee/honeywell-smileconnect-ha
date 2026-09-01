@@ -425,8 +425,89 @@ GET  /admin/login/index            (returns HTML of the config menu)
   constant since existing `hvac_mode`/`preset_mode` logic already handles
   it correctly by omission (see `docs/protocol.md` §5) — only add one if a
   concrete future need for a dedicated label arises.
+- ~~**Preset activation appearing to "revert" in the HA UI (Leave/Holiday/
+  Boost/Party).**~~ **RESOLVED (2026-09-01).** Root cause: `scene_manager.
+  py`'s `add_member_to_scene()` re-sent whatever `get_scene_duration()`
+  currently reported for an *inactive* scene — which is always `0` (or,
+  for Holiday, a meaningless near-zero fractional leftover) — and
+  `set_scene(active=True, duration=0)` is silently rejected by the gateway
+  (`success:true`, but `scene/status.isActive` never flips). Beyond that,
+  the numeric value you DO send is not the real-world duration at all —
+  each of the four preset scenes applies its own multiplicative factor,
+  and three of the four additionally cap at a hard maximum. Full
+  investigation, the "two data points that agreed were actually both
+  capped" trap that produced a wrong `×10` guess for Holiday along the
+  way, and the final confirmed factor table (with vendor-supplied Min/Max/
+  Default columns) are in `docs/protocol.md` §4d — do not re-derive this
+  from scratch. **Confirmed send-values to use for each preset's real
+  documented default:** Leave `2` (→6h), Holiday `0.5` (→15d), Party `0.5`
+  (→6h), Boost `0.5` (→60min) — each verified via at least two independent
+  live data points. `get_scene_duration()` was separately confirmed
+  useless as a post-activation verification source for any of the four
+  scenes (returns near-zero noise regardless of what was actually
+  configured) — the App/regler display is the only trustworthy readback.
+  **Fix not yet implemented** in `scene_manager.py`/`climate.py` — this is
+  queued as the next concrete implementation step (see "Next planned
+  work" below).
+- ~~**Whether `roomstatus` might be a bitfield** (Standby + active preset
+  encoded as independent bits, rather than one flat state code) — raised
+  as a live hypothesis by the user given the known codes don't decompose
+  into a clean single-bit-per-mode pattern.~~ **REFUTED (2026-09-01)** via
+  `scripts/manual_probe_roomstatus_compound.py`, which tested every
+  Standby+preset combination set purely through the Smile App (bypassing
+  our own write path for a clean signal): no combined/OR'd value was ever
+  observed; `roomstatus` is confirmed to be a flat, single "currently
+  winning state" code. Full compound-state table in `docs/protocol.md`
+  §4e.
+- **NEW, confirmed but NOT yet fixed: Standby persists silently in the
+  background under an active preset, and reasserts itself the moment the
+  preset is removed.** Discovered as a side effect of the bitfield
+  investigation above: `Standby.isActive` stays `True` the whole time a
+  preset (Leave/Boost/Party) is active on top of it — `roomstatus` shows
+  only the preset's code, giving no visibility into Standby's real state.
+  Confirmed via `scripts/manual_check_standby_reassertion.py`, using the
+  REAL production `SceneManager.remove_member_from_scene()` call (exactly
+  what `climate.py`'s `async_set_preset_mode()` invokes when a preset is
+  cleared/switched): `roomstatus` falls back to `12` (Standby)
+  **immediately** once the preset is removed, because nothing in the
+  removal path ever touches Standby. Arguably correct given the gateway's
+  real internal state, but it means `climate.py`'s `hvac_mode` property —
+  which infers `OFF`/`AUTO` purely from `roomstatus == ROOM_STATUS_
+  STANDBY` — can show a misleading `AUTO` for as long as a preset masks a
+  still-active Standby, then silently flip to `OFF` once that preset ends,
+  without the user ever touching `hvac_mode` themselves. Full story in
+  `docs/protocol.md` §4e. **This needs a design decision, not just a
+  patch** — likely requires the coordinator to also poll `/api/scene/
+  status` so `hvac_mode` can read Standby's true state directly instead of
+  inferring it from `roomstatus` (queued for the same fix-planning session
+  as the preset-duration fix above).
+- **NEW, confirmed but NOT yet fixed: Holiday+Standby simultaneously
+  active is a genuine gateway firmware quirk**, not a bug in this
+  project's request construction — `roomstatus` never resolves to
+  Holiday's code (`7`) while Standby is also active, staying stuck at `12`
+  indefinitely (even survives the temperature-nudge trick that fixed the
+  unrelated Standby-leaving staleness bug). Confirmed via TWO independent
+  write paths: this project's own API calls (`scripts/manual_check_
+  preset_nudge.py`) AND the Smile App itself (`scripts/manual_probe_
+  roomstatus_compound.py`) — ruling out a request-encoding bug. Leave/
+  Boost/Party do NOT have this problem; only Holiday. **Confirmed
+  workaround:** explicitly deactivate Standby before activating Holiday —
+  verified live, `roomstatus` then reaches `7` immediately (0.0s), no
+  nudge needed. Full story in `docs/protocol.md` §4f. **Fix not yet
+  implemented.**
 
 ### Next planned work (agreed in project discussion, not yet started)
+
+- **Implement the preset-activation fix** (send the correct, factor-
+  corrected duration value per scene — see `docs/protocol.md` §4d table —
+  instead of blindly resending `get_scene_duration()`'s unusable inactive-
+  scene reading), **the Holiday+Standby workaround** (deactivate Standby
+  before activating Holiday — §4f), and **a design decision for the
+  Standby-background-persistence issue** (§4e) in `scene_manager.py`/
+  `climate.py`/possibly `coordinator.py`. All three are fully diagnosed
+  and live-verified (see the three bullet points directly above) — this is
+  the next concrete implementation task, pending a plan proposal per the
+  Session Workflow rules below.
 
 - ~~**Outside temperature sensor.**~~ **DONE (2026-08-27).** Implemented as
   `sensor.py` with three entities (outside temperature, min, max) reading

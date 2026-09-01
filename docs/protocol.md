@@ -111,6 +111,17 @@ template; the Honeywell response still needs to be captured 1:1)
 }
 ```
 
+> **Cross-check (2026-09-01):** the live duration investigation in §4d below
+> independently confirmed this template's `min`/`max` for Party (0-12,
+> hours) and Boost (0-120, minutes) exactly, and Leave's `max` (12, hours)
+> exactly — this generic-project template turned out to be accurate for
+> those three. **Holiday is the one exception:** the template shows
+> `min`/`max`/`step` as `false` (implying "unbounded"), but live testing
+> found a real, hard bound of 0-30 **days** — the generic template is
+> wrong/incomplete for Holiday specifically, consistent with this
+> project's general finding that Holiday keeps being the outlier scene
+> that needs the most live re-verification (see also §4f).
+
 The test installation has only one room ("Alle"/"All") and no Shower/Towel
 usage — these scenes are kept in code as constants but remain untested.
 
@@ -219,6 +230,157 @@ scene override is layered on top). `preset_modes` deliberately has no
 "none" entry; when no scene is active, `preset_mode` returns Python `None`
 rather than a string, which HA renders natively as "no preset selected".
 
+## 4d. Scene `duration` parameter — the value you send is NOT the real
+duration (2026-09-01)
+
+**Root cause of the original production symptom** ("selecting a preset in
+the climate entity shows briefly, then reverts on the next poll — the
+gateway apparently never actually enabled it"): `scene_manager.py`'s
+`add_member_to_scene()` read the CURRENT `duration` via
+`ApiMethods.get_scene_duration()` and resent that value unchanged when
+activating a scene. For an **inactive** scene this call returns `0` (or,
+for Holiday, a tiny near-zero fractional leftover, e.g. `0.013` days ≈ 19
+minutes — never anything resembling a real default). `set_scene(active=
+True, duration=0)` is then **silently rejected by the gateway** — the
+response reports `success: true`, but `scene/status.isActive` for that
+scene never actually flips to `true`. Same bug class as the four
+`api_request.py` bugs documented in CLAUDE.md (a `success:true` response
+that does nothing).
+
+**Second, independent discovery once a real (non-zero) duration was sent:**
+the number you send is **not** the real-world duration in the scene's
+documented unit — each scene applies its own multiplicative factor, and
+three of the four scenes additionally enforce a hard cap. This was only
+found by testing multiple distinct, deliberately small send-values per
+scene and reading the *actually configured* duration back from the Smile
+App/physical regler display (the only trustworthy source — see the
+warning below about `get_scene_duration()`).
+
+**A methodological trap worth recording:** the first two Holiday and Party
+data points (`3→30d`, `1.5→30d` for Holiday; `3→12h`, `1.5→12h` for Party)
+each showed the *same* output for *different* inputs — which looks like
+strong evidence for a specific factor (e.g. `×10` was the first, wrong,
+conclusion for Holiday) but is actually the signature of **both inputs
+having already saturated a cap**, revealing nothing about the real factor
+below it. Only a *third*, deliberately smaller test value per scene (which
+landed below the cap) revealed the true factor. Lesson: two data points
+that agree do not by themselves prove linearity — check whether they might
+both be capped before trusting a factor derived from them.
+
+| Preset | Measure (unit) | Min | Max | Default (real) | Factor (`real = sent × factor`, capped at Max) | Send value for the real Default |
+|---|---|---|---|---|---|---|
+| Leave | Hours | 0 | 12 | 6 | ×3 | **2** |
+| Holiday | Days | 0 | 30 | 15 | ×30 | **0.5** |
+| Party | Hours | 0 | 12 | 6 | ×12 | **0.5** |
+| Boost | Minutes | 0 | 120 | 60 | ×120 | **0.5** |
+
+Min/Max/Default columns match the vendor-documented values supplied
+2026-09-01; the Factor and "send value" columns are this project's own
+live-verified findings (`scripts/manual_check_preset_nudge.py`), each
+**confirmed via at least two independent data points**, at least one of
+them below the scene's cap:
+
+- **Leave** — `2→6h`, `4→12h` (=Max, boundary case). Clean ×3 line, no
+  saturation ambiguity since `2` was clearly unsaturated.
+- **Holiday** — `0.5→15d` (below cap, exact); `1.5→30d` and `3→30d` both
+  saturate at the 30-day cap. The originally-recorded `×10` factor was
+  wrong (see methodological trap above) — corrected to `×30`.
+- **Party** — `0.5→6h` and `0.75→9h` (both below the 12h cap, both exact);
+  `1.5→12h` and `3→12h` both saturate. Corrected from an initial (also
+  cap-confused) `×4`/`×8` guess to the confirmed `×12`.
+- **Boost** — `0.5→60min` (below cap, exact); `1→120min`, `5→120min`,
+  `20→120min` all saturate at the 120-minute cap. One further data point
+  (`10→108min`) never fit any tested model (linear, capped-linear, affine)
+  and is treated as a one-off measurement anomaly, not a real signal — see
+  `manual_check_preset_nudge.py`'s own change log for the full elimination
+  process across five separate Boost test runs.
+
+**`get_scene_duration()` (`/api/scene/duration`) is not a usable
+verification source**, for any scene, at any point: it returns near-zero
+noise while inactive, and — this was checked explicitly, immediately after
+activation, across every scene — it does **not** echo back the just-
+configured value either (e.g. Holiday consistently showed ~0.013-0.017
+days regardless of whether `0.5`, `1.5`, or `3` was sent; Boost
+consistently showed exactly `0`). The only reliable way to confirm what
+duration actually got configured is reading the Smile App or the physical
+regler display.
+
+**Decimal/fractional `duration` values are handled correctly by the API**
+— confirmed via multiple genuinely-fractional sends (`0.5`, `0.75`, `1.5`)
+that all produced exactly the values the linear-factor model predicted;
+no evidence of silent rounding or truncation.
+
+## 4e. Standby persists silently in the background under an active preset
+(2026-09-01)
+
+`scripts/manual_probe_roomstatus_compound.py` tested every combination of
+Standby ON simultaneously with each of the four presets, set purely via
+the Smile App (bypassing our own write path entirely, for a clean signal).
+Result:
+
+| Scenario | roomstatus |
+|---|---|
+| Standby alone | 12 |
+| Leave alone / Standby+Leave | 10 (identical either way) |
+| Boost alone / Standby+Boost | 6 (identical either way) |
+| Party alone / Standby+Party | 3 (identical either way) |
+| Holiday alone | 7 |
+| **Standby+Holiday** | **12 — reverts to Standby's own code, unlike the other three** |
+
+Two conclusions:
+
+1. **`roomstatus` is confirmed to be a flat, single "currently winning
+   state" code, not a bitfield.** This was a live hypothesis worth testing
+   (raised by the user, given `roomstatus`'s known codes don't decompose
+   into a clean single-bit-per-mode pattern) but the compound-state data
+   rules it out cleanly: no combined/OR'd value is ever observed, and
+   Standby+Leave/Boost/Party report *exactly* the same code as the preset
+   alone.
+2. **Standby's own `isActive` flag stays `True` in the background, for all
+   four presets, even when `roomstatus` reports only the preset's code.**
+   `roomstatus` alone cannot tell you whether Standby is *also* still
+   active underneath a displayed preset.
+
+**Consequence, confirmed via `scripts/manual_check_standby_reassertion.py`
+using the REAL production `SceneManager.remove_member_from_scene()` call
+(exactly what `climate.py`'s `async_set_preset_mode()` invokes when a
+preset is switched away from or cleared):** if Standby was active in the
+background while a preset was active, removing that preset causes
+`roomstatus` to **immediately** (no staleness, no nudge needed — unlike
+the unrelated "leaving Standby to nothing" staleness bug) fall back to `12`
+(Standby), because nothing in the removal path ever touches Standby. This
+is arguably *correct* given the gateway's real internal state (Standby
+genuinely never got turned off) — but it means `climate.py`'s `hvac_mode`
+property, which infers `OFF`/`AUTO` purely from whether `roomstatus ==
+ROOM_STATUS_STANDBY`, can display a misleading `AUTO` for as long as a
+preset masks a still-active Standby, then flip to `OFF` the moment that
+preset is cleared, without the user ever touching `hvac_mode` themselves.
+**Not yet fixed** — see CLAUDE.md's "Still untested / open" for the
+proposed design directions (this is an architecture question, not a
+one-line patch, since it likely requires the coordinator to also poll
+`/api/scene/status` so `hvac_mode` can read Standby's real state directly
+instead of inferring it from `roomstatus`).
+
+## 4f. Holiday+Standby simultaneously active — confirmed gateway firmware
+quirk, not a request-encoding bug (2026-09-01)
+
+Per §4e's table, `Standby+Holiday` is the **only** compound state where
+`roomstatus` fails to reflect the preset. This was first found via this
+project's own write path (`manual_check_preset_nudge.py`, with a correctly
+non-zero duration and `scene/status.isActive(Holiday)` confirmed `true`
+throughout) and then **independently reproduced via the Smile App itself**
+(`manual_probe_roomstatus_compound.py`, zero write calls from our side).
+Reproducing the same anomaly through two completely different write paths
+rules out a bug in this project's request construction — it is a genuine
+Honeywell gateway firmware quirk specific to the Holiday+Standby
+combination.
+
+**Confirmed workaround:** explicitly deactivate Standby *before* activating
+Holiday. Tested live (`manual_check_preset_nudge.py`) — with Standby
+deactivated first, `roomstatus` reached Holiday's code (`7`) **immediately**
+(0.0s), no staleness, no nudge needed. Not yet implemented in production
+code (`scene_manager.py`/`climate.py`) — see CLAUDE.md.
+
 ## 5. Open Items (as of project handover)
 
 - [ ] Verify the exact PBKDF2/SHA512 parameters for password hashing
@@ -260,3 +422,18 @@ rather than a string, which HA renders natively as "no preset selected".
       change needed unless a dedicated constant/label for this state
       becomes useful later.
 - [ ] Clarify the purpose of `/api/xpertonly/start`, `/admin/sentry/*`
+- [x] **Scene `duration` parameter (why presets failed to activate)** —
+      RESOLVED (2026-09-01), root cause and per-scene factor table now in
+      §4d. Fix not yet implemented in `scene_manager.py`/`climate.py`.
+- [x] **Whether `roomstatus` could be a bitfield (Standby + preset encoded
+      independently)** — RESOLVED/REFUTED (2026-09-01), see §4e. It is a
+      flat single-state code.
+- [ ] **Standby silently reasserts itself when a preset is removed while
+      Standby was active in the background** — confirmed (2026-09-01, §4e)
+      via the real `SceneManager.remove_member_from_scene()` path. Not yet
+      fixed — needs a design decision (see CLAUDE.md) on how `hvac_mode`
+      should read Standby's true state.
+- [ ] **Holiday+Standby simultaneously active never resolves `roomstatus`
+      to Holiday's code** — confirmed as a genuine gateway firmware quirk
+      (2026-09-01, §4f), workaround (deactivate Standby first) verified
+      live but not yet implemented in production code.
