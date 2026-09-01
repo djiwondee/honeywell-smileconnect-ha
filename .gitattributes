@@ -3,6 +3,7 @@
 
 # Everything else explicitly excluded:
 .devcontainer/ export-ignore
+.env.example export-ignore
 .github/ export-ignore
 docs/ export-ignore
 scripts/ export-ignore
@@ -15,6 +16,7 @@ __pycache__/ export-ignore
 # Specific files excluded
 pytest.ini export-ignore
 pyproject.toml export-ignore
+requirements.txt export-ignore
 setup.py export-ignore
 *.spec.py export-ignore
 manual_probe_*.py export-ignore
