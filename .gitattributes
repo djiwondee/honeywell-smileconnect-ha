@@ -1,0 +1,21 @@
+# .gitattributes
+# Only custom_components/*, README.md, hacs.json, LICENSE in release
+
+# Everything else explicitly excluded:
+.devcontainer/ export-ignore
+.github/ export-ignore
+tests/ export-ignore
+.git* export-ignore
+.vscode/ export-ignore
+.pytest_cache/ export-ignore
+__pycache__/ export-ignore
+
+# Specific files excluded
+pytest.ini export-ignore
+pyproject.toml export-ignore
+setup.py export-ignore
+*.spec.py export-ignore
+manual_probe_*.py export-ignore
+devcontainer.json export-ignore
+docker-compose.yml export-ignore
+*.md export-ignore
