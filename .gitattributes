@@ -4,6 +4,8 @@
 # Everything else explicitly excluded:
 .devcontainer/ export-ignore
 .github/ export-ignore
+docs/ export-ignore
+scripts/ export-ignore
 tests/ export-ignore
 .git* export-ignore
 .vscode/ export-ignore
