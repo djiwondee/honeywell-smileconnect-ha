@@ -17,3 +17,4 @@ config/configuration.yaml
 .vscode/*
 !.vscode/extensions.json
 .DS_Store
+config/.ha_run.lock

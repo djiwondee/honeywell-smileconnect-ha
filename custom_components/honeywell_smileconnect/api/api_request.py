@@ -117,11 +117,13 @@ class ApiRequest:
         # (e.g. an actual list for an array param) would let urlencode's
         # default str() produce a different, protocol-incorrect string
         # than what the signature was computed over. See module change log.
-        body_items = [(key, self._render_value(value)) for key, value in sorted_items]
+        body_items = [(key, self._render_value(value))
+                      for key, value in sorted_items]
         body_items.append(("request_signature", signature))
         encoded_body = urllib.parse.urlencode(body_items, encoding="utf-8")
 
-        response = requests.post(uri, headers=HEADERS, data=encoded_body, timeout=10)
+        response = requests.post(uri, headers=HEADERS,
+                                 data=encoded_body, timeout=10)
         _LOGGER.debug("request sent to: %s", uri)
         _LOGGER.debug("response: %s", response.content)
 
@@ -160,5 +162,6 @@ class ApiRequest:
         Uses the same _render_value() as the actual request body - see
         module change log for why that matters.
         """
-        parts = [f"{key}={cls._render_value(value)}" for key, value in sorted_items]
+        parts = [
+            f"{key}={cls._render_value(value)}" for key, value in sorted_items]
         return "|".join(parts) + "|"

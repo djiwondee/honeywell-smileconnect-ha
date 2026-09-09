@@ -504,6 +504,53 @@ GET  /admin/login/index            (returns HTML of the config menu)
   preset is deactivated via the Smile App (not HA), `preset_mode`
   correctly falls back to `"none"` within one poll cycle. User live-
   verified both directions.
+- **`set_switching_times()` was never live-verified and had a real
+  wire-format bug.** RESOLVED (2026-09-09). Live mitmproxy capture of the
+  real Smile App's own `set2` request (obtained by routing the phone's
+  WLAN traffic through a mitmproxy container while manually editing a
+  schedule) revealed two issues with the previous, never-tested
+  implementation: (1) **the wire field name is `"from"`, not `"from_"`.**
+  The previous code set `params.from_ = from_times` (since `from` is a
+  reserved Python word, it couldn't be used as an attribute name via dot
+  notation), and that attribute name went straight onto the wire
+  unchanged — the gateway never received a `from` field at all, and every
+  call failed with `success:false, "The input format is invalid: 1"`.
+  (2) **Hours must be sent WITHOUT a leading zero** (e.g. `"4:30"`, not
+  `"04:30"`), even though `get2` returns them zero-padded — confirmed via
+  the real Smile App request, which is built by a `.NET`/RestSharp client
+  (`User-Agent: RestSharp/106.6.9.0`), not the browser-JS path this
+  project's other signing logic was reverse-engineered from.
+  Separately, also discovered: **the gateway enforces an undeclared
+  contiguous-slot rule per day** — slots must be filled from slot 1
+  upward with no gaps. Violating this is NOT rejected with an error;
+  instead the gateway silently shifts the sent value to the first free
+  slot in that day AND drops the sent `type`, replacing it with the
+  day's existing first slot's type — a silent data-corrupting write, the
+  same failure class as several `api_request.py` bugs above (`success:
+  true` with no/wrong actual effect). **Fix:** `setattr(params, "from",
+  ...)` instead of `params.from_ = ...` (setattr accepts any string key;
+  `ApiRequest.request()` reads params via `vars()`, which picks up
+  setattr-assigned keys identically to normal attributes — no change
+  needed in `api_request.py` itself); leading-zero stripping via a new
+  `_strip_leading_zero_hour()` helper; a new
+  `_validate_switching_times()` that enforces the contiguous-slot rule
+  client-side, raising `ValueError` before any request is built, since
+  the gateway itself won't. **Signature changed:**
+  `set_switching_times()` now takes a single `switchingtimes` list in the
+  exact shape `get_switching_times()` already returns (a flat, day-major
+  list of `{"from","to","type"}` dicts or `None` per slot) instead of
+  three separate `from_times`/`to_times`/`types` CSV strings — this
+  endpoint had no existing callers (not yet wired to any HA entity), so
+  this was a clean break, not a compatibility concern. `slots_per_day` is
+  derived from the list length (`len(switchingtimes) // 7`) rather than
+  hardcoded to `3`, since the protocol never declares this count
+  explicitly and it may differ on other gateway hardware. Live-verified
+  end to end via `scripts/manual_probe_switchingtimes_echo_v3.py` and
+  `scripts/manual_probe_switchingtimes_slotops_v2.py` (both call the real
+  `ApiMethods.set_switching_times()` directly, not a hand-built request):
+  echo round-trip identical before/after, plus explicit create/edit/
+  delete of individual slots, all confirmed via `get2` afterward, not
+  just `set2`'s `success:true`.
 
 ### Next planned work (agreed in project discussion, not yet started)
 
@@ -511,8 +558,9 @@ GET  /admin/login/index            (returns HTML of the config menu)
   PRESET_NONE gap found during their live verification, are now shipped
   in 0.0.18 — no outstanding implementation work from this investigation.
   The pre-existing items below (never blocked on this work, e.g. the
-  `actualTemperature`/temperature-sync question, switching-times exposure,
-  reconnect/error-handling strategy) remain the next candidates.
+  `actualTemperature`/temperature-sync question, reconnect/error-handling
+  strategy) remain the next candidates, alongside the switching-times
+  items below.
 
 - ~~**Outside temperature sensor.**~~ **DONE (2026-08-27).** Implemented as
   `sensor.py` with three entities (outside temperature, min, max) reading
@@ -541,9 +589,32 @@ GET  /admin/login/index            (returns HTML of the config menu)
   This also drove the `device.py` extraction that fixed the device-
   structure bug, and the `config_flow.py` rework that added the
   `/api/ping`-derived `unique_id` and the options flow together.
-- **Expose switching times** (`get_switching_times`/`set_switching_times`
-  already implemented in `api/api_methods.py`) via a service or entity — not
-  currently wired to anything in the HA integration layer.
+- ~~**Expose switching times**~~ **`get_switching_times`/
+  `set_switching_times` in `api/api_methods.py` are now live-verified and
+  working** (see "Still untested / open" entry above, 2026-09-09) — the
+  wire-format bug that made `set_switching_times()` unusable is fixed,
+  and both are regression-tested against the real `ApiMethods` code path.
+  Still not wired to anything in the HA integration layer (service or
+  entity) — this is now the concrete next step, not a blocked-on-
+  verification item anymore. See the new HA Action bullet directly below.
+- **New: Home Assistant Action (service) to let automations set hvac
+  mode, preset, thermostat temperature, and switching times.** Not yet
+  designed. Should expose, as callable HA services (not just entity
+  UI interactions), at minimum: setting `hvac_mode` (Standby on/off),
+  setting `preset_mode` (Boost/Party/Leave/Holiday/none), setting target
+  temperature, and writing switching-time schedules (leveraging the now-
+  working `set_switching_times()`). Needs a design proposal (per Session
+  Workflow rule 3 below) before implementation — in particular how
+  switching-times input should be structured for a service call (likely
+  not the raw 21-slot list directly, since that's an internal wire
+  format, not a natural service-call shape) and whether per-room
+  targeting uses `entity_id` (mapping to the existing climate entity) or
+  a separate `room_id` parameter. **This is the first piece of work
+  planned for the `0.1.x` line** — see "Versioning & Branching Strategy"
+  below: the last `0.0.x` release was `0.0.19`, and this feature starts
+  the initial `0.1.x` beta release, which means it must be developed on a
+  dedicated feature branch and merged via pull request, not committed
+  directly to `main`.
 - **Possible future gateway-attached entities from `/api/weather`'s
   remaining fields** (`iconUrl`, `forlocation`) — deliberately NOT
   implemented now. Per project discussion: the outside
@@ -717,7 +788,9 @@ endpoint response. It was used to capture `weather_response.json` before
 `sensor.py` was written. This is the reusable pattern for any future
 endpoint that needs a real fixture before entity code is written for it —
 copy/adapt this script rather than guessing at a response shape from a
-generic reference project.
+generic reference project. The `scripts/manual_probe_switchingtimes*.py`
+family of scripts (2026-09-09) follows the same pattern for the
+`get2`/`set2` investigation — see "Still untested / open" above.
 
 ## Reverse-Engineering Method (for further, still-unknown endpoints)
 
@@ -741,6 +814,19 @@ generic reference project.
    and see the exact parameter formats before they go out.
 5. `store` holds session state: `devicetoken`, `userid`, `udid`, `reqcount`,
    `ereqcount`.
+6. **For endpoints exercised by the Smile mobile app rather than the
+   browser admin console** (e.g. `switchingtimes/set2` — the schedule
+   editor only exists in the phone app, not the admin dashboard), the
+   browser-console technique above doesn't apply. Instead: route the
+   phone's WLAN traffic through a plain HTTP proxy (mitmproxy, run in its
+   own container, listening on `0.0.0.0` so the phone can reach it over
+   LAN) and capture the real request while manually performing the action
+   in the app. Since the gateway itself is plain HTTP (not HTTPS), this
+   needs no TLS root certificate on the phone for the gateway traffic
+   itself — the request body is visible in plaintext. This is how the
+   `switchingtimes/set2` wire format (see "Still untested / open" above)
+   was finally confirmed, after several rounds of educated-guess `set2`
+   calls were rejected by the gateway.
 
 **Preferred interaction pattern:** produce self-contained JS code blocks for
 manual paste into the browser console, rather than automated tab control —
@@ -1080,6 +1166,18 @@ must not proceed carelessly.
 - Before beta status (i.e. `x.0.y`), direct commits to `main` are
   acceptable for rapid early-stage iteration, as has been the practice so
   far in this project.
+- **Current version: `0.0.19`** (bumped 2026-09-09, patch-only, for the
+  `set_switching_times()` fix documented above — no new user-facing
+  feature yet, since that fix isn't wired to any HA entity/service). This
+  was the last planned `0.0.x` release.
+- **The next round of work — the HA Action/service for setting mode,
+  preset, temperature, and switching times (see "Next planned work"
+  above) — starts the initial `0.1.x` release.** Per the beta-status rule
+  above, this means: do NOT commit it directly to `main`. Create a
+  dedicated feature branch first (e.g. `feature/ha-actions`), do the work
+  there, and merge via pull request once ready. This also means the
+  README status badge (see below) must be updated from pre-alpha to beta
+  as part of that work, not before.
 - When proposing a plan (per the Session Workflow rules above), also
   propose the appropriate version bump and, once beta status applies,
   the branch name to use.
