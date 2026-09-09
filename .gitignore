@@ -10,6 +10,7 @@ config/home-assistant_v2.db*
 config/.cloud/
 config/custom_components/honeywell_smileconnect
 config/configuration.yaml
+config/.ha_run.lock
 
 # Secrets - never commit real gateway credentials
 .env
@@ -17,4 +18,4 @@ config/configuration.yaml
 .vscode/*
 !.vscode/extensions.json
 .DS_Store
-config/.ha_run.lock
+

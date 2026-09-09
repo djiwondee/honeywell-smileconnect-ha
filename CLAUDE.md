@@ -371,6 +371,18 @@ GET  /admin/login/index            (returns HTML of the config menu)
   — verify against the real gateway before declaring victory, especially
   for anything involving edge cases (empty collections, boundary values)
   that a generic reference implementation may never have exercised either.**
+  **Reconfirmed live 2026-09-09** during unrelated regression testing of
+  `set_scene()`'s new room-assignment guard (see below): a diagnostic
+  script called `api_methods.set_scene_rooms("Boost", [])` directly (a
+  different call site than `scene_manager.py`, which already avoided this)
+  and hit the identical hang. Gateway recovered on its own without a power
+  cycle. This means the empty-list hang is not fully contained just by
+  `scene_manager.py` avoiding it — any future direct caller of
+  `ApiMethods.set_scene_rooms()` could reintroduce it. **Fixed at the
+  source this time:** `set_scene_rooms()` itself now raises `ValueError`
+  for an empty `room_ids` list before building any request, so the
+  restriction no longer depends on every call site remembering to avoid
+  it.
 - **Fourth round on the same issue (2026-08-30): a fourth, DIFFERENT bug
   in the same function, found immediately after the empty-list-skip fix
   eliminated the timeout.** No more timeout, but `/api/scene/set(active=
@@ -445,6 +457,112 @@ GET  /admin/login/index            (returns HTML of the config menu)
   instead of `get_scene_duration()`. Locked in by
   `tests/test_scene_manager.py::TestAddMemberToSceneUsesCorrectedDuration`
   and live-verified end-to-end in HA by the user.
+  **⚠️ RE-OPENED (2026-09-09) — needs reconciliation before further
+  release, CHECK THIS BEFORE RELYING ON 0.0.18/0.0.19's Leave/Holiday
+  ACTIVATION IN PRODUCTION.** A completely independent live investigation
+  into `/api/scene/set`'s `duration` parameter (see the new dedicated
+  entry directly below) confirmed a formula and per-scene wire semantics
+  that **do not match two of the four values in this table**:
+  - Boost `0.5`→60min and Party `0.5`→6h DO match the newly-confirmed
+    fraction formula (`target/scene_max`: `60/120=0.5`, `6/12=0.5`) — no
+    issue here.
+  - **Leave `2`→6h does NOT match.** Leave shares Party's fraction
+    formula and `scene_max=12` (both confirmed live via the identical
+    clamp-test pattern on 2026-09-09). Under that formula, sending `2`
+    would be silently clamped by the gateway to `1` (=12h, the FULL
+    maximum), not `6h`. If `SCENE_ACTIVATION_DURATION["Leave"]` is still
+    `2` and something maps it to a "6h" real-world label anywhere in the
+    UI/docs, live activations of Leave are plausibly setting the wrong
+    duration (full 12h instead of the intended 6h) with `success:true`
+    masking it, same failure class as this file's other `success:true`-
+    but-wrong-effect bugs.
+  - **Holiday `0.5`→15d does NOT match.** Holiday is confirmed
+    (2026-09-09, see below) to send RAW DAYS, not a fraction — sending
+    `15` is echoed back as `~15`, and `100` is echoed back as `~100`
+    (gateway does not clamp Holiday at all, unlike the other three). If
+    `duration=0.5` is what's actually being sent for Holiday in
+    production, that sets **0.5 days (12 hours)**, not 15 days.
+  **This needs to be checked against `docs/protocol.md` §4d and the
+  actual current `const.SCENE_ACTIVATION_DURATION` values before the next
+  release that touches scene activation** — it's possible §4d's original
+  investigation used a different intermediate scaling step this summary
+  doesn't capture (in which case the two entries above are a documentation
+  gap, not a runtime bug), but that needs to be positively confirmed, not
+  assumed. Given the severity (Leave/Holiday are user-facing, shipped
+  since 0.0.18), treat this as the top-priority item for the next session
+  that touches `scene_manager.py`.
+- **`api/api_methods.py`'s `set_scene()` `duration` parameter semantics,
+  confirmed live 2026-09-09** (independent of, and predating discovery of,
+  the `SCENE_ACTIVATION_DURATION` conflict directly above). Full live
+  falsification testing (`scripts/manual_probe_scene_duration.py`,
+  `scripts/manual_probe_scene_duration_all_scenes.py`,
+  `scripts/manual_probe_set_scene_regression.py`) established:
+  - **Boost, Party, Leave:** `duration` is a **fraction of the scene's own
+    `scene_max`** from `/api/scene/status` (Boost=120min, Party=12h,
+    Leave=12h — all three confirmed live via `scene/status`). A value >1
+    is **silently clamped to `1` (=scene_max) by the gateway**, no error
+    returned (`success:true` regardless). Confirmed for Boost via a real
+    countdown (`/api/scene/duration` polled while a genuine app-triggered
+    Boost ran down, landing exactly on the formula's predicted value —
+    28min remaining matched `duration=0.2333...` × 120 exactly); confirmed
+    for Party/Leave via the identical clamp-test pattern (`0.5` echoed
+    back unchanged, `6`/raw-hours clamped to `1`).
+  - **Holiday:** `duration` is **RAW DAYS**, not a fraction. Sending `15`
+    was echoed back by `/api/scene/duration` as `~15.0014` (small offset
+    likely rounding/an internal absolute-end-datetime calculation, not
+    significant) — critically, **NOT clamped to `1`** like the other
+    three, proving it uses a different wire format entirely. The original,
+    3-month-old pre-rewrite `apiMethods.py`'s claim ("Holiday: Tage
+    direkt") was correct for Holiday specifically, even though the same
+    file's claim for Boost ("Minuten direkt") was wrong — this is why
+    trusting either claim without live-testing would have been a mistake
+    either way.
+  - **The gateway itself enforces NO ceiling for Holiday** — tested live
+    up to `100` days with no clamping observed
+    (`scripts/manual_probe_holiday_max.py`). The Smile App's own UI limit
+    (1-30 days, confirmed directly by the user) is purely an app-side
+    restriction, not a protocol one. Same story for Boost/Party/Leave's
+    app-visible ranges (Boost 30-120min raster of 30, Party/Leave 1-12h,
+    all confirmed by the user, 0 not selectable in the app for any of the
+    four) — the gateway's own clamp-at-`scene_max` behavior for those
+    three happens to coincide with enforcing SOMETHING, but not
+    necessarily the exact app-visible bounds, so these are enforced
+    client-side too, not assumed to be covered by the gateway's clamp.
+  - **`api_methods.py` now bakes all of this in directly:** `SCENE_MAX`,
+    `FRACTION_DURATION_SCENES`, `RAW_DAYS_DURATION_SCENES`,
+    `NO_DURATION_SCENES`, and `SCENE_APP_LIMITS` module-level constants;
+    `set_scene()` gained a `target` parameter (real-world unit — minutes/
+    hours/days as appropriate) that validates against `SCENE_APP_LIMITS`
+    (raises `ValueError` outside the app's own min/max/raster) and then
+    converts correctly per scene, while the pre-existing `duration`
+    parameter (raw wire value) still works unchanged for any existing
+    caller and deliberately bypasses the `SCENE_APP_LIMITS` check — an
+    intentional power-user escape hatch, not an oversight.
+  - **Room-assignment guard added to `set_scene()`:** confirmed live that
+    activating a scene with no rooms assigned returns `success:true` but
+    `isActive` silently stays `false` (matches a check present in the
+    original 3-month-old `apiMethods.py`'s `activateScene()` that this
+    project's rewrite had dropped without noticing). `set_scene()` now
+    raises `ValueError` in that situation unless `room_ids` is passed to
+    assign rooms first — regression-tested locally in
+    `scripts/test_scene_guards_local.py` (mocked, no gateway contact) so
+    it can be re-verified after future refactors without repeating the
+    live incident below.
+  - **Live incident during regression testing of the room-assignment
+    guard (2026-09-09):** a diagnostic script called
+    `set_scene_rooms("Boost", [])` to intentionally trigger the new
+    guard's "no rooms" condition — this is the exact empty-list call
+    already known (see the dedicated entry above) to hang the gateway,
+    which the diagnostic script had not cross-checked against. Gateway
+    hung with a `ReadTimeout`, then recovered on its own within the
+    session without a power cycle; Boost's room assignment (`[1]`) was
+    confirmed intact afterward via a read-only follow-up check. Root-
+    caused and fixed at `set_scene_rooms()` itself (see the empty-list
+    entry above) rather than only in the test script, and the guard test
+    was rewritten as a fully local, gateway-free test
+    (`scripts/test_scene_guards_local.py`) so it can never repeat this.
+  All of the above is captured directly in `api_methods.py`'s own change
+  log — see that file, not just this summary, for the exact reasoning.
 - ~~**Whether `roomstatus` might be a bitfield** (Standby + active preset
   encoded as independent bits, rather than one flat state code) — raised
   as a live hypothesis by the user given the known codes don't decompose
@@ -554,9 +672,24 @@ GET  /admin/login/index            (returns HTML of the config menu)
 
 ### Next planned work (agreed in project discussion, not yet started)
 
+- **Top priority, before anything else touching scene activation:**
+  reconcile `const.SCENE_ACTIVATION_DURATION` / `docs/protocol.md` §4d
+  (Leave `2`→6h, Holiday `0.5`→15d) against the newly-confirmed
+  `duration` formula (fraction-of-scene_max for Boost/Party/Leave, raw
+  days for Holiday) — see the re-opened item above. Confirm whether this
+  is a real production bug currently live since 0.0.18, or whether §4d's
+  original investigation used an intermediate scaling step this summary
+  doesn't capture. Either way, `scene_manager.add_member_to_scene()`
+  should end up calling `api_methods.set_scene(..., target=...)` with a
+  real-world value instead of a hand-maintained magic-number table, now
+  that `target=` exists and does the correct conversion itself — this
+  removes an entire class of "duration constant silently drifts from the
+  real formula" bug going forward.
 - All three preset/roomstatus/Standby-masking bugs above, plus the
   PRESET_NONE gap found during their live verification, are now shipped
-  in 0.0.18 — no outstanding implementation work from this investigation.
+  in 0.0.18 — no outstanding implementation work from that investigation
+  specifically (see the re-opened item above for a NEW, separate concern
+  found afterward).
   The pre-existing items below (never blocked on this work, e.g. the
   `actualTemperature`/temperature-sync question, reconnect/error-handling
   strategy) remain the next candidates, alongside the switching-times
@@ -611,7 +744,7 @@ GET  /admin/login/index            (returns HTML of the config menu)
   targeting uses `entity_id` (mapping to the existing climate entity) or
   a separate `room_id` parameter. **This is the first piece of work
   planned for the `0.1.x` line** — see "Versioning & Branching Strategy"
-  below: the last `0.0.x` release was `0.0.19`, and this feature starts
+  below: the last `0.0.x` release is `0.0.20`, and this feature starts
   the initial `0.1.x` beta release, which means it must be developed on a
   dedicated feature branch and merged via pull request, not committed
   directly to `main`.
@@ -763,6 +896,24 @@ pytest tests/ -v
   `gateway_device_info()`'s own identifier — this is precisely the kind of
   mismatch that caused the original "two unrelated devices" bug, so it's
   asserted explicitly rather than just implicitly.
+- **`scripts/test_scene_guards_local.py` (new, 2026-09-09)** — NOT under
+  `tests/`, deliberately: it lives alongside the other manual/diagnostic
+  scripts in `scripts/` (so it's exempt from the `lint.yml` scope, same as
+  its siblings) but unlike them, it needs **no gateway, no credentials,
+  and no network at all** — it constructs `ApiMethods` with mocked
+  credentials/`_request` and asserts purely at the Python level. Covers:
+  `set_scene_rooms()` rejecting an empty list before any request is built;
+  `set_scene()`'s room-assignment guard raising when `get_scene_rooms()`
+  reports no rooms (and NOT raising when it does); and all of
+  `SCENE_APP_LIMITS`' min/max/raster cases across all four timed scenes,
+  both via the low-level `_validate_target_against_app_limits()` function
+  directly and end-to-end through `set_scene(..., target=...)`, plus a
+  case confirming `duration=` (the raw wire value) deliberately bypasses
+  that validation. Written specifically so the room-assignment guard can
+  be regression-tested without repeating the live empty-list-hang incident
+  documented above — run it with `python3 scripts/
+  test_scene_guards_local.py`, no `.env`/credentials needed, safe to run
+  anytime including in CI if that's ever set up for `scripts/`.
 
 **When adding a new endpoint or fixing a parsing bug:** capture the real
 request/response via the browser-console technique or a live debug-log
@@ -790,7 +941,22 @@ endpoint that needs a real fixture before entity code is written for it —
 copy/adapt this script rather than guessing at a response shape from a
 generic reference project. The `scripts/manual_probe_switchingtimes*.py`
 family of scripts (2026-09-09) follows the same pattern for the
-`get2`/`set2` investigation — see "Still untested / open" above.
+`get2`/`set2` investigation, and the `scripts/manual_probe_scene_duration*
+.py` / `scripts/manual_probe_holiday_max.py` / `scripts/
+manual_probe_set_scene_regression.py` / `scripts/
+check_and_restore_boost_rooms.py` family (also 2026-09-09) follows it for
+the `scene/set`/`scene/duration` investigation — see "Still untested /
+open" above. Two lessons from that round worth calling out explicitly for
+future manual scripts: (1) **check `api_request.py`'s/`api_methods.py`'s
+own documented gateway quirks (e.g. the empty-list hang) before writing a
+test that deliberately exercises an edge case** — a diagnostic script
+caused a live incident by not doing this (see the empty-list entry
+above); (2) **when exploring an undocumented numeric range experimentally
+(e.g. "how high can Holiday's duration go"), ask whether a known real-
+world limit already exists (the app's own UI) before probing far beyond
+it** — an earlier round of this same investigation tested up to 100 days
+before the user pointed out the app's own limit is 30, which was
+unnecessary reach for a question the user could have answered directly.
 
 ## Reverse-Engineering Method (for further, still-unknown endpoints)
 
@@ -816,17 +982,21 @@ family of scripts (2026-09-09) follows the same pattern for the
    `ereqcount`.
 6. **For endpoints exercised by the Smile mobile app rather than the
    browser admin console** (e.g. `switchingtimes/set2` — the schedule
-   editor only exists in the phone app, not the admin dashboard), the
-   browser-console technique above doesn't apply. Instead: route the
-   phone's WLAN traffic through a plain HTTP proxy (mitmproxy, run in its
-   own container, listening on `0.0.0.0` so the phone can reach it over
-   LAN) and capture the real request while manually performing the action
-   in the app. Since the gateway itself is plain HTTP (not HTTPS), this
-   needs no TLS root certificate on the phone for the gateway traffic
-   itself — the request body is visible in plaintext. This is how the
+   editor only exists in the phone app, not the admin dashboard, and this
+   round's `scene/set`/`scene/duration` investigation similarly relied on
+   the phone app rather than the admin console), the browser-console
+   technique above doesn't apply. Instead: route the phone's WLAN traffic
+   through a plain HTTP proxy (mitmproxy, run in its own container,
+   listening on `0.0.0.0` so the phone can reach it over LAN) and capture
+   the real request while manually performing the action in the app.
+   Since the gateway itself is plain HTTP (not HTTPS), this needs no TLS
+   root certificate on the phone for the gateway traffic itself — the
+   request body is visible in plaintext. This is how the
    `switchingtimes/set2` wire format (see "Still untested / open" above)
    was finally confirmed, after several rounds of educated-guess `set2`
-   calls were rejected by the gateway.
+   calls were rejected by the gateway, and how the `scene/set`
+   `duration`/app-vs-gateway-limits investigation (also above) was
+   confirmed.
 
 **Preferred interaction pattern:** produce self-contained JS code blocks for
 manual paste into the browser console, rather than automated tab control —
@@ -890,9 +1060,19 @@ construct a `device_info` dict inline.
   - `login.py` — challenge/response login, password hashing, AES devicetoken
     decryption.
   - `api_request.py` — signs and executes authenticated requests.
-  - `api_methods.py` — high-level per-endpoint methods.
+  - `api_methods.py` — high-level per-endpoint methods. As of 2026-09-09,
+    also owns `SCENE_MAX`, `FRACTION_DURATION_SCENES`,
+    `RAW_DAYS_DURATION_SCENES`, `NO_DURATION_SCENES`, and
+    `SCENE_APP_LIMITS` — see "Still untested / open" above for what each
+    encodes and why. `set_scene_rooms()` and `set_scene()` both carry
+    live-confirmed guard clauses (empty room list; no rooms assigned) —
+    see the same section.
   - `scene_manager.py` — add/remove a room from a scene (handles the
-    getrooms/setrooms/set sequencing).
+    getrooms/setrooms/set sequencing). **Candidate for a follow-up change**
+    per the re-opened `SCENE_ACTIVATION_DURATION` item above: once that's
+    reconciled, `add_member_to_scene()` should likely call
+    `api_methods.set_scene(..., target=...)` with a real-world value
+    instead of maintaining its own separate duration-factor table.
   - `credentials.py` — session state, including `reqcount` with correct
     post-increment semantics (see reqcount section above).
   - `ping.py` — **deliberately separate** from everything above: a plain,
@@ -1166,10 +1346,39 @@ must not proceed carelessly.
 - Before beta status (i.e. `x.0.y`), direct commits to `main` are
   acceptable for rapid early-stage iteration, as has been the practice so
   far in this project.
-- **Current version: `0.0.19`** (bumped 2026-09-09, patch-only, for the
-  `set_switching_times()` fix documented above — no new user-facing
-  feature yet, since that fix isn't wired to any HA entity/service). This
-  was the last planned `0.0.x` release.
+- **Current version: `0.0.20`** (bumped 2026-09-09, patch-only — still
+  `0.0.x`, so this is a normal direct-to-`main` release per the rule
+  above, not an exception to it). Contents of this release, all from the
+  same live investigation session:
+  - Confirmed `scene/set`'s `duration` parameter semantics for all four
+    timed scenes (fraction-of-scene_max for Boost/Party/Leave, raw days
+    for Holiday) and the gateway's actual clamp behavior (or lack thereof
+    for Holiday).
+  - Added `SCENE_APP_LIMITS` (Boost 30-120min raster-30, Party/Leave
+    1-12h, Holiday 1-30d, all confirmed directly by the user) enforced
+    client-side via `set_scene()`'s new `target=` parameter, since the
+    gateway itself does not enforce these (confirmed for Holiday up to
+    100 days with no clamping).
+  - Added a room-assignment guard to `set_scene()` (raises `ValueError`
+    instead of a silent no-op `success:true`/`isActive:false`).
+  - Added a client-side empty-list guard directly to `set_scene_rooms()`
+    (raises `ValueError` before any request is built), closing a gap
+    where only `scene_manager.py`'s higher-level function avoided the
+    known gateway hang — a live incident during this session's own
+    testing reconfirmed the hang still reachable via the lower-level API
+    method directly.
+  - New local-only, gateway-free regression test
+    (`scripts/test_scene_guards_local.py`) covering all of the above.
+  - **Re-opened a previously-"resolved" item:** `const.
+    SCENE_ACTIVATION_DURATION`'s Leave/Holiday values (shipped in 0.0.18)
+    appear inconsistent with the newly-confirmed formula and need
+    reconciliation — see "Still untested / open" and "Next planned work"
+    above. **Not yet fixed in this release** — flagged for the next
+    session, since it needs the reconciliation to actually happen first,
+    not just be documented.
+  - No new user-facing HA feature (still not wired to any entity/service)
+    — this release is `api/` layer correctness/safety only, same category
+    as `0.0.19`.
 - **The next round of work — the HA Action/service for setting mode,
   preset, temperature, and switching times (see "Next planned work"
   above) — starts the initial `0.1.x` release.** Per the beta-status rule
