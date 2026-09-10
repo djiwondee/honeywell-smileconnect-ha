@@ -1,5 +1,26 @@
 """Climate platform for Honeywell Smile Connect."""
 # Change log:
+# - 2026-09-10: Added the set_preset_mode_with_duration HA Action - the
+#   first custom Action for this integration (start of the 0.1.x beta
+#   line, see CLAUDE.md "Versioning & Branching Strategy"). hvac_mode,
+#   preset_mode, and temperature were already fully controllable via the
+#   standard climate.set_hvac_mode/set_preset_mode/set_temperature HA
+#   services (this file's existing ClimateEntity overrides back those
+#   directly) - the one genuinely new capability was a per-activation
+#   custom preset duration, which ApiMethods.set_scene() already supports
+#   (target=/duration=) but which SceneManager.add_member_to_scene() had
+#   no way to receive from a caller. async_set_preset_mode()'s body is now
+#   a thin wrapper around a new shared _async_apply_preset() helper (used
+#   identically by both the standard path and the new Action, so the
+#   existing HA UI/climate.set_preset_mode() behavior is unchanged) that
+#   forwards optional target/duration through to scene_manager.py. The new
+#   async_set_preset_mode_with_duration() entity method backs the Action,
+#   registered via entity_platform.async_register_entity_service() in
+#   async_setup_entry() (see services.yaml/strings.json/translations for
+#   the schema/labels). ValueError/NotImplementedError from the API layer
+#   (SCENE_APP_LIMITS violations, Leave's target= block) are translated to
+#   ServiceValidationError so they surface as a clean message in the HA UI
+#   instead of a raw traceback.
 # - 2026-09-01 (b): Added PRESET_NONE ("none") as a selectable preset_mode
 #   entry - supersedes the 2026-08-27 (e) entry below, which deliberately
 #   left it out on the assumption that Python `None` alone was sufficient
@@ -127,6 +148,7 @@ from __future__ import annotations
 import logging
 from typing import ClassVar
 
+import voluptuous as vol
 from homeassistant.components.climate import (
     PRESET_NONE,
     ClimateEntity,
@@ -136,6 +158,8 @@ from homeassistant.components.climate import (
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import ATTR_TEMPERATURE, UnitOfTemperature
 from homeassistant.core import HomeAssistant
+from homeassistant.exceptions import ServiceValidationError
+from homeassistant.helpers import entity_platform
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
@@ -150,6 +174,30 @@ from .coordinator import SmileConnectCoordinator
 
 _LOGGER = logging.getLogger(__name__)
 
+SERVICE_SET_PRESET_MODE_WITH_DURATION = "set_preset_mode_with_duration"
+
+# Mirrors _attr_preset_modes below - kept as a separate module-level list
+# (rather than importing the class attribute) since voluptuous schemas are
+# built at module import time, before the class body runs.
+_PRESET_MODE_WITH_DURATION_VALUES = [
+    PRESET_NONE,
+    SceneName.BOOST.value,
+    SceneName.HOLIDAY.value,
+    SceneName.LEAVE.value,
+    SceneName.PARTY.value,
+]
+
+# vol.Exclusive with a shared group name makes target/duration mutually
+# exclusive - the caller picks the real-world unit (target) or the raw
+# wire value (duration, power-user escape hatch), never both. See
+# ApiMethods.set_scene()'s own docstring for the full target-vs-duration
+# semantics this schema is just a thin HA-facing wrapper around.
+SET_PRESET_MODE_WITH_DURATION_SCHEMA = {
+    vol.Required("preset_mode"): vol.In(_PRESET_MODE_WITH_DURATION_VALUES),
+    vol.Exclusive("target", "duration_group"): vol.Coerce(float),
+    vol.Exclusive("duration", "duration_group"): vol.Coerce(float),
+}
+
 
 async def async_setup_entry(
     hass: HomeAssistant,
@@ -163,6 +211,13 @@ async def async_setup_entry(
     async_add_entities(
         SmileConnectClimate(coordinator, scene_manager, idx, data.unique_id)
         for idx in range(len(coordinator.data["rooms"]))
+    )
+
+    platform = entity_platform.async_get_current_platform()
+    platform.async_register_entity_service(
+        SERVICE_SET_PRESET_MODE_WITH_DURATION,
+        SET_PRESET_MODE_WITH_DURATION_SCHEMA,
+        "async_set_preset_mode_with_duration",
     )
 
 
@@ -323,6 +378,43 @@ class SmileConnectClimate(CoordinatorEntity, ClimateEntity):
         await self.coordinator.async_request_refresh()
 
     async def async_set_preset_mode(self, preset_mode: str) -> None:
+        await self._async_apply_preset(preset_mode)
+
+    async def async_set_preset_mode_with_duration(
+        self,
+        preset_mode: str,
+        target: float | None = None,
+        duration: float | None = None,
+    ) -> None:
+        """Back the set_preset_mode_with_duration HA Action.
+
+        Same as async_set_preset_mode(), but lets the caller override the
+        activation duration for this specific call instead of always
+        getting the fixed vendor default - see
+        SceneManager.add_member_to_scene()/ApiMethods.set_scene() for the
+        target=/duration= semantics this just forwards.
+        """
+        if preset_mode == PRESET_NONE and (target is not None or duration is not None):
+            raise ServiceValidationError(
+                "target/duration only apply when activating a preset - "
+                "preset_mode 'none' only clears the current preset, there "
+                "is nothing to apply a duration to."
+            )
+        try:
+            await self._async_apply_preset(preset_mode, target=target, duration=duration)
+        except (NotImplementedError, ValueError) as err:
+            # e.g. Leave's target= block, or a SCENE_APP_LIMITS violation -
+            # both raised by ApiMethods.set_scene(). Re-raised as
+            # ServiceValidationError so the HA UI shows the actual message
+            # instead of a raw traceback.
+            raise ServiceValidationError(str(err)) from err
+
+    async def _async_apply_preset(
+        self,
+        preset_mode: str,
+        target: float | None = None,
+        duration: float | None = None,
+    ) -> None:
         previous = self._active_preset
         if previous is not None and previous != preset_mode:
             await self.hass.async_add_executor_job(
@@ -333,7 +425,11 @@ class SmileConnectClimate(CoordinatorEntity, ClimateEntity):
             # clears whatever preset was active (handled above); there is
             # nothing to activate.
             await self.hass.async_add_executor_job(
-                self._scene_manager.add_member_to_scene, self._room_id, preset_mode
+                self._scene_manager.add_member_to_scene,
+                self._room_id,
+                preset_mode,
+                target,
+                duration,
             )
         self._active_preset = None if preset_mode == PRESET_NONE else preset_mode
         await self.coordinator.async_request_refresh()

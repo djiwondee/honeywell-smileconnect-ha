@@ -63,5 +63,25 @@
         "name": "Termostato"
       }
     }
+  },
+  "services": {
+    "set_preset_mode_with_duration": {
+      "name": "Establecer modo de preajuste con duración",
+      "description": "Activa un preajuste (Boost, Party, Holiday, Leave) con una duración personalizada, o borra el preajuste actual. El modo/preajuste/temperatura ya se pueden controlar mediante las acciones genéricas climate.* - esta acción existe específicamente para anular la duración predeterminada de fábrica de un preajuste.",
+      "fields": {
+        "preset_mode": {
+          "name": "Preajuste",
+          "description": "El preajuste a activar, o 'none' para borrar el preajuste actual."
+        },
+        "target": {
+          "name": "Duración",
+          "description": "Duración real en la unidad propia del preajuste: minutos para Boost, horas para Party, días para Holiday. No compatible con Leave (usar 'Duración bruta' en su lugar) y no aplicable cuando el preajuste es 'none'."
+        },
+        "duration": {
+          "name": "Duración bruta",
+          "description": "Avanzado: el valor bruto enviado a la pasarela en lugar de una duración real. Obligatorio para Leave (un valor conocido que funciona es 2, ≈ 6h); para otros preajustes es mejor usar 'Duración'."
+        }
+      }
+    }
   }
 }

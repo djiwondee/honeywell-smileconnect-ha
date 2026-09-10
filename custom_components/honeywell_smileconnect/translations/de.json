@@ -63,5 +63,25 @@
         "name": "Thermostat"
       }
     }
+  },
+  "services": {
+    "set_preset_mode_with_duration": {
+      "name": "Preset-Modus mit Dauer setzen",
+      "description": "Aktiviert ein Preset (Boost, Party, Holiday, Leave) mit einer benutzerdefinierten Dauer oder hebt das aktuelle Preset auf. Modus/Preset/Temperatur lassen sich bereits über die generischen climate.*-Actions steuern - diese Action dient gezielt dazu, die werkseitige Standarddauer eines Presets zu überschreiben.",
+      "fields": {
+        "preset_mode": {
+          "name": "Preset",
+          "description": "Das zu aktivierende Preset, oder 'none' um das aktuelle Preset aufzuheben."
+        },
+        "target": {
+          "name": "Dauer",
+          "description": "Reale Dauer in der jeweiligen Einheit des Presets: Minuten bei Boost, Stunden bei Party, Tage bei Holiday. Für Leave nicht unterstützt (stattdessen 'Rohe Dauer' verwenden) und nicht anwendbar, wenn Preset 'none' ist."
+        },
+        "duration": {
+          "name": "Rohe Dauer",
+          "description": "Erweitert: der rohe Wert, der direkt an das Gateway gesendet wird, statt einer realen Dauer. Für Leave erforderlich (ein bekannt funktionierender Wert ist 2, ≈ 6h); bei anderen Presets besser 'Dauer' verwenden."
+        }
+      }
+    }
   }
 }

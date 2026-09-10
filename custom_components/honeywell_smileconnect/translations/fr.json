@@ -63,5 +63,25 @@
         "name": "Thermostat"
       }
     }
+  },
+  "services": {
+    "set_preset_mode_with_duration": {
+      "name": "Définir le mode préréglage avec durée",
+      "description": "Active un préréglage (Boost, Party, Holiday, Leave) avec une durée personnalisée, ou efface le préréglage actuel. Le mode/préréglage/température sont déjà contrôlables via les actions génériques climate.* - cette action sert spécifiquement à remplacer la durée par défaut du fabricant pour un préréglage.",
+      "fields": {
+        "preset_mode": {
+          "name": "Préréglage",
+          "description": "Le préréglage à activer, ou 'none' pour effacer le préréglage actuel."
+        },
+        "target": {
+          "name": "Durée",
+          "description": "Durée réelle dans l'unité propre au préréglage : minutes pour Boost, heures pour Party, jours pour Holiday. Non pris en charge pour Leave (utiliser « Durée brute » à la place) et non applicable si le préréglage est 'none'."
+        },
+        "duration": {
+          "name": "Durée brute",
+          "description": "Avancé : la valeur brute envoyée à la passerelle à la place d'une durée réelle. Requis pour Leave (une valeur connue fonctionnelle est 2, ≈ 6h) ; pour les autres préréglages, préférez « Durée »."
+        }
+      }
+    }
   }
 }

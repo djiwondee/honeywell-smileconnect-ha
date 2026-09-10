@@ -716,15 +716,17 @@ GET  /admin/login/index            (returns HTML of the config menu)
 
 ### Next planned work (agreed in project discussion, not yet started)
 
-- **Top priority, before anything else touching scene activation:**
+- ~~**Top priority, before anything else touching scene activation:**
   `const.SCENE_ACTIVATION_DURATION["Holiday"]` (currently `0.5`, intended
   to mean 15 days) is very likely WRONG given Holiday's confirmed
   raw-days write formula — `0.5` would actually set 0.5 days (12 hours),
-  not 15 days. This still needs to be checked and fixed in `const.py`/
-  `scene_manager.py`. (Leave's equivalent contradiction — see "Still
-  untested / open" above — is resolved: the old value was correct, only
-  the newly-attempted generalization was wrong, and that generalization
-  is now blocked rather than shipped.)
+  not 15 days.~~ **FIXED (2026-09-10, shipped in `0.1.0`).** Changed to
+  `15` (raw days) in `const.py`, alongside the `set_preset_mode_with_duration`
+  HA Action work below, which touches exactly this code path. See
+  `const.py`'s own change log. (Leave's equivalent contradiction — see
+  "Still untested / open" above — is resolved: the old value was correct,
+  only the newly-attempted generalization was wrong, and that
+  generalization is now blocked rather than shipped.)
 - All three preset/roomstatus/Standby-masking bugs above, plus the
   PRESET_NONE gap found during their live verification, are now shipped
   in 0.0.18 — no outstanding implementation work from that investigation
@@ -770,24 +772,32 @@ GET  /admin/login/index            (returns HTML of the config menu)
   Still not wired to anything in the HA integration layer (service or
   entity) — this is now the concrete next step, not a blocked-on-
   verification item anymore. See the new HA Action bullet directly below.
-- **New: Home Assistant Action (service) to let automations set hvac
-  mode, preset, thermostat temperature, and switching times.** Not yet
-  designed. Should expose, as callable HA services (not just entity
-  UI interactions), at minimum: setting `hvac_mode` (Standby on/off),
-  setting `preset_mode` (Boost/Party/Leave/Holiday/none), setting target
-  temperature, and writing switching-time schedules (leveraging the now-
-  working `set_switching_times()`). Needs a design proposal (per Session
-  Workflow rule 3 below) before implementation — in particular how
-  switching-times input should be structured for a service call (likely
-  not the raw 21-slot list directly, since that's an internal wire
-  format, not a natural service-call shape) and whether per-room
-  targeting uses `entity_id` (mapping to the existing climate entity) or
-  a separate `room_id` parameter. **This is the first piece of work
-  planned for the `0.1.x` line** — see "Versioning & Branching Strategy"
-  below: the last `0.0.x` release is `0.0.21`, and this feature starts
-  the initial `0.1.x` beta release, which means it must be developed on a
-  dedicated feature branch and merged via pull request, not committed
-  directly to `main`.
+- **Home Assistant Action (service) to let automations set hvac mode,
+  preset, thermostat temperature, and switching times.** **PARTIALLY
+  SHIPPED (2026-09-10, `0.1.0`, on `feature/ha-actions` — starts the
+  `0.1.x` beta line, see "Versioning & Branching Strategy" below).**
+  Design review during planning established that `hvac_mode`, `preset_mode`,
+  and target temperature are already fully controllable today via the
+  standard `ClimateEntity` overrides in `climate.py` — the generic
+  `climate.set_hvac_mode`/`climate.set_preset_mode`/`climate.set_temperature`
+  HA services already work per-entity, no custom Action needed for those
+  three verbs. The one genuinely new capability the API layer supported
+  but nothing exposed was a **per-activation custom preset duration**
+  (`ApiMethods.set_scene()`'s `target=`/`duration=`, previously only
+  reachable with the hardcoded `SCENE_ACTIVATION_DURATION` default via
+  `SceneManager.add_member_to_scene()`). Shipped as the new
+  **`honeywell_smileconnect.set_preset_mode_with_duration`** entity Action
+  (`climate.py`, registered via `entity_platform.async_register_entity_service()`;
+  schema/labels in `services.yaml` + `strings.json`/`translations/*.json`),
+  backed by `SceneManager.add_member_to_scene()`'s new optional
+  `target=`/`duration=` parameters (`api/scene_manager.py`) — see both
+  files' change logs. **Still open / deferred, NOT part of this shipped
+  piece:** a dedicated `hvac_mode`/temperature Action (deliberately
+  skipped — would just duplicate the standard `climate.*` services with no
+  new capability) and a switching-times Action (needs its own design pass
+  for how the raw slot list should be shaped for a service call — see the
+  bullet above this one; `get_switching_times`/`set_switching_times` in
+  `api/api_methods.py` remain unwired to anything HA-facing).
 - **Possible future gateway-attached entities from `/api/weather`'s
   remaining fields** (`iconUrl`, `forlocation`) — deliberately NOT
   implemented now. Per project discussion: the outside
@@ -1435,14 +1445,28 @@ must not proceed carelessly.
     multiple isolated live tests each, not implicated by the Leave
     finding.
   - No new user-facing HA feature — same category as `0.0.19`/`0.0.20`.
-- **The next round of work — the HA Action/service for setting mode,
-  preset, temperature, and switching times (see "Next planned work"
-  above) — starts the initial `0.1.x` release.** Per the beta-status rule
-  above, this means: do NOT commit it directly to `main`. Create a
-  dedicated feature branch first (e.g. `feature/ha-actions`), do the work
-  there, and merge via pull request once ready. This also means the
-  README status badge (see below) must be updated from pre-alpha to beta
-  as part of that work, not before.
+- **`0.1.0` (in progress, 2026-09-10, on branch `feature/ha-actions` — NOT
+  yet merged to `main`, so `0.0.21` above remains what's actually on
+  `main` until the PR lands).** Starts the `0.1.x` beta line — the first
+  HA Action for this integration. Contents:
+  - New entity Action `honeywell_smileconnect.set_preset_mode_with_duration`
+    (`climate.py`/`services.yaml`/`strings.json`/`translations/*.json`) —
+    see the "Next planned work" entry above for the full design rationale
+    (why this one Action, not three).
+  - `SceneManager.add_member_to_scene()` gained optional `target=`/
+    `duration=` parameters (`api/scene_manager.py`), defaulting to the
+    prior hardcoded behavior when omitted.
+  - Fixed `const.SCENE_ACTIVATION_DURATION["Holiday"]` (`0.5` → `15`) —
+    see the "Top priority" item above, resolved as part of this same
+    change since it touches the identical code path.
+  - `manifest.json` version bump + README badges (version `0.1.0`, status
+    `pre-alpha` → `beta`).
+  - New tests in `tests/test_scene_manager.py` covering the `target=`/
+    `duration=` passthrough; `climate.py`'s Action registration itself is
+    HA-dependent and verified manually (no automated harness for it yet,
+    per "Test Suite" below).
+  - Per the beta-status rule above: developed on `feature/ha-actions`, to
+    be merged via pull request — not committed directly to `main`.
 - When proposing a plan (per the Session Workflow rules above), also
   propose the appropriate version bump and, once beta status applies,
   the branch name to use.

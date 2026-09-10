@@ -1,4 +1,10 @@
 # Change log:
+# - 2026-09-10: Added TestAddMemberToSceneCustomDuration, covering the new
+#   optional target=/duration= parameters on add_member_to_scene() (added
+#   to back the new set_preset_mode_with_duration HA Action - see
+#   climate.py/scene_manager.py's own change logs). Confirms both override
+#   the SCENE_ACTIVATION_DURATION default and are forwarded to
+#   api.set_scene() unchanged.
 # - 2026-09-01: Added TestAddMemberToSceneUsesCorrectedDuration, locking in
 #   the fix for add_member_to_scene() resending an unreliable
 #   get_scene_duration() value (always 0/noise for an inactive scene,
@@ -139,3 +145,40 @@ class TestAddMemberToSceneUsesCorrectedDuration:
         manager.add_member_to_scene(1, SceneName.HOLIDAY.value)
 
         api.get_scene_duration.assert_not_called()
+
+
+class TestAddMemberToSceneCustomDuration:
+    """Regression tests for the target=/duration= passthrough added to back
+    the set_preset_mode_with_duration HA Action - a caller-supplied value
+    must override SCENE_ACTIVATION_DURATION instead of always using it.
+    """
+
+    def test_target_overrides_default_duration(self):
+        api = _make_api(scene_rooms=[], is_active=False)
+        manager = SceneManager(api)
+
+        manager.add_member_to_scene(1, "Boost", target=60)
+
+        last_call = api.set_scene.call_args_list[-1]
+        assert last_call.kwargs["target"] == 60
+        assert last_call.kwargs["duration"] is None
+
+    def test_duration_overrides_default_duration(self):
+        api = _make_api(scene_rooms=[], is_active=False)
+        manager = SceneManager(api)
+
+        manager.add_member_to_scene(1, "Holiday", duration=999)
+
+        last_call = api.set_scene.call_args_list[-1]
+        assert last_call.kwargs["duration"] == 999
+        assert last_call.kwargs["target"] is None
+
+    def test_no_target_or_duration_still_uses_scene_activation_duration(self):
+        api = _make_api(scene_rooms=[], is_active=False)
+        manager = SceneManager(api)
+
+        manager.add_member_to_scene(1, "Party")
+
+        last_call = api.set_scene.call_args_list[-1]
+        assert last_call.kwargs["duration"] == SCENE_ACTIVATION_DURATION[SceneName.PARTY]
+        assert last_call.kwargs["target"] is None

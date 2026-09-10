@@ -63,5 +63,25 @@
         "name": "Thermostat"
       }
     }
+  },
+  "services": {
+    "set_preset_mode_with_duration": {
+      "name": "Set preset mode with duration",
+      "description": "Activate a preset (Boost, Party, Holiday, Leave) with a custom duration, or clear the current preset. Mode/preset/temperature can already be controlled via the generic climate.* actions - this action exists specifically to override a preset's vendor-default duration.",
+      "fields": {
+        "preset_mode": {
+          "name": "Preset",
+          "description": "The preset to activate, or 'none' to clear the current preset."
+        },
+        "target": {
+          "name": "Duration",
+          "description": "Real-world duration in the preset's own unit: minutes for Boost, hours for Party, days for Holiday. Not supported for Leave (use 'Raw duration' instead) and not applicable when preset is 'none'."
+        },
+        "duration": {
+          "name": "Raw duration",
+          "description": "Advanced: the raw value sent to the gateway instead of a real-world duration. Required for Leave (a known-good value is 2, ≈ 6h); for other presets prefer 'Duration' instead."
+        }
+      }
+    }
   }
 }

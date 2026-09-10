@@ -1,5 +1,19 @@
 """Constants for the Honeywell Smile Connect integration."""
 # Change log:
+# - 2026-09-10: Fixed SCENE_ACTIVATION_DURATION[HOLIDAY]: was 0.5 (intended
+#   to mean 15 real days, per the original x30-factor/cap-30d model derived
+#   alongside Leave/Party/Boost). api_methods.py's 2026-09-09 change log
+#   later established, via live testing, that Holiday's duration is sent
+#   as RAW DAYS, not a fraction like the other three (confirmed: sending 15
+#   is echoed back as ~15, sending 100 as ~100, no clamping at all) - this
+#   value was never updated to match, meaning every Holiday activation via
+#   add_member_to_scene() was actually sending 0.5 raw days (~12h), not 15
+#   days. Flagged as CLAUDE.md's top-priority outstanding item ("before
+#   anything else touching scene activation") and fixed here since this
+#   session's set_preset_mode_with_duration work touches exactly this code
+#   path. New value: 15 (raw days, matches SCENE_APP_LIMITS["Holiday"]'s
+#   own 1-30 day range). Leave/Party/Boost are untouched - their fraction-
+#   based values were independently re-confirmed live and are correct.
 # - 2026-09-01: Added SCENE_ACTIVATION_DURATION and TRACKED_SCENE_NAMES.
 #   Live investigation (docs/protocol.md §4d) found that the duration
 #   value scene_manager.py must SEND to activate a preset is not its
@@ -130,7 +144,7 @@ class SceneName(str, Enum):
 # hardcodes duration=1 for Standby regardless of what's passed here.
 SCENE_ACTIVATION_DURATION: dict[SceneName, float] = {
     SceneName.LEAVE: 2,  # -> 6h real (factor x3, cap 12h)
-    SceneName.HOLIDAY: 0.5,  # -> 15d real (factor x30, cap 30d)
+    SceneName.HOLIDAY: 15,  # -> 15d real (RAW DAYS, not a fraction - see change log)
     SceneName.PARTY: 0.5,  # -> 6h real (factor x12, cap 12h)
     SceneName.BOOST: 0.5,  # -> 60min real (factor x120, cap 120min)
     SceneName.STANDBY: 1,

@@ -3,6 +3,17 @@
 Ported and cleaned up from the original reverse-engineering scaffold.
 """
 # Change log:
+# - 2026-09-10: add_member_to_scene() gained optional target=/duration=
+#   parameters, passed straight through to ApiMethods.set_scene() (which
+#   already implements the target-vs-duration priority rules, per-scene
+#   validation, and Leave's target= block - see api_methods.py). When
+#   neither is given the behavior is byte-identical to before: duration
+#   still resolves to const.SCENE_ACTIVATION_DURATION[scene_name]. This is
+#   what backs the new honeywell_smileconnect.set_preset_mode_with_duration
+#   HA Action (climate.py) - the first custom Action for this integration,
+#   letting automations pick a specific preset duration instead of always
+#   getting the fixed vendor default. remove_member_from_scene() is
+#   unchanged - deactivation never needed a custom duration.
 # - 2026-09-01: Fixed add_member_to_scene() root-cause bug behind presets
 #   appearing to "revert" after selection in HA: it resent whatever
 #   get_scene_duration() reported for the scene - which is 0 (or
@@ -109,22 +120,39 @@ class SceneManager:
             )
         return confirmed
 
-    def add_member_to_scene(self, room_id, scene_name: str) -> None:
+    def add_member_to_scene(
+        self,
+        room_id,
+        scene_name: str,
+        target: float | None = None,
+        duration: float | None = None,
+    ) -> None:
+        """Add room_id to scene_name and activate it.
+
+        target/duration let a caller override the activation duration for
+        this specific call (see ApiMethods.set_scene() for their exact
+        semantics/validation) - used by the set_preset_mode_with_duration
+        HA Action. When both are omitted (the default, and the only path
+        used by climate.py's plain preset-mode switch), behavior is
+        unchanged from before: the confirmed vendor-default
+        SCENE_ACTIVATION_DURATION[scene_name] is sent.
+        """
         rooms = self.api.get_scene_rooms(scene_name)
         if room_id not in rooms:
             rooms.append(room_id)
             self.api.set_scene_rooms(scene_name, rooms)
 
-        # NOT self.api.get_scene_duration(scene_name) - that call is
-        # confirmed unreliable in every tested state (returns 0 or
-        # meaningless noise) and resending it caused activation to be
-        # silently rejected by the gateway. See this module's change log
-        # and docs/protocol.md §4d.
-        duration = SCENE_ACTIVATION_DURATION[scene_name]
+        if target is None and duration is None:
+            # NOT self.api.get_scene_duration(scene_name) - that call is
+            # confirmed unreliable in every tested state (returns 0 or
+            # meaningless noise) and resending it caused activation to be
+            # silently rejected by the gateway. See this module's change
+            # log and docs/protocol.md §4d.
+            duration = SCENE_ACTIVATION_DURATION[scene_name]
         if self.is_scene_active(scene_name):
             # Re-trigger so the new member picks up the active scene state.
-            self.api.set_scene(scene_name, active=False, duration=duration)
-        self.api.set_scene(scene_name, active=True, duration=duration)
+            self.api.set_scene(scene_name, active=False, duration=duration, target=target)
+        self.api.set_scene(scene_name, active=True, duration=duration, target=target)
 
         self._wait_for_scene_active_state(scene_name, want_active=True)
 
