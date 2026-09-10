@@ -121,6 +121,13 @@ template; the Honeywell response still needs to be captured 1:1)
 > wrong/incomplete for Holiday specifically, consistent with this
 > project's general finding that Holiday keeps being the outlier scene
 > that needs the most live re-verification (see also §4f).
+>
+> **Second cross-check (2026-09-09):** Leave's `max` (12h) is confirmed
+> correct for the READ side (`get_scene_duration()` reliably reports
+> `raw_value × 12 = remaining_hours`). The WRITE side is a different
+> story entirely — see the corrected Leave entry in §4d below. Despite
+> sharing the identical `min`/`max`/`step` template values with Party,
+> Leave's write formula turned out NOT to match Party's.
 
 The test installation has only one room ("Alle"/"All") and no Shower/Towel
 usage — these scenes are kept in code as constants but remain untested.
@@ -231,7 +238,7 @@ scene override is layered on top). `preset_modes` deliberately has no
 rather than a string, which HA renders natively as "no preset selected".
 
 ## 4d. Scene `duration` parameter — the value you send is NOT the real
-duration (2026-09-01)
+duration (2026-09-01, corrected 2026-09-09)
 
 **Root cause of the original production symptom** ("selecting a preset in
 the climate entity shows briefly, then reverts on the next poll — the
@@ -249,66 +256,120 @@ that does nothing).
 
 **Second, independent discovery once a real (non-zero) duration was sent:**
 the number you send is **not** the real-world duration in the scene's
-documented unit — each scene applies its own multiplicative factor, and
-three of the four scenes additionally enforce a hard cap. This was only
-found by testing multiple distinct, deliberately small send-values per
-scene and reading the *actually configured* duration back from the Smile
-App/physical regler display (the only trustworthy source — see the
-warning below about `get_scene_duration()`).
+documented unit for most scenes — three of the four scenes apply their own
+multiplicative factor and/or a different wire format, and (as of
+2026-09-09) one of them — Leave — could not be fully characterized despite
+extensive effort. This was only found by testing multiple distinct,
+deliberately small send-values per scene and reading the *actually
+configured* duration back — originally from the Smile App/physical regler
+display (see the warning below about `get_scene_duration()`'s reliability
+at the time), later from `get_scene_duration()` directly once a
+`duration=0` bug that had made it look unreliable was fixed (see
+`scene_manager.py`'s change log, 2026-09-01).
 
-**A methodological trap worth recording:** the first two Holiday and Party
-data points (`3→30d`, `1.5→30d` for Holiday; `3→12h`, `1.5→12h` for Party)
-each showed the *same* output for *different* inputs — which looks like
-strong evidence for a specific factor (e.g. `×10` was the first, wrong,
-conclusion for Holiday) but is actually the signature of **both inputs
-having already saturated a cap**, revealing nothing about the real factor
-below it. Only a *third*, deliberately smaller test value per scene (which
-landed below the cap) revealed the true factor. Lesson: two data points
-that agree do not by themselves prove linearity — check whether they might
-both be capped before trusting a factor derived from them.
+**A methodological trap worth recording (2026-09-01):** the first two
+Holiday and Party data points (`3→30d`, `1.5→30d` for Holiday; `3→12h`,
+`1.5→12h` for Party) each showed the *same* output for *different*
+inputs — which looks like strong evidence for a specific factor (e.g.
+`×10` was the first, wrong, conclusion for Holiday) but is actually the
+signature of **both inputs having already saturated a cap**, revealing
+nothing about the real factor below it. Only a *third*, deliberately
+smaller test value per scene (which landed below the cap) revealed the
+true factor. Lesson: two data points that agree do not by themselves
+prove linearity — check whether they might both be capped before trusting
+a factor derived from them. **This exact trap resurfaced for Leave in the
+2026-09-09 investigation below, in a more insidious form:** the original
+two Leave data points (`2→6h`, `4→12h`) were NOT capped and DID reproduce
+exactly on live re-test — but turned out to still not generalize to a
+usable formula once a wider range was tested. Two clean, reproducible data
+points are necessary but not sufficient evidence for a linear model.
 
-| Preset | Measure (unit) | Min | Max | Default (real) | Factor (`real = sent × factor`, capped at Max) | Send value for the real Default |
+| Preset | Measure (unit) | Min | Max | Default (real) | Write formula | Status (2026-09-09) |
 |---|---|---|---|---|---|---|
-| Leave | Hours | 0 | 12 | 6 | ×3 | **2** |
-| Holiday | Days | 0 | 30 | 15 | ×30 | **0.5** |
-| Party | Hours | 0 | 12 | 6 | ×12 | **0.5** |
-| Boost | Minutes | 0 | 120 | 60 | ×120 | **0.5** |
+| Leave | Hours | 0 | 12 | 6 | **UNRESOLVED — see below** | `duration=2` confirmed to reliably produce `~6h`; no general formula found |
+| Holiday | Days | 0 | 30 | 15 | `duration` = raw days directly, no scaling | Gateway enforces no ceiling (tested to 100d); app's 30d limit is client-side only |
+| Party | Hours | 0 | 12 | 6 | `duration` = target_hours / 12 (fraction of scene_max), clamps to `1` above | Confirmed live, multiple isolated tests |
+| Boost | Minutes | 0 | 120 | 60 | `duration` = target_minutes / 120 (fraction of scene_max), clamps to `1` above | Confirmed live, multiple isolated tests (real-time countdown) |
 
 Min/Max/Default columns match the vendor-documented values supplied
-2026-09-01; the Factor and "send value" columns are this project's own
-live-verified findings (`scripts/manual_check_preset_nudge.py`), each
-**confirmed via at least two independent data points**, at least one of
-them below the scene's cap:
+2026-09-01. **The "Write formula" and "Status" columns superseded the
+original 2026-09-01 "Factor"/"send value" columns on 2026-09-09** after
+`api_methods.py`'s `set_scene()` gained a proper `target=` parameter and
+each scene's real wire behavior was re-derived from first principles via
+`get_scene_duration()` (now trustworthy — see below) rather than only via
+physical-display observation:
 
-- **Leave** — `2→6h`, `4→12h` (=Max, boundary case). Clean ×3 line, no
-  saturation ambiguity since `2` was clearly unsaturated.
-- **Holiday** — `0.5→15d` (below cap, exact); `1.5→30d` and `3→30d` both
-  saturate at the 30-day cap. The originally-recorded `×10` factor was
-  wrong (see methodological trap above) — corrected to `×30`.
-- **Party** — `0.5→6h` and `0.75→9h` (both below the 12h cap, both exact);
-  `1.5→12h` and `3→12h` both saturate. Corrected from an initial (also
-  cap-confused) `×4`/`×8` guess to the confirmed `×12`.
-- **Boost** — `0.5→60min` (below cap, exact); `1→120min`, `5→120min`,
-  `20→120min` all saturate at the 120-minute cap. One further data point
-  (`10→108min`) never fit any tested model (linear, capped-linear, affine)
-  and is treated as a one-off measurement anomaly, not a real signal — see
-  `manual_check_preset_nudge.py`'s own change log for the full elimination
-  process across five separate Boost test runs.
+- **Party and Boost:** the 2026-09-01 factors (`×12` for Party, `×120`
+  for Boost) are exactly the reciprocal of "send the fraction of
+  scene_max directly" (`0.5×12=6h` ⟺ `6h/12=0.5`) — these were correct
+  descriptions of the same underlying mechanism all along, just phrased
+  as a multiplication instead of a division. Independently re-confirmed
+  2026-09-09 via `scripts/manual_probe_scene_duration_all_scenes.py` and
+  `scripts/manual_probe_set_scene_regression.py`.
+- **Holiday:** the 2026-09-01 factor (`×30`, from `0.5→15d`) is now known
+  to be WRONG — `duration` is raw days sent directly, not a fraction of
+  30. `0.5→15d` would only be true if the write field were a fraction of
+  a 30-day scene_max, but a direct test sending `15` (not `0.5`) was
+  echoed back as `~15` by `get_scene_duration()`, and `100` as `~100`,
+  with no gateway-side clamping observed at all up to that point. This
+  is a genuinely different write mechanism from Party/Boost's fraction
+  model, not just a different factor. **`const.
+  SCENE_ACTIVATION_DURATION["Holiday"]` in the HA integration layer still
+  needs correcting to match this** — not yet done as of the API-layer fix
+  in `0.0.21` (see CLAUDE.md's "Next planned work").
+- **Leave — the interesting one.** The original 2026-09-01 measurement
+  (`2→6h`, `4→12h`, clean `×3` line) was **re-tested live on 2026-09-09
+  and reproduced EXACTLY**, both together in one script run and again
+  individually with an explicit poll-until-confirmed-inactive check
+  before each send (ruling out request-timing contamination from a prior
+  test). But a wider sweep of send-values (`1, 3, 5, 6, 8`), tested with
+  the same rigor, produced a table that fits NO model tried:
+  ```
+  sent:    1     2     3     4     5     6     8
+  implied: 12h   6h    12h   12h   6h    12h   5h
+  ```
+  Not `×3` (which predicts `3, 6, 9, 12, 15, 18, 24`h respectively —
+  only the `2` and `4` data points happen to match). Not
+  fraction-of-scene_max like Party/Boost (which would clamp uniformly
+  above `1`, not vary between `6h` and `12h` for different values all
+  `>1`). Not simple modular arithmetic on the sent value either. The
+  results are suspiciously clean fractions (`0.5`, `1.0`, `5/12`) rather
+  than noisy/random, which argues against a flaky sensor or
+  transcription error and FOR some real, currently unidentified
+  mechanism — possibly involving elapsed time or other session/gateway
+  state, in a similar spirit to the small, otherwise-unexplained offset
+  seen in Holiday's `get_scene_duration()` reads (`~15.0014` instead of
+  exactly `15`). **Conclusion: Leave's write-side duration is a genuine,
+  currently-unsolved mystery**, not merely a documentation gap like
+  Holiday's. `api_methods.set_scene()`'s `target=` parameter is
+  deliberately disabled for Leave as of `0.0.21` rather than exposing a
+  formula known to be incomplete. `duration=2` remains the one
+  known-reliable raw value (confirmed twice, live, for `~6h`); no other
+  value should be assumed safe for a specific real-world duration until
+  this is solved. If a future session wants to take another run at this,
+  the recommended next step is a genuine time-series investigation
+  (tracking `get_scene_duration()` continuously over an extended period
+  after a single send, across multiple sends spaced far apart in wall-
+  clock time) rather than more single-point probes.
 
-**`get_scene_duration()` (`/api/scene/duration`) is not a usable
-verification source**, for any scene, at any point: it returns near-zero
-noise while inactive, and — this was checked explicitly, immediately after
-activation, across every scene — it does **not** echo back the just-
-configured value either (e.g. Holiday consistently showed ~0.013-0.017
-days regardless of whether `0.5`, `1.5`, or `3` was sent; Boost
-consistently showed exactly `0`). The only reliable way to confirm what
-duration actually got configured is reading the Smile App or the physical
-regler display.
+**`get_scene_duration()` (`/api/scene/duration`) was not a usable
+verification source while the `duration=0` bug was still present** (fixed
+2026-09-01, see `scene_manager.py`'s change log) — at the time of the
+original 2026-09-01 investigation it returned near-zero noise while
+inactive, and — this was checked explicitly, immediately after
+activation, across every scene — it did **not** echo back the just-
+configured value either. **This limitation no longer applies as of
+2026-09-09** — with a real (non-zero, correctly-triggered) activation,
+`get_scene_duration()` has proven completely reliable for Boost, Party,
+and Holiday (used directly to re-derive and confirm all three write
+formulas above), and reliable on the READ side for Leave too (only
+Leave's WRITE side remains unresolved).
 
 **Decimal/fractional `duration` values are handled correctly by the API**
 — confirmed via multiple genuinely-fractional sends (`0.5`, `0.75`, `1.5`)
-that all produced exactly the values the linear-factor model predicted;
-no evidence of silent rounding or truncation.
+that all produced exactly the values the linear-factor model predicted
+for Party/Boost; no evidence of silent rounding or truncation for those
+two scenes.
 
 ## 4e. Standby persists silently in the background under an active preset
 (2026-09-01)
@@ -397,13 +458,19 @@ code (`scene_manager.py`/`climate.py`) — see CLAUDE.md.
       `/api/scene/setrooms` with a genuinely empty room list appears to
       hang the gateway's firmware itself (10-second `ReadTimeout`,
       reproduced identically under two different encodings of the empty
-      value) — this is a device-side limitation, not something fixable
-      via request formatting. **Real fix:** avoid ever calling
-      `/api/scene/setrooms` with an empty list — when removing the
-      last/only room from a scene, `/api/scene/set(active=false)` alone
-      is sufficient to deactivate it; there is no need to also clear room
-      membership to zero. See `api_request.py`'s and `scene_manager.py`'s
-      change logs, and CLAUDE.md, for the full multi-round story.
+      value, and again in a completely separate incident on 2026-09-09
+      via a different call site) — this is a device-side limitation, not
+      something fixable via request formatting. **Real fix:** avoid ever
+      calling `/api/scene/setrooms` with an empty list — when removing
+      the last/only room from a scene, `/api/scene/set(active=false)`
+      alone is sufficient to deactivate it; there is no need to also
+      clear room membership to zero. As of 2026-09-09, `ApiMethods.
+      set_scene_rooms()` itself also raises `ValueError` for an empty
+      list before sending anything, closing the gap that let the
+      2026-09-09 incident happen via a call site other than
+      `scene_manager.py`. See `api_request.py`'s and `scene_manager.py`'s
+      change logs, `api_methods.py`'s change log, and CLAUDE.md, for the
+      full multi-round story.
 - [x] **Decimal temperature values (e.g. 20.5 °C)** — RESOLVED
       (2026-08-30): dot notation (`24.5`) is correctly interpreted by
       `/api/room/settemperature`, no comma conversion needed. Verified via
@@ -423,8 +490,12 @@ code (`scene_manager.py`/`climate.py`) — see CLAUDE.md.
       becomes useful later.
 - [ ] Clarify the purpose of `/api/xpertonly/start`, `/admin/sentry/*`
 - [x] **Scene `duration` parameter (why presets failed to activate)** —
-      RESOLVED (2026-09-01), root cause and per-scene factor table now in
-      §4d. Fix not yet implemented in `scene_manager.py`/`climate.py`.
+      RESOLVED (2026-09-01), root cause and per-scene write behavior now
+      in §4d, corrected 2026-09-09 after further live testing. Fix (the
+      `duration=0` root cause) shipped in `0.0.18`; the write-formula
+      corrections and Leave's `target=` block shipped in `0.0.21`.
+      Holiday's `const.SCENE_ACTIVATION_DURATION` entry is still
+      outstanding, see CLAUDE.md.
 - [x] **Whether `roomstatus` could be a bitfield (Standby + preset encoded
       independently)** — RESOLVED/REFUTED (2026-09-01), see §4e. It is a
       flat single-state code.
@@ -437,3 +508,12 @@ code (`scene_manager.py`/`climate.py`) — see CLAUDE.md.
       to Holiday's code** — confirmed as a genuine gateway firmware quirk
       (2026-09-01, §4f), workaround (deactivate Standby first) verified
       live but not yet implemented in production code.
+- [ ] **Leave's write-side `duration` formula** — confirmed
+      (2026-09-09, §4d) to NOT follow any tested model (not the original
+      `×3` factor beyond two data points, not Party/Boost's fraction
+      formula, not simple modular arithmetic). `target=` deliberately
+      disabled for Leave in `api_methods.py` (`0.0.21`) rather than
+      shipping an incomplete formula. Recommended next step if revisited:
+      a genuine time-series investigation (continuous `get_scene_
+      duration()` tracking over an extended period, multiple sends spaced
+      far apart in wall-clock time) rather than more single-point probes.

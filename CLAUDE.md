@@ -457,61 +457,100 @@ GET  /admin/login/index            (returns HTML of the config menu)
   instead of `get_scene_duration()`. Locked in by
   `tests/test_scene_manager.py::TestAddMemberToSceneUsesCorrectedDuration`
   and live-verified end-to-end in HA by the user.
-  **⚠️ RE-OPENED (2026-09-09) — needs reconciliation before further
-  release, CHECK THIS BEFORE RELYING ON 0.0.18/0.0.19's Leave/Holiday
-  ACTIVATION IN PRODUCTION.** A completely independent live investigation
-  into `/api/scene/set`'s `duration` parameter (see the new dedicated
-  entry directly below) confirmed a formula and per-scene wire semantics
-  that **do not match two of the four values in this table**:
+  **⚠️ RE-OPENED (2026-09-09), PARTIALLY RECONCILED — see below for the
+  final state.** A completely independent live investigation into
+  `/api/scene/set`'s `duration` parameter (see the new dedicated entry
+  directly below) initially appeared to contradict two of the four
+  values in this table:
   - Boost `0.5`→60min and Party `0.5`→6h DO match the newly-confirmed
     fraction formula (`target/scene_max`: `60/120=0.5`, `6/12=0.5`) — no
-    issue here.
-  - **Leave `2`→6h does NOT match.** Leave shares Party's fraction
-    formula and `scene_max=12` (both confirmed live via the identical
-    clamp-test pattern on 2026-09-09). Under that formula, sending `2`
-    would be silently clamped by the gateway to `1` (=12h, the FULL
-    maximum), not `6h`. If `SCENE_ACTIVATION_DURATION["Leave"]` is still
-    `2` and something maps it to a "6h" real-world label anywhere in the
-    UI/docs, live activations of Leave are plausibly setting the wrong
-    duration (full 12h instead of the intended 6h) with `success:true`
-    masking it, same failure class as this file's other `success:true`-
-    but-wrong-effect bugs.
-  - **Holiday `0.5`→15d does NOT match.** Holiday is confirmed
-    (2026-09-09, see below) to send RAW DAYS, not a fraction — sending
-    `15` is echoed back as `~15`, and `100` is echoed back as `~100`
-    (gateway does not clamp Holiday at all, unlike the other three). If
-    `duration=0.5` is what's actually being sent for Holiday in
-    production, that sets **0.5 days (12 hours)**, not 15 days.
-  **This needs to be checked against `docs/protocol.md` §4d and the
-  actual current `const.SCENE_ACTIVATION_DURATION` values before the next
-  release that touches scene activation** — it's possible §4d's original
-  investigation used a different intermediate scaling step this summary
-  doesn't capture (in which case the two entries above are a documentation
-  gap, not a runtime bug), but that needs to be positively confirmed, not
-  assumed. Given the severity (Leave/Holiday are user-facing, shipped
-  since 0.0.18), treat this as the top-priority item for the next session
-  that touches `scene_manager.py`.
+    issue here, and independently re-confirmed live.
+  - **Leave `2`→6h — RE-TESTED LIVE (2026-09-09) AND CONFIRMED CORRECT.**
+    A wider sweep of send-values (`1,3,5,6,8`) around this, however,
+    revealed that Leave's write-side duration formula is NOT a simple
+    factor at all — the wider sweep produced non-monotonic results that
+    fit no tested model (see the dedicated entry below and
+    `api_methods.py`'s 2026-09-09 change log for the full data and
+    methodology, including ruling out a request-timing/race-condition
+    explanation via a fully isolated re-test). `set_scene()`'s `target=`
+    parameter is now deliberately disabled for Leave
+    (`NotImplementedError`) rather than exposing a formula that only
+    holds for the two originally-tested values. **Practical consequence:
+    `SCENE_ACTIVATION_DURATION["Leave"] = 2` remains correct as-is and
+    should NOT be changed** — but `add_member_to_scene()` must not be
+    generalized to compute other Leave durations dynamically (e.g. via a
+    future "let the user pick a custom Leave duration" feature) until the
+    real formula is understood. Shipped as a fix in `0.0.21`.
+  - **Holiday `0.5`→15d does NOT match, and this part of the table is
+    genuinely WRONG — still needs correcting in `const.py`.** Holiday is
+    confirmed (2026-09-09, see below) to send RAW DAYS, not a fraction —
+    sending `15` is echoed back as `~15`, and `100` is echoed back as
+    `~100` (gateway does not clamp Holiday at all, unlike Boost/Party).
+    If `duration=0.5` is what `SCENE_ACTIVATION_DURATION["Holiday"]`
+    still sends in production, that sets **0.5 days (12 hours)**, not 15
+    days — this is very likely a real, currently-live bug, distinct from
+    the Leave situation (which turned out to be correct, just narrower
+    than assumed). **This specifically still needs to be checked against
+    `const.py` and fixed** — not yet done as of `0.0.21`.
+  **Status as of `0.0.21`:** Leave's specific contradiction is resolved
+  (the old value was right, the newly-built generalization was wrong, and
+  is now blocked rather than shipped). Holiday's contradiction is NOT yet
+  resolved — treat that as the remaining top-priority item for the next
+  session that touches `scene_manager.py`/`const.py`.
 - **`api/api_methods.py`'s `set_scene()` `duration` parameter semantics,
   confirmed live 2026-09-09** (independent of, and predating discovery of,
   the `SCENE_ACTIVATION_DURATION` conflict directly above). Full live
   falsification testing (`scripts/manual_probe_scene_duration.py`,
   `scripts/manual_probe_scene_duration_all_scenes.py`,
-  `scripts/manual_probe_set_scene_regression.py`) established:
-  - **Boost, Party, Leave:** `duration` is a **fraction of the scene's own
-    `scene_max`** from `/api/scene/status` (Boost=120min, Party=12h,
-    Leave=12h — all three confirmed live via `scene/status`). A value >1
-    is **silently clamped to `1` (=scene_max) by the gateway**, no error
-    returned (`success:true` regardless). Confirmed for Boost via a real
-    countdown (`/api/scene/duration` polled while a genuine app-triggered
-    Boost ran down, landing exactly on the formula's predicted value —
-    28min remaining matched `duration=0.2333...` × 120 exactly); confirmed
-    for Party/Leave via the identical clamp-test pattern (`0.5` echoed
-    back unchanged, `6`/raw-hours clamped to `1`).
+  `scripts/manual_probe_set_scene_regression.py`,
+  `scripts/manual_probe_leave_duration_contradiction.py`,
+  `scripts/manual_probe_leave_formula_ceiling.py`,
+  `scripts/manual_probe_leave_single_value.py`) established:
+  - **Boost, Party:** `duration` is a **fraction of the scene's own
+    `scene_max`** from `/api/scene/status` (Boost=120min, Party=12h —
+    both confirmed live via `scene/status`). A value >1 is **silently
+    clamped to `1` (=scene_max) by the gateway**, no error returned
+    (`success:true` regardless). Confirmed for Boost via a real countdown
+    (`/api/scene/duration` polled while a genuine app-triggered Boost ran
+    down, landing exactly on the formula's predicted value — 28min
+    remaining matched `duration=0.2333...` × 120 exactly); confirmed for
+    Party via the identical clamp-test pattern (`0.5` echoed back
+    unchanged, `6`/raw-hours clamped to `1`).
+  - **Leave — read-side confirmed, write-side UNRESOLVED.** `Leave`'s
+    READ interpretation via `get_scene_duration()` matches the same
+    fraction-of-`scene_max=12h` model as Party (`0.5` raw → `6h`, `1.0`
+    raw → `12h`), so `SCENE_MAX["Leave"] = 12` remains correct for
+    reading. But the WRITE side does **not** follow "send the fraction
+    directly" like Party/Boost — extensive live testing found that
+    sending raw values `1,2,3,4,5,6,8` via `duration=` produced this
+    non-monotonic table (all confirmed via a fully isolated
+    poll-until-inactive methodology, ruling out request-timing
+    contamination):
+    ```
+    sent:    1     2     3     4     5     6     8
+    implied: 12h   6h    12h   12h   6h    12h   5h
+    ```
+    No tested model (a fixed `×3` factor — which matched the ORIGINAL
+    two-point 2026-09-01 measurement exactly, `2→6h`/`4→12h`, and even
+    re-confirmed exactly in an isolated re-test — fraction-of-scene_max
+    like Party/Boost, or simple modular arithmetic) fits the full
+    7-point set. The results are suspiciously clean fractions (`0.5`,
+    `1.0`, `5/12`) rather than noise, suggesting a real but
+    not-yet-understood mechanism (possibly time- or session-state-
+    dependent, in a similar spirit to Holiday's small unexplained read
+    offset below) rather than a simple multiplicative factor. **Decision
+    (shipped in `0.0.21`): `set_scene()`'s `target=` parameter is
+    deliberately disabled for Leave** (`NotImplementedError`, with an
+    explanatory message pointing here) rather than shipping a formula
+    that has now been live-falsified. `duration=` (the raw wire value)
+    remains fully available for Leave, unaffected — only `2` is
+    currently known to reliably produce `~6h`; no other value has been
+    validated as trustworthy for real-world use.
   - **Holiday:** `duration` is **RAW DAYS**, not a fraction. Sending `15`
     was echoed back by `/api/scene/duration` as `~15.0014` (small offset
     likely rounding/an internal absolute-end-datetime calculation, not
-    significant) — critically, **NOT clamped to `1`** like the other
-    three, proving it uses a different wire format entirely. The original,
+    significant) — critically, **NOT clamped to `1`** like Boost/Party,
+    proving it uses a different wire format entirely. The original,
     3-month-old pre-rewrite `apiMethods.py`'s claim ("Holiday: Tage
     direkt") was correct for Holiday specifically, even though the same
     file's claim for Boost ("Minuten direkt") was wrong — this is why
@@ -521,23 +560,28 @@ GET  /admin/login/index            (returns HTML of the config menu)
     up to `100` days with no clamping observed
     (`scripts/manual_probe_holiday_max.py`). The Smile App's own UI limit
     (1-30 days, confirmed directly by the user) is purely an app-side
-    restriction, not a protocol one. Same story for Boost/Party/Leave's
-    app-visible ranges (Boost 30-120min raster of 30, Party/Leave 1-12h,
-    all confirmed by the user, 0 not selectable in the app for any of the
-    four) — the gateway's own clamp-at-`scene_max` behavior for those
-    three happens to coincide with enforcing SOMETHING, but not
+    restriction, not a protocol one. Same story for Boost/Party's
+    app-visible ranges (Boost 30-120min raster of 30, Party 1-12h, all
+    confirmed by the user, 0 not selectable in the app for any of the
+    four scenes) — the gateway's own clamp-at-`scene_max` behavior for
+    those two happens to coincide with enforcing SOMETHING, but not
     necessarily the exact app-visible bounds, so these are enforced
     client-side too, not assumed to be covered by the gateway's clamp.
+    Leave's own app-UI range (1-12h) is documented in `SCENE_APP_LIMITS`
+    too, but is currently unreachable in practice since `target=` is
+    blocked entirely for Leave.
   - **`api_methods.py` now bakes all of this in directly:** `SCENE_MAX`,
     `FRACTION_DURATION_SCENES`, `RAW_DAYS_DURATION_SCENES`,
-    `NO_DURATION_SCENES`, and `SCENE_APP_LIMITS` module-level constants;
-    `set_scene()` gained a `target` parameter (real-world unit — minutes/
-    hours/days as appropriate) that validates against `SCENE_APP_LIMITS`
-    (raises `ValueError` outside the app's own min/max/raster) and then
-    converts correctly per scene, while the pre-existing `duration`
-    parameter (raw wire value) still works unchanged for any existing
-    caller and deliberately bypasses the `SCENE_APP_LIMITS` check — an
-    intentional power-user escape hatch, not an oversight.
+    `NO_DURATION_SCENES`, `SCENE_APP_LIMITS`, and
+    `LEAVE_TARGET_UNSUPPORTED_MSG` module-level constants; `set_scene()`
+    gained a `target` parameter (real-world unit — minutes/hours/days as
+    appropriate) that validates against `SCENE_APP_LIMITS` (raises
+    `ValueError` outside the app's own min/max/raster), then converts
+    correctly per scene — except Leave, where it raises
+    `NotImplementedError` instead (see above) — while the pre-existing
+    `duration` parameter (raw wire value) still works unchanged for any
+    existing caller and deliberately bypasses the `SCENE_APP_LIMITS`
+    check — an intentional power-user escape hatch, not an oversight.
   - **Room-assignment guard added to `set_scene()`:** confirmed live that
     activating a scene with no rooms assigned returns `success:true` but
     `isActive` silently stays `false` (matches a check present in the
@@ -673,23 +717,19 @@ GET  /admin/login/index            (returns HTML of the config menu)
 ### Next planned work (agreed in project discussion, not yet started)
 
 - **Top priority, before anything else touching scene activation:**
-  reconcile `const.SCENE_ACTIVATION_DURATION` / `docs/protocol.md` §4d
-  (Leave `2`→6h, Holiday `0.5`→15d) against the newly-confirmed
-  `duration` formula (fraction-of-scene_max for Boost/Party/Leave, raw
-  days for Holiday) — see the re-opened item above. Confirm whether this
-  is a real production bug currently live since 0.0.18, or whether §4d's
-  original investigation used an intermediate scaling step this summary
-  doesn't capture. Either way, `scene_manager.add_member_to_scene()`
-  should end up calling `api_methods.set_scene(..., target=...)` with a
-  real-world value instead of a hand-maintained magic-number table, now
-  that `target=` exists and does the correct conversion itself — this
-  removes an entire class of "duration constant silently drifts from the
-  real formula" bug going forward.
+  `const.SCENE_ACTIVATION_DURATION["Holiday"]` (currently `0.5`, intended
+  to mean 15 days) is very likely WRONG given Holiday's confirmed
+  raw-days write formula — `0.5` would actually set 0.5 days (12 hours),
+  not 15 days. This still needs to be checked and fixed in `const.py`/
+  `scene_manager.py`. (Leave's equivalent contradiction — see "Still
+  untested / open" above — is resolved: the old value was correct, only
+  the newly-attempted generalization was wrong, and that generalization
+  is now blocked rather than shipped.)
 - All three preset/roomstatus/Standby-masking bugs above, plus the
   PRESET_NONE gap found during their live verification, are now shipped
   in 0.0.18 — no outstanding implementation work from that investigation
   specifically (see the re-opened item above for a NEW, separate concern
-  found afterward).
+  found afterward, partially resolved as of 0.0.21).
   The pre-existing items below (never blocked on this work, e.g. the
   `actualTemperature`/temperature-sync question, reconnect/error-handling
   strategy) remain the next candidates, alongside the switching-times
@@ -744,7 +784,7 @@ GET  /admin/login/index            (returns HTML of the config menu)
   targeting uses `entity_id` (mapping to the existing climate entity) or
   a separate `room_id` parameter. **This is the first piece of work
   planned for the `0.1.x` line** — see "Versioning & Branching Strategy"
-  below: the last `0.0.x` release is `0.0.20`, and this feature starts
+  below: the last `0.0.x` release is `0.0.21`, and this feature starts
   the initial `0.1.x` beta release, which means it must be developed on a
   dedicated feature branch and merged via pull request, not committed
   directly to `main`.
@@ -896,24 +936,28 @@ pytest tests/ -v
   `gateway_device_info()`'s own identifier — this is precisely the kind of
   mismatch that caused the original "two unrelated devices" bug, so it's
   asserted explicitly rather than just implicitly.
-- **`scripts/test_scene_guards_local.py` (new, 2026-09-09)** — NOT under
-  `tests/`, deliberately: it lives alongside the other manual/diagnostic
-  scripts in `scripts/` (so it's exempt from the `lint.yml` scope, same as
-  its siblings) but unlike them, it needs **no gateway, no credentials,
-  and no network at all** — it constructs `ApiMethods` with mocked
-  credentials/`_request` and asserts purely at the Python level. Covers:
-  `set_scene_rooms()` rejecting an empty list before any request is built;
-  `set_scene()`'s room-assignment guard raising when `get_scene_rooms()`
-  reports no rooms (and NOT raising when it does); and all of
-  `SCENE_APP_LIMITS`' min/max/raster cases across all four timed scenes,
-  both via the low-level `_validate_target_against_app_limits()` function
-  directly and end-to-end through `set_scene(..., target=...)`, plus a
-  case confirming `duration=` (the raw wire value) deliberately bypasses
-  that validation. Written specifically so the room-assignment guard can
-  be regression-tested without repeating the live empty-list-hang incident
-  documented above — run it with `python3 scripts/
-  test_scene_guards_local.py`, no `.env`/credentials needed, safe to run
-  anytime including in CI if that's ever set up for `scripts/`.
+- **`scripts/test_scene_guards_local.py` (2026-09-09, extended to v3)** —
+  NOT under `tests/`, deliberately: it lives alongside the other manual/
+  diagnostic scripts in `scripts/` (so it's exempt from the `lint.yml`
+  scope, same as its siblings) but unlike them, it needs **no gateway, no
+  credentials, and no network at all** — it constructs `ApiMethods` with
+  mocked credentials/`_request` and asserts purely at the Python level.
+  Covers: `set_scene_rooms()` rejecting an empty list before any request
+  is built; `set_scene()`'s room-assignment guard raising when
+  `get_scene_rooms()` reports no rooms (and NOT raising when it does);
+  all of `SCENE_APP_LIMITS`' min/max/raster cases across the timed
+  scenes, both via the low-level `_validate_target_against_app_limits()`
+  function directly and end-to-end through `set_scene(..., target=...)`;
+  a case confirming `duration=` (the raw wire value) deliberately
+  bypasses that validation; and, new as of `0.0.21`, a case confirming
+  `set_scene("Leave", ..., target=...)` raises `NotImplementedError`, and
+  a companion case confirming `duration=` still works normally for Leave
+  (only the `target=` convenience path is blocked). Written specifically
+  so the room-assignment guard can be regression-tested without
+  repeating the live empty-list-hang incident documented above — run it
+  with `python3 scripts/test_scene_guards_local.py`, no `.env`/
+  credentials needed, safe to run anytime including in CI if that's ever
+  set up for `scripts/`.
 
 **When adding a new endpoint or fixing a parsing bug:** capture the real
 request/response via the browser-console technique or a live debug-log
@@ -944,9 +988,12 @@ family of scripts (2026-09-09) follows the same pattern for the
 `get2`/`set2` investigation, and the `scripts/manual_probe_scene_duration*
 .py` / `scripts/manual_probe_holiday_max.py` / `scripts/
 manual_probe_set_scene_regression.py` / `scripts/
-check_and_restore_boost_rooms.py` family (also 2026-09-09) follows it for
-the `scene/set`/`scene/duration` investigation — see "Still untested /
-open" above. Two lessons from that round worth calling out explicitly for
+check_and_restore_boost_rooms.py` / `scripts/
+manual_probe_leave_duration_contradiction.py` / `scripts/
+manual_probe_leave_formula_ceiling.py` / `scripts/
+manual_probe_leave_single_value.py` family (also 2026-09-09) follows it
+for the `scene/set`/`scene/duration` investigation — see "Still untested /
+open" above. Lessons from that round worth calling out explicitly for
 future manual scripts: (1) **check `api_request.py`'s/`api_methods.py`'s
 own documented gateway quirks (e.g. the empty-list hang) before writing a
 test that deliberately exercises an edge case** — a diagnostic script
@@ -956,7 +1003,19 @@ above); (2) **when exploring an undocumented numeric range experimentally
 world limit already exists (the app's own UI) before probing far beyond
 it** — an earlier round of this same investigation tested up to 100 days
 before the user pointed out the app's own limit is 30, which was
-unnecessary reach for a question the user could have answered directly.
+unnecessary reach for a question the user could have answered directly;
+(3) **when testing multiple values of the same parameter in one script
+run, isolate each measurement (poll-until-confirmed-inactive before each
+send, not just a fixed sleep) or run them as fully separate script
+invocations** — the Leave duration investigation initially produced
+non-monotonic, unexplainable results from rapid back-to-back tests, and
+even after isolating each test as its own script invocation with an
+explicit inactive-confirmation pre-flight, the SAME non-monotonic pattern
+reproduced - which turned out to be the more important lesson: don't
+assume a surprising result is a testing-methodology artifact just because
+one plausible artifact (timing) comes to mind, and don't stop
+investigating once you've ruled out the first suspect if the data still
+doesn't fit any model.
 
 ## Reverse-Engineering Method (for further, still-unknown endpoints)
 
@@ -1062,17 +1121,16 @@ construct a `device_info` dict inline.
   - `api_request.py` — signs and executes authenticated requests.
   - `api_methods.py` — high-level per-endpoint methods. As of 2026-09-09,
     also owns `SCENE_MAX`, `FRACTION_DURATION_SCENES`,
-    `RAW_DAYS_DURATION_SCENES`, `NO_DURATION_SCENES`, and
-    `SCENE_APP_LIMITS` — see "Still untested / open" above for what each
-    encodes and why. `set_scene_rooms()` and `set_scene()` both carry
-    live-confirmed guard clauses (empty room list; no rooms assigned) —
-    see the same section.
+    `RAW_DAYS_DURATION_SCENES`, `NO_DURATION_SCENES`, `SCENE_APP_LIMITS`,
+    and `LEAVE_TARGET_UNSUPPORTED_MSG` — see "Still untested / open" above
+    for what each encodes and why. `set_scene_rooms()` and `set_scene()`
+    both carry live-confirmed guard clauses (empty room list; no rooms
+    assigned; Leave's `target=` block) — see the same section.
   - `scene_manager.py` — add/remove a room from a scene (handles the
-    getrooms/setrooms/set sequencing). **Candidate for a follow-up change**
-    per the re-opened `SCENE_ACTIVATION_DURATION` item above: once that's
-    reconciled, `add_member_to_scene()` should likely call
-    `api_methods.set_scene(..., target=...)` with a real-world value
-    instead of maintaining its own separate duration-factor table.
+    getrooms/setrooms/set sequencing). **Holiday's
+    `SCENE_ACTIVATION_DURATION` entry needs fixing** per the re-opened
+    item above (still outstanding as of `0.0.21`) — Leave's entry is
+    confirmed correct as-is and should NOT be touched.
   - `credentials.py` — session state, including `reqcount` with correct
     post-increment semantics (see reqcount section above).
   - `ping.py` — **deliberately separate** from everything above: a plain,
@@ -1346,39 +1404,37 @@ must not proceed carelessly.
 - Before beta status (i.e. `x.0.y`), direct commits to `main` are
   acceptable for rapid early-stage iteration, as has been the practice so
   far in this project.
-- **Current version: `0.0.20`** (bumped 2026-09-09, patch-only — still
+- **Current version: `0.0.21`** (bumped 2026-09-09, patch-only — still
   `0.0.x`, so this is a normal direct-to-`main` release per the rule
-  above, not an exception to it). Contents of this release, all from the
-  same live investigation session:
-  - Confirmed `scene/set`'s `duration` parameter semantics for all four
-    timed scenes (fraction-of-scene_max for Boost/Party/Leave, raw days
-    for Holiday) and the gateway's actual clamp behavior (or lack thereof
-    for Holiday).
-  - Added `SCENE_APP_LIMITS` (Boost 30-120min raster-30, Party/Leave
-    1-12h, Holiday 1-30d, all confirmed directly by the user) enforced
-    client-side via `set_scene()`'s new `target=` parameter, since the
-    gateway itself does not enforce these (confirmed for Holiday up to
-    100 days with no clamping).
-  - Added a room-assignment guard to `set_scene()` (raises `ValueError`
-    instead of a silent no-op `success:true`/`isActive:false`).
-  - Added a client-side empty-list guard directly to `set_scene_rooms()`
-    (raises `ValueError` before any request is built), closing a gap
-    where only `scene_manager.py`'s higher-level function avoided the
-    known gateway hang — a live incident during this session's own
-    testing reconfirmed the hang still reachable via the lower-level API
-    method directly.
-  - New local-only, gateway-free regression test
-    (`scripts/test_scene_guards_local.py`) covering all of the above.
-  - **Re-opened a previously-"resolved" item:** `const.
-    SCENE_ACTIVATION_DURATION`'s Leave/Holiday values (shipped in 0.0.18)
-    appear inconsistent with the newly-confirmed formula and need
-    reconciliation — see "Still untested / open" and "Next planned work"
-    above. **Not yet fixed in this release** — flagged for the next
-    session, since it needs the reconciliation to actually happen first,
-    not just be documented.
-  - No new user-facing HA feature (still not wired to any entity/service)
-    — this release is `api/` layer correctness/safety only, same category
-    as `0.0.19`.
+  above, not an exception to it). Fixes a real defect introduced in
+  `0.0.20`: `set_scene()`'s new `target=` parameter assumed Leave shares
+  Party's fraction-of-scene_max formula (same `scene_max=12h` in
+  `scene/status`) — live re-testing this session disproved that
+  assumption. A wider sweep of raw `duration=` values (`1,3,5,6,8`)
+  produced non-monotonic results (`1→12h, 2→6h, 3→12h, 4→12h, 5→6h,
+  6→12h, 8→5h`) that fit no tested model, confirmed via a fully isolated
+  methodology (poll-until-confirmed-inactive before each send, ruling out
+  a request-timing/race-condition explanation). Contents of `0.0.21`:
+  - `set_scene()` now raises `NotImplementedError` for Leave's `target=`
+    parameter instead of silently using an unverified formula, with a
+    clear explanatory message (`LEAVE_TARGET_UNSUPPORTED_MSG`).
+    `duration=` (the raw wire value) is unaffected — Leave still works
+    fine with a known-good raw value like `2` (confirmed live to produce
+    ~6h).
+  - `scripts/test_scene_guards_local.py` gained two new cases: the
+    `NotImplementedError` for Leave's `target=`, and a confirmation that
+    `duration=` still works normally for Leave.
+  - `CLAUDE.md` and `docs/protocol.md` §4d updated to reflect the
+    corrected, honest state — Leave's original `2→6h` factor-of-3
+    measurement from `0.0.18`'s investigation turned out to be accurate
+    for that specific value, but does NOT generalize into a usable
+    formula; Holiday's `SCENE_ACTIVATION_DURATION` entry is still
+    outstanding and NOT fixed by this release (see "Next planned work").
+  - Party/Boost/Holiday's `0.0.20` behavior is unaffected by this
+    release — their formulas were independently re-confirmed via
+    multiple isolated live tests each, not implicated by the Leave
+    finding.
+  - No new user-facing HA feature — same category as `0.0.19`/`0.0.20`.
 - **The next round of work — the HA Action/service for setting mode,
   preset, temperature, and switching times (see "Next planned work"
   above) — starts the initial `0.1.x` release.** Per the beta-status rule

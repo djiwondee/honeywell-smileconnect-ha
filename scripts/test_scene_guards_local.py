@@ -1,4 +1,12 @@
 # Change log:
+# - 2026-09-09: v3. Adds a test confirming set_scene("Leave", ...,
+#   target=...) raises NotImplementedError (see api_methods.py's
+#   2026-09-09 change log: Leave's write-side duration formula could not
+#   be reliably determined despite extensive live testing, so target= is
+#   deliberately blocked for Leave rather than shipping a guessed
+#   formula). Also confirms duration= (the raw wire value) still works
+#   for Leave - only the target= convenience path is blocked, per
+#   set_scene()'s own docstring.
 # - 2026-09-09: v2. Extends the local guard tests (v1: empty room_ids,
 #   room-assignment guard) with cases for SCENE_APP_LIMITS validation,
 #   confirmed directly by the user 2026-09-09:
@@ -11,8 +19,8 @@
 #   get_scene_rooms mocked so the room-assignment guard doesn't trigger
 #   first). Also confirms duration= (the raw wire value) deliberately
 #   bypasses this validation, as documented in set_scene()'s docstring.
-"""Local-only test for set_scene()/set_scene_rooms() guard clauses and
-SCENE_APP_LIMITS validation.
+"""Local-only test for set_scene()/set_scene_rooms() guard clauses,
+SCENE_APP_LIMITS validation, and Leave's target= block.
 
 Run this directly, no gateway or credentials needed:
 
@@ -93,7 +101,7 @@ def test_set_scene_succeeds_with_rooms() -> bool:
             return True
 
 
-# -- new: SCENE_APP_LIMITS tests (v2) -----------------------------------
+# -- SCENE_APP_LIMITS tests (v2) -----------------------------------
 
 def test_validate_target_directly() -> bool:
     print("\n-- test: _validate_target_against_app_limits() low-level cases --")
@@ -109,13 +117,17 @@ def test_validate_target_directly() -> bool:
         ("Party", 1, False, "Party at min"),
         ("Party", 12, False, "Party at max"),
         ("Party", 13, True, "Party above max"),
-        ("Leave", 0, True, "Leave below min (0 not selectable in app)"),
-        ("Leave", 6, False, "Leave mid-range"),
         ("Holiday", 0, True, "Holiday below min (0 not selectable in app)"),
         ("Holiday", 1, False, "Holiday at min"),
         ("Holiday", 30, False, "Holiday at max"),
         ("Holiday", 40, True, "Holiday above max (gateway itself does NOT clamp this)"),
         ("Holiday", 100, True, "Holiday far above max"),
+        # Leave's SCENE_APP_LIMITS entry still exists and is checked at
+        # this low level, even though set_scene() never reaches it for
+        # Leave anymore (blocked earlier by the NotImplementedError) -
+        # this just confirms the dict entry itself is still sane.
+        ("Leave", 0, True, "Leave below min (0 not selectable in app)"),
+        ("Leave", 6, False, "Leave mid-range"),
     ]
 
     all_ok = True
@@ -201,6 +213,44 @@ def test_duration_bypasses_app_limits() -> bool:
             return True
 
 
+# -- Leave target= block (v3) -----------------------------------
+
+def test_leave_target_raises_not_implemented() -> bool:
+    print("\n-- test: set_scene('Leave', ..., target=...) raises NotImplementedError --")
+    api = make_api()
+    with patch.object(api, "get_scene_rooms", return_value=[1]):
+        with patch.object(api, "_request") as mock_request:
+            mock_request.request.return_value = {"success": True}
+            try:
+                api.set_scene("Leave", True, target=6)
+                print("   FAIL: no exception raised for Leave target=")
+                return False
+            except NotImplementedError as exc:
+                print(f"   OK: NotImplementedError raised: {exc}")
+            if mock_request.request.called:
+                print("   FAIL: a request was sent for Leave target= despite the block")
+                return False
+            print("   OK: no request was sent")
+            return True
+
+
+def test_leave_duration_still_works() -> bool:
+    print("\n-- test: set_scene('Leave', ..., duration=...) still works (only target= is blocked) --")
+    api = make_api()
+    with patch.object(api, "get_scene_rooms", return_value=[1]):
+        with patch.object(api, "_request") as mock_request:
+            mock_request.request.return_value = {"success": True}
+            # duration=2 is the one raw value live-confirmed (2026-09-09)
+            # to produce ~6h for Leave - using it here only to confirm
+            # the code path isn't blocked, not to re-assert the formula.
+            result = api.set_scene("Leave", True, duration=2)
+            if not mock_request.request.called:
+                print("   FAIL: duration= path did not send a request for Leave")
+                return False
+            print(f"   OK: request was sent, result: {result}")
+            return True
+
+
 def main() -> None:
     results = [
         test_set_scene_rooms_rejects_empty_list(),
@@ -209,6 +259,8 @@ def main() -> None:
         test_validate_target_directly(),
         test_set_scene_target_enforces_limits(),
         test_duration_bypasses_app_limits(),
+        test_leave_target_raises_not_implemented(),
+        test_leave_duration_still_works(),
     ]
     print("\n" + "=" * 60)
     if all(results):

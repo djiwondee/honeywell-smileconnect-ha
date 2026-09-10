@@ -6,6 +6,38 @@ tested against a real SCN-10 gateway; others are ports of the generic
 HeatApp shape and should be re-verified before relying on them.
 """
 # Change log:
+# - 2026-09-09: Blocked target= for Leave after extensive, isolated live
+#   testing FAILED to find a working write-side duration formula.
+#   Background: docs/protocol.md §4d (2026-09-01) documented Leave as
+#   duration=2->6h, duration=4->12h (factor x3), independently verified
+#   at the time via physical regler/app display (get_scene_duration()
+#   wasn't trustworthy yet then, due to the since-fixed duration=0 bug).
+#   A live re-check this session (get_scene_duration() now proven
+#   reliable elsewhere - see the entry above) INITIALLY reproduced x3
+#   exactly for sent=2/4 in a single isolated test each, appearing to
+#   confirm §4d. But testing a wider set of values (1,3,5,6,8), first in
+#   one rapid sequence (suspected race condition against a not-yet-
+#   settled prior deactivation) and then AGAIN individually with an
+#   explicit poll-until-confirmed-inactive pre-flight check before each
+#   send (ruling out that race condition specifically), both times
+#   produced the SAME non-monotonic, unexplainable results:
+#     sent:    1     2     3     4     5     6     8
+#     implied: 12h   6h    12h   12h   6h    12h   5h
+#   No model tried (x3, fraction-of-scene_max like Party/Boost, integer
+#   modular, or any combination) fits this data. The values are not
+#   random noise (they land on suspiciously clean fractions - 0.5, 1.0,
+#   5/12 - not arbitrary decimals), suggesting a real but more complex
+#   mechanism (possibly involving elapsed time or other session state,
+#   similar in spirit to the small unexplained offset seen in Holiday's
+#   duration reads), not yet understood. Rather than ship a formula that
+#   has now been live-falsified twice, `target=` is deliberately DISABLED
+#   for Leave (raises NotImplementedError with an explanatory message).
+#   `duration=` (the raw wire value) remains fully available for Leave,
+#   unchanged - this only blocks the "convert real-world hours for me"
+#   convenience path, which nobody should trust for Leave right now.
+#   Party/Boost/Holiday are NOT affected - their formulas remain
+#   independently confirmed via multiple isolated live tests each and are
+#   not implicated by this finding.
 # - 2026-09-09: Added client-side enforcement of the Smile App's own UI
 #   limits per scene, confirmed directly by the user (not derived from
 #   gateway behavior):
@@ -21,6 +53,9 @@ HeatApp shape and should be re-verified before relying on them.
 #   mode than the app itself allows. Enforced only against `target=`
 #   (the real-world-unit path) - `duration=` (the raw wire value) still
 #   bypasses this for callers who know exactly what they're sending.
+#   NOTE (see entry above): Leave's SCENE_APP_LIMITS entry is currently
+#   unreachable in practice since target= is blocked entirely for Leave -
+#   kept in the dict for when/if the write formula is eventually solved.
 # - 2026-09-09: Added a client-side guard to set_scene_rooms() rejecting
 #   an empty room_ids list with ValueError before any request is sent.
 #   Triggered by a live incident during regression testing: a diagnostic
@@ -36,36 +71,34 @@ HeatApp shape and should be re-verified before relying on them.
 # - 2026-09-09: Confirmed scene/set `duration` semantics via live
 #   falsification testing across all four timed scenes (see project
 #   learnings for the full investigation):
-#     - Boost, Party, Leave: `duration` is a FRACTION of the scene's own
-#       scene_max from scene/status (Boost=120min, Party=12h, Leave=12h).
-#       Values >1 are silently clamped to 1 (=scene_max) by the gateway,
-#       no error returned. Confirmed for Boost via a live countdown
-#       (28min actual remaining vs. formula-predicted value); confirmed
-#       for Party/Leave via the same clamp pattern (0.5 echoed unchanged,
-#       6 clamped to 1). Re-confirmed via the new target= parameter
-#       itself (Boost/Party/Leave all landed exactly on the expected
-#       value in a live regression run).
+#     - Boost, Party: `duration` is a FRACTION of the scene's own
+#       scene_max from scene/status (Boost=120min, Party=12h). Values >1
+#       are silently clamped to 1 (=scene_max) by the gateway, no error
+#       returned. Confirmed for Boost via a live countdown (28min actual
+#       remaining vs. formula-predicted value); confirmed for Party via
+#       the same clamp pattern (0.5 echoed unchanged, 6 clamped to 1).
+#     - Leave: INITIALLY assumed to share Party's formula (same
+#       scene_max=12h in scene/status) - this assumption is WRONG, see
+#       the entry above. Leave's actual write-side formula is unresolved.
 #     - Holiday: `duration` is RAW DAYS, not a fraction - sending 15 was
-#       echoed back as ~15.0014 (NOT clamped to 1 like the other three).
+#       echoed back as ~15.0014 (NOT clamped to 1 like Boost/Party).
 #       This confirms the original 3-month-old apiMethods.py claim
 #       ("Holiday: Tage direkt") was correct for Holiday specifically,
 #       even though the same file's claim for Boost ("Minuten direkt")
 #       was wrong. The gateway itself has no confirmed ceiling for
-#       Holiday (tested up to 100 days, no clamping observed) - see the
-#       app-UI-limits entry above for how this is now bounded client-side.
+#       Holiday (tested up to 100 days, no clamping observed) - bounded
+#       client-side via SCENE_APP_LIMITS instead.
 #     - Standby/Towel: no duration parameter is meaningful.
-#   The previous set_scene() docstring incorrectly generalized "minutes
-#   for Boost, hours for Party/Leave, days for Holiday" as if `duration`
-#   were always a direct, real-world value - only true for Holiday.
 #   set_scene() gained a `target` parameter that does the correct
-#   conversion per scene, while `duration` (raw wire value) still works
-#   unchanged for existing callers.
+#   conversion per scene (except Leave, see above), while the pre-
+#   existing `duration` parameter (raw wire value) still works unchanged
+#   for any existing caller.
 #   Also added a room-assignment guard: activating a scene with no rooms
 #   assigned returns success=True from the gateway but isActive silently
-#   stays False (confirmed live, matches a note in the 3-month-old
-#   apiMethods.py's activateScene() that this rewrite had dropped). Now
-#   raises ValueError instead of silently no-op'ing, unless the caller
-#   passes room_ids to assign them first.
+#   stays False (confirmed live, matches a check present in the original
+#   3-month-old apiMethods.py's activateScene() that this project's
+#   rewrite had dropped). Now raises ValueError instead of silently
+#   no-op'ing, unless the caller passes room_ids to assign rooms first.
 # - 2026-09-09: Rewrote set_switching_times() after live-verifying
 #   /api/room/switchingtimes/set2 via a mitmproxy capture of the real
 #   Smile App request (see project learnings for the full investigation):
@@ -77,7 +110,7 @@ HeatApp shape and should be re-verified before relying on them.
 #        `success:false, "The input format is invalid: 1"` on every call.
 #        Fixed via `setattr(params, "from", ...)`, since `params.from = x`
 #        is a syntax error but setattr() accepts any string key, and
-#        ApiRequest.request() reads params via vars(), which picks up
+#        ApiRequest.request() reads params via `vars()`, which picks up
 #        setattr-assigned keys identically to normal attributes - no
 #        change needed in api_request.py.
 #     2. Hours must be sent WITHOUT a leading zero (e.g. "4:30"), even
@@ -113,6 +146,12 @@ from .default_params import DefaultApiParams
 # Duration semantics confirmed live 2026-09-09 (see change log above).
 # Native units are what a human would set in the app: minutes for Boost,
 # hours for Party/Leave, days for Holiday.
+#
+# NOTE on Leave: it is listed here because its READ-side interpretation
+# (get_scene_duration() raw value x scene_max = remaining hours) IS
+# confirmed correct - only its WRITE-side formula (what to send for a
+# desired real-world duration) is unresolved. See LEAVE_TARGET_UNSUPPORTED
+# below - target= is blocked for Leave specifically because of this.
 # scene_max from scene/status
 SCENE_MAX = {"Boost": 120, "Party": 12, "Leave": 12}
 FRACTION_DURATION_SCENES = frozenset(SCENE_MAX)  # Boost, Party, Leave
@@ -123,13 +162,40 @@ NO_DURATION_SCENES = frozenset({"Standby", "Towel"})
 # (2026-09-09) - NOT derived from gateway behavior, and in Holiday's case
 # NOT enforced by the gateway at all (see change log). "step" is the
 # app's selectable raster where one exists (Boost only); None means any
-# value in [min, max] is selectable in the app.
+# value in [min, max] is selectable in the app. Leave's entry is currently
+# unreachable in practice (target= is blocked for Leave, see below) but
+# kept here for whenever the write formula is eventually solved.
 SCENE_APP_LIMITS = {
     "Boost":   {"min": 30, "max": 120, "step": 30},    # minutes
     "Party":   {"min": 1,  "max": 12,  "step": None},  # hours
     "Leave":   {"min": 1,  "max": 12,  "step": None},  # hours
     "Holiday": {"min": 1,  "max": 30,  "step": None},  # days
 }
+
+# Leave's write-side duration formula could NOT be reliably determined
+# despite extensive live testing (2026-09-09), including a fully isolated
+# re-test (poll-until-confirmed-inactive before each send, one value per
+# script invocation, ruling out request-timing/race-condition
+# contamination). Sent values 1-8 produced non-monotonic, unexplainable
+# results:
+#   sent:    1     2     3     4     5     6     8
+#   implied: 12h   6h    12h   12h   6h    12h   5h
+# No tested model (x3 factor, fraction-of-scene_max like Party/Boost,
+# integer modular arithmetic) fits this data, even though the results are
+# suspiciously clean fractions (0.5, 1.0, 5/12) rather than noise -
+# suggesting a real mechanism not yet understood (possibly time- or
+# session-state-dependent, similar in spirit to Holiday's small
+# unexplained read offset), rather than a simple multiplicative factor.
+# target= is deliberately disabled for Leave rather than shipping a
+# formula that has now been live-falsified twice (see change log).
+LEAVE_TARGET_UNSUPPORTED_MSG = (
+    "target= is not supported for Leave - its write-side duration "
+    "formula could not be reliably determined despite extensive live "
+    "testing (see api_methods.py's change log, 2026-09-09: sent values "
+    "1-8 produced non-monotonic results that fit no tested model). Use "
+    "duration= with a known-good raw value instead (e.g. 2, which live "
+    "testing confirmed produces ~6h)."
+)
 
 
 def _validate_target_against_app_limits(scene_name: str, target: float) -> None:
@@ -335,9 +401,11 @@ class ApiMethods:
     # -- scenes -----------------------------------------------------------
     # verified: scene status retrieval, scene room retrieval/assignment.
     # scene activation duration semantics confirmed 2026-09-09 for Boost/
-    # Party/Leave (fraction of scene_max) and Holiday (raw days) - see
-    # change log. App-UI limits (SCENE_APP_LIMITS) confirmed directly by
-    # the user 2026-09-09 and enforced client-side for target=.
+    # Party (fraction of scene_max) and Holiday (raw days) - see change
+    # log. Leave's READ-side is confirmed (fraction of scene_max=12h, same
+    # as Party) but its WRITE-side formula is UNRESOLVED - target= is
+    # blocked for Leave; use duration= with a known-good raw value.
+    # Holiday's upper bound is enforced client-side only (SCENE_APP_LIMITS).
 
     def get_scene_status(self) -> dict:
         return self._request.request(
@@ -363,6 +431,9 @@ class ApiMethods:
         format: a fraction of scene_max for Boost/Party/Leave, raw days
         for Holiday. Use SCENE_MAX to convert Boost/Party/Leave results
         into a real-world unit; Holiday's value is already in days.
+        Leave's READ-side interpretation (this method) IS confirmed
+        correct even though its WRITE-side formula (set_scene()) is not -
+        see set_scene()'s docstring.
         """
         params = DefaultApiParams()
         params.scene = scene_name
@@ -411,22 +482,31 @@ class ApiMethods:
           - `duration`: the raw wire value, passed through unchanged, NOT
             checked against SCENE_APP_LIMITS. Use only if you already
             know the exact wire format for this scene (a fraction for
-            Boost/Party/Leave, raw days for Holiday).
+            Boost/Party, raw days for Holiday, or a known-good raw value
+            for Leave - see below).
           - `target`: a real-world duration in the scene's native unit
-            (minutes for Boost, hours for Party/Leave, days for Holiday).
+            (minutes for Boost, hours for Party, days for Holiday).
             Validated against SCENE_APP_LIMITS first (raises ValueError
             if outside the app's own min/max/raster - confirmed by the
             user 2026-09-09), then converted internally to the correct
             wire format:
-              * Boost/Party/Leave: target / scene_max (a fraction of the
+              * Boost/Party: target / scene_max (a fraction of the
                 scene's own max from scene/status). Live-confirmed
                 2026-09-09 - see change log.
               * Holiday: target is sent as-is (raw days). Live-confirmed
                 2026-09-09 that Holiday does NOT use the fraction formula
-                the other three use, and that the gateway itself does NOT
-                enforce the app's 30-day limit (accepted up to 100 days
-                without clamping in testing) - the SCENE_APP_LIMITS check
-                is the only thing enforcing this now.
+                the other scenes use, and that the gateway itself does
+                NOT enforce the app's 30-day limit (accepted up to 100
+                days without clamping in testing) - the SCENE_APP_LIMITS
+                check is the only thing enforcing this now.
+              * Leave: **NOT SUPPORTED.** Raises NotImplementedError - see
+                LEAVE_TARGET_UNSUPPORTED_MSG. Extensive live testing
+                (2026-09-09) could not find a working write-side formula
+                (non-monotonic results across sent values 1-8, no tested
+                model fits). Use `duration=` with a known-good raw value
+                for Leave instead (e.g. `2`, confirmed live to produce
+                ~6h - but note this has NOT been re-verified as robust
+                across all possible values, only that specific one).
             Ignored for Standby/Towel.
 
         If both `duration` and `target` are given, `duration` wins (no
@@ -434,7 +514,7 @@ class ApiMethods:
 
         Raises ValueError if `target` is given for a scene with no known
         duration mode, or if `target` is outside that scene's app-UI
-        limits.
+        limits. Raises NotImplementedError if `target` is given for Leave.
 
         Room assignment: activating a scene with no rooms assigned
         returns success=True from the gateway, but isActive silently
@@ -465,6 +545,8 @@ class ApiMethods:
         elif duration is not None:
             params.duration = duration
         elif target is not None:
+            if scene_name == "Leave":
+                raise NotImplementedError(LEAVE_TARGET_UNSUPPORTED_MSG)
             _validate_target_against_app_limits(scene_name, target)
             if scene_name in FRACTION_DURATION_SCENES:
                 params.duration = target / SCENE_MAX[scene_name]
