@@ -1,4 +1,8 @@
 # Change log:
+# - 2026-09-11: Added TestGetSceneDurationNative, covering
+#   get_scene_duration_native()'s two conversion branches (fraction x
+#   SCENE_MAX for Boost/Party/Leave, raw-as-is for Holiday) - added to
+#   back the new per-room "duration remaining" sensors (sensor.py).
 # - 2026-08-27: Initial test using the real captured /api/room/list
 #   response (tests/fixtures/room_list_response.json). This is the exact
 #   kind of test that would have caught the missing-actualTemperature
@@ -61,3 +65,23 @@ class TestGetRoomsListWithRealFixture:
         api = _make_api_methods_with_mocked_request(fixture)
 
         assert api.get_specific_room(999) is None
+
+
+class TestGetSceneDurationNative:
+    """get_scene_duration_native() must apply the exact conversion recipe
+    documented in get_scene_duration()'s docstring: fraction x SCENE_MAX
+    for Boost/Party/Leave, raw value as-is for Holiday (already in days).
+    """
+
+    def test_fraction_scene_converts_to_real_world_unit(self):
+        # Boost: SCENE_MAX=120 (minutes) - a raw fraction of 0.25 is 30min.
+        api = _make_api_methods_with_mocked_request({"duration": 0.25})
+
+        assert api.get_scene_duration_native("Boost") == 30
+
+    def test_raw_days_scene_is_returned_unconverted(self):
+        # Holiday: RAW_DAYS_DURATION_SCENES - the wire value already IS
+        # the real-world unit (days), no SCENE_MAX multiplication.
+        api = _make_api_methods_with_mocked_request({"duration": 15})
+
+        assert api.get_scene_duration_native("Holiday") == 15

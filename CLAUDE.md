@@ -465,38 +465,33 @@ GET  /admin/login/index            (returns HTML of the config menu)
   - Boost `0.5`→60min and Party `0.5`→6h DO match the newly-confirmed
     fraction formula (`target/scene_max`: `60/120=0.5`, `6/12=0.5`) — no
     issue here, and independently re-confirmed live.
-  - **Leave `2`→6h — RE-TESTED LIVE (2026-09-09) AND CONFIRMED CORRECT.**
-    A wider sweep of send-values (`1,3,5,6,8`) around this, however,
-    revealed that Leave's write-side duration formula is NOT a simple
-    factor at all — the wider sweep produced non-monotonic results that
-    fit no tested model (see the dedicated entry below and
-    `api_methods.py`'s 2026-09-09 change log for the full data and
-    methodology, including ruling out a request-timing/race-condition
-    explanation via a fully isolated re-test). `set_scene()`'s `target=`
-    parameter is now deliberately disabled for Leave
-    (`NotImplementedError`) rather than exposing a formula that only
-    holds for the two originally-tested values. **Practical consequence:
-    `SCENE_ACTIVATION_DURATION["Leave"] = 2` remains correct as-is and
-    should NOT be changed** — but `add_member_to_scene()` must not be
-    generalized to compute other Leave durations dynamically (e.g. via a
-    future "let the user pick a custom Leave duration" feature) until the
-    real formula is understood. Shipped as a fix in `0.0.21`.
-  - **Holiday `0.5`→15d does NOT match, and this part of the table is
-    genuinely WRONG — still needs correcting in `const.py`.** Holiday is
-    confirmed (2026-09-09, see below) to send RAW DAYS, not a fraction —
-    sending `15` is echoed back as `~15`, and `100` is echoed back as
-    `~100` (gateway does not clamp Holiday at all, unlike Boost/Party).
-    If `duration=0.5` is what `SCENE_ACTIVATION_DURATION["Holiday"]`
-    still sends in production, that sets **0.5 days (12 hours)**, not 15
-    days — this is very likely a real, currently-live bug, distinct from
-    the Leave situation (which turned out to be correct, just narrower
-    than assumed). **This specifically still needs to be checked against
-    `const.py` and fixed** — not yet done as of `0.0.21`.
-  **Status as of `0.0.21`:** Leave's specific contradiction is resolved
-  (the old value was right, the newly-built generalization was wrong, and
-  is now blocked rather than shipped). Holiday's contradiction is NOT yet
-  resolved — treat that as the remaining top-priority item for the next
-  session that touches `scene_manager.py`/`const.py`.
+  - ~~**Leave `2`→6h — RE-TESTED LIVE (2026-09-09) AND CONFIRMED
+    CORRECT.**~~ **SUPERSEDED (2026-09-11) — see the dedicated resolution
+    entry below.** A wider sweep of send-values (`1,3,5,6,8`) around this
+    had revealed non-monotonic results that fit no tested model at the
+    time, leading `0.0.21` to block `set_scene()`'s `target=` for Leave
+    entirely rather than expose an incomplete formula. That sweep's real
+    problem, found 2026-09-11, was that every one of those sent values is
+    outside the gateway's actual `[0,1]` input domain for this scene —
+    Leave uses the exact same fraction-of-scene_max formula as Party, no
+    separate mechanism. `target=` is unblocked for Leave and
+    `SCENE_ACTIVATION_DURATION["Leave"]` was corrected from `2` (an
+    out-of-domain value that happened to work, but was never understood)
+    to `0.5` (the correct, now-understood in-domain fraction for 6h).
+  - ~~**Holiday `0.5`→15d does NOT match, and this part of the table is
+    genuinely WRONG — still needs correcting in `const.py`.**~~ **FIXED
+    (2026-09-10, shipped in `0.1.0`)** — see the dedicated "Top priority"
+    entry elsewhere in this file. Holiday is confirmed (2026-09-09, see
+    below) to send RAW DAYS, not a fraction — sending `15` is echoed back
+    as `~15`, and `100` is echoed back as `~100` (gateway does not clamp
+    Holiday at all, unlike Boost/Party). `SCENE_ACTIVATION_DURATION[
+    "Holiday"]` was `0.5` (0.5 days = 12h, not the intended 15 days) and
+    is now `15`.
+  **Status as of 2026-09-11:** both contradictions in this table are now
+  resolved — Holiday's value was fixed in `0.1.0` (2026-09-10), Leave's
+  in `0.1.0` (2026-09-11, this session) after finding its formula is
+  identical to Party's once tested with valid in-domain input (see the
+  dedicated resolution entry below).
 - **`api/api_methods.py`'s `set_scene()` `duration` parameter semantics,
   confirmed live 2026-09-09** (independent of, and predating discovery of,
   the `SCENE_ACTIVATION_DURATION` conflict directly above). Full live
@@ -516,12 +511,13 @@ GET  /admin/login/index            (returns HTML of the config menu)
     remaining matched `duration=0.2333...` × 120 exactly); confirmed for
     Party via the identical clamp-test pattern (`0.5` echoed back
     unchanged, `6`/raw-hours clamped to `1`).
-  - **Leave — read-side confirmed, write-side UNRESOLVED.** `Leave`'s
-    READ interpretation via `get_scene_duration()` matches the same
-    fraction-of-`scene_max=12h` model as Party (`0.5` raw → `6h`, `1.0`
-    raw → `12h`), so `SCENE_MAX["Leave"] = 12` remains correct for
-    reading. But the WRITE side does **not** follow "send the fraction
-    directly" like Party/Boost — extensive live testing found that
+  - ~~**Leave — read-side confirmed, write-side UNRESOLVED.**~~
+    **WRITE-SIDE RESOLVED (2026-09-11).** `Leave`'s READ interpretation
+    via `get_scene_duration()` matches the same fraction-of-
+    `scene_max=12h` model as Party (`0.5` raw → `6h`, `1.0` raw → `12h`),
+    so `SCENE_MAX["Leave"] = 12` remains correct for reading. The WRITE
+    side originally appeared NOT to follow "send the fraction directly"
+    like Party/Boost — extensive live testing on 2026-09-09 found that
     sending raw values `1,2,3,4,5,6,8` via `duration=` produced this
     non-monotonic table (all confirmed via a fully isolated
     poll-until-inactive methodology, ruling out request-timing
@@ -533,19 +529,28 @@ GET  /admin/login/index            (returns HTML of the config menu)
     No tested model (a fixed `×3` factor — which matched the ORIGINAL
     two-point 2026-09-01 measurement exactly, `2→6h`/`4→12h`, and even
     re-confirmed exactly in an isolated re-test — fraction-of-scene_max
-    like Party/Boost, or simple modular arithmetic) fits the full
-    7-point set. The results are suspiciously clean fractions (`0.5`,
-    `1.0`, `5/12`) rather than noise, suggesting a real but
-    not-yet-understood mechanism (possibly time- or session-state-
-    dependent, in a similar spirit to Holiday's small unexplained read
-    offset below) rather than a simple multiplicative factor. **Decision
-    (shipped in `0.0.21`): `set_scene()`'s `target=` parameter is
-    deliberately disabled for Leave** (`NotImplementedError`, with an
-    explanatory message pointing here) rather than shipping a formula
-    that has now been live-falsified. `duration=` (the raw wire value)
-    remains fully available for Leave, unaffected — only `2` is
-    currently known to reliably produce `~6h`; no other value has been
-    validated as trustworthy for real-world use.
+    like Party/Boost, or simple modular arithmetic) fit the full 7-point
+    set at the time. **Root cause found 2026-09-11: every one of those
+    sent values (`1` through `8`) is OUTSIDE the `[0,1]` fraction domain
+    the gateway/app actually use for Leave** — the real Smile App's own
+    duration slider never sends a raw value above `1`; the 2026-09-09
+    sweep was testing genuinely out-of-spec input, which hits an
+    unspecified/inconsistent gateway firmware code path (hence the
+    non-monotonic table), not evidence of a separate Leave-specific
+    formula. Confirmed via (1) a live mitmproxy capture of the real
+    Smile App activating Leave six times
+    (`scripts/mitm_scene_capture.py`), showing the app sends "noisy"
+    in-domain fractions (e.g. `0.06996047`) that the gateway rounds to
+    the nearest `1/12` step on receipt (`round(sent×12)/12` reproduces
+    every readback exactly — a UI-slider-precision artifact, not a
+    clock/session-time effect), and (2) a direct confirmation via this
+    project's own `ApiMethods.set_scene(duration=0.41666667)` (5/12,
+    "5 hours") returning exactly `5.00h` back. **`set_scene()`'s
+    `target=` parameter is no longer blocked for Leave** — it now uses
+    the identical `FRACTION_DURATION_SCENES` code path as Party/Boost,
+    with the `NotImplementedError` special-case removed entirely. Full
+    writeup: `docs/protocol.md` §4d, `api_methods.py`'s and `const.py`'s
+    change logs.
   - **Holiday:** `duration` is **RAW DAYS**, not a fraction. Sending `15`
     was echoed back by `/api/scene/duration` as `~15.0014` (small offset
     likely rounding/an internal absolute-end-datetime calculation, not
@@ -568,17 +573,16 @@ GET  /admin/login/index            (returns HTML of the config menu)
     necessarily the exact app-visible bounds, so these are enforced
     client-side too, not assumed to be covered by the gateway's clamp.
     Leave's own app-UI range (1-12h) is documented in `SCENE_APP_LIMITS`
-    too, but is currently unreachable in practice since `target=` is
-    blocked entirely for Leave.
+    too, and is now a normal, reachable path since `target=` is no
+    longer blocked for Leave (see resolution above).
   - **`api_methods.py` now bakes all of this in directly:** `SCENE_MAX`,
     `FRACTION_DURATION_SCENES`, `RAW_DAYS_DURATION_SCENES`,
-    `NO_DURATION_SCENES`, `SCENE_APP_LIMITS`, and
-    `LEAVE_TARGET_UNSUPPORTED_MSG` module-level constants; `set_scene()`
-    gained a `target` parameter (real-world unit — minutes/hours/days as
-    appropriate) that validates against `SCENE_APP_LIMITS` (raises
-    `ValueError` outside the app's own min/max/raster), then converts
-    correctly per scene — except Leave, where it raises
-    `NotImplementedError` instead (see above) — while the pre-existing
+    `NO_DURATION_SCENES`, and `SCENE_APP_LIMITS` module-level constants;
+    `set_scene()` gained a `target` parameter (real-world unit —
+    minutes/hours/days as appropriate) that validates against
+    `SCENE_APP_LIMITS` (raises `ValueError` outside the app's own
+    min/max/raster), then converts correctly per scene (Leave included,
+    as of 2026-09-11 — see resolution above) — while the pre-existing
     `duration` parameter (raw wire value) still works unchanged for any
     existing caller and deliberately bypasses the `SCENE_APP_LIMITS`
     check — an intentional power-user escape hatch, not an oversight.
@@ -716,15 +720,66 @@ GET  /admin/login/index            (returns HTML of the config menu)
 
 ### Next planned work (agreed in project discussion, not yet started)
 
-- **Top priority, before anything else touching scene activation:**
+- **No automatic re-login on session failure — coordinator gets
+  permanently stuck "unavailable" until HA restart/integration reload**
+  (found 2026-09-11, while investigating a user question about
+  `reqcount` overflow behavior - see `api/credentials.py`'s
+  `next_reqcount()`). Root cause, confirmed by reading the code (not
+  just assumed, correcting a previously-wrong note in this file - see
+  the struck-through "Reconnect/error handling strategy" entry above):
+  `SmileConnectCoordinator._async_update_data()` only calls
+  `async_login()` when `self.api is None`, which is only ever true
+  once - the very first update after HA (re)starts. Any later session
+  invalidation (gateway reboot, prolonged network loss, or anything else
+  that makes the gateway reject the current devicetoken/session) causes
+  every subsequent poll to fail with `UpdateFailed` forever, since
+  nothing ever resets `self.api` back to `None` to trigger a fresh
+  login. `reqcount` itself is a plain Python `int` (`Credentials.
+  reqcount`, reset to `0` only on a fresh login) - no client-side
+  overflow is possible, and at this project's default 30s poll interval
+  (~4 authenticated calls/cycle, ~4 million/year of continuous uptime)
+  even a 32-bit counter on the gateway's own side would take on the
+  order of centuries to overflow if it exists at all - genuinely
+  untested/unknown whether the gateway enforces any limit, but not
+  considered the practical risk here. **The permanent-stuck-unavailable
+  failure mode is the real, already-confirmed problem, independent of
+  whether `reqcount` overflow is ever actually involved.** Proposed fix
+  (not yet designed in detail): on catching the exception in
+  `_async_update_data()`'s `try`/`except`, reset `self.api = None`
+  (forcing a re-login on the next cycle) before raising `UpdateFailed`,
+  or add an explicit retry-with-relogin path. Needs a plan session
+  before implementing (project workflow rule) - in particular, decide
+  whether to blindly re-login on EVERY failure (simple, but would also
+  re-login on unrelated transient errors, e.g. a single dropped request)
+  or only after distinguishing session-loss from other failure types
+  (more correct, more code, and no confirmed way yet to tell them apart
+  from the gateway's own error responses - would need live testing,
+  e.g. forcing a gateway reboot mid-session and inspecting exactly what
+  error comes back).
+- **HACS-appropriate `README.md` rewrite, documenting the integration and
+  its features properly** (agreed 2026-09-11, explicitly deferred to a
+  separate session/PR - not part of the `set_hvac_mode_and_temperature`
+  work it was raised alongside). Should cover, at minimum: the two custom
+  Actions (`set_preset_mode_with_duration`,
+  `set_hvac_mode_and_temperature`) and when to use each instead of the
+  standard `climate.*` services; the known `climate.set_temperature`
+  combined-call limitation (see the 2026-09-11 addendum #3 entry below);
+  the hub/sub-device model (gateway + per-room SDC Regler); supported
+  presets/scenes; the disclaimer/trademark language already established
+  in this file's own header. Check current HACS README requirements
+  before writing it (badges, structure) rather than assuming the
+  existing README's shape is still sufficient.
+- ~~**Top priority, before anything else touching scene activation:**
   `const.SCENE_ACTIVATION_DURATION["Holiday"]` (currently `0.5`, intended
   to mean 15 days) is very likely WRONG given Holiday's confirmed
   raw-days write formula — `0.5` would actually set 0.5 days (12 hours),
-  not 15 days. This still needs to be checked and fixed in `const.py`/
-  `scene_manager.py`. (Leave's equivalent contradiction — see "Still
-  untested / open" above — is resolved: the old value was correct, only
-  the newly-attempted generalization was wrong, and that generalization
-  is now blocked rather than shipped.)
+  not 15 days.~~ **FIXED (2026-09-10, shipped in `0.1.0`).** Changed to
+  `15` (raw days) in `const.py`, alongside the `set_preset_mode_with_duration`
+  HA Action work below, which touches exactly this code path. See
+  `const.py`'s own change log. (Leave's equivalent contradiction — see
+  "Still untested / open" above — is now ALSO fully resolved, 2026-09-11:
+  Leave's write-side formula turned out to be identical to Party/Boost's,
+  and `target=` is unblocked for it in `0.1.0`.)
 - All three preset/roomstatus/Standby-masking bugs above, plus the
   PRESET_NONE gap found during their live verification, are now shipped
   in 0.0.18 — no outstanding implementation work from that investigation
@@ -770,24 +825,32 @@ GET  /admin/login/index            (returns HTML of the config menu)
   Still not wired to anything in the HA integration layer (service or
   entity) — this is now the concrete next step, not a blocked-on-
   verification item anymore. See the new HA Action bullet directly below.
-- **New: Home Assistant Action (service) to let automations set hvac
-  mode, preset, thermostat temperature, and switching times.** Not yet
-  designed. Should expose, as callable HA services (not just entity
-  UI interactions), at minimum: setting `hvac_mode` (Standby on/off),
-  setting `preset_mode` (Boost/Party/Leave/Holiday/none), setting target
-  temperature, and writing switching-time schedules (leveraging the now-
-  working `set_switching_times()`). Needs a design proposal (per Session
-  Workflow rule 3 below) before implementation — in particular how
-  switching-times input should be structured for a service call (likely
-  not the raw 21-slot list directly, since that's an internal wire
-  format, not a natural service-call shape) and whether per-room
-  targeting uses `entity_id` (mapping to the existing climate entity) or
-  a separate `room_id` parameter. **This is the first piece of work
-  planned for the `0.1.x` line** — see "Versioning & Branching Strategy"
-  below: the last `0.0.x` release is `0.0.21`, and this feature starts
-  the initial `0.1.x` beta release, which means it must be developed on a
-  dedicated feature branch and merged via pull request, not committed
-  directly to `main`.
+- **Home Assistant Action (service) to let automations set hvac mode,
+  preset, thermostat temperature, and switching times.** **PARTIALLY
+  SHIPPED (2026-09-10, `0.1.0`, on `feature/ha-actions` — starts the
+  `0.1.x` beta line, see "Versioning & Branching Strategy" below).**
+  Design review during planning established that `hvac_mode`, `preset_mode`,
+  and target temperature are already fully controllable today via the
+  standard `ClimateEntity` overrides in `climate.py` — the generic
+  `climate.set_hvac_mode`/`climate.set_preset_mode`/`climate.set_temperature`
+  HA services already work per-entity, no custom Action needed for those
+  three verbs. The one genuinely new capability the API layer supported
+  but nothing exposed was a **per-activation custom preset duration**
+  (`ApiMethods.set_scene()`'s `target=`/`duration=`, previously only
+  reachable with the hardcoded `SCENE_ACTIVATION_DURATION` default via
+  `SceneManager.add_member_to_scene()`). Shipped as the new
+  **`honeywell_smileconnect.set_preset_mode_with_duration`** entity Action
+  (`climate.py`, registered via `entity_platform.async_register_entity_service()`;
+  schema/labels in `services.yaml` + `strings.json`/`translations/*.json`),
+  backed by `SceneManager.add_member_to_scene()`'s new optional
+  `target=`/`duration=` parameters (`api/scene_manager.py`) — see both
+  files' change logs. **Still open / deferred, NOT part of this shipped
+  piece:** a dedicated `hvac_mode`/temperature Action (deliberately
+  skipped — would just duplicate the standard `climate.*` services with no
+  new capability) and a switching-times Action (needs its own design pass
+  for how the raw slot list should be shaped for a service call — see the
+  bullet above this one; `get_switching_times`/`set_switching_times` in
+  `api/api_methods.py` remain unwired to anything HA-facing).
 - **Possible future gateway-attached entities from `/api/weather`'s
   remaining fields** (`iconUrl`, `forlocation`) — deliberately NOT
   implemented now. Per project discussion: the outside
@@ -807,10 +870,21 @@ GET  /admin/login/index            (returns HTML of the config menu)
   these are ever turned into entities, they belong on the **gateway**
   device, not the regler — noted here so a future session doesn't have to
   re-derive this reasoning.
-- **Reconnect/error handling strategy** — currently the coordinator would
-  presumably just re-login every refresh cycle on failure; this works but
-  is inefficient and not a deliberate design. Worth revisiting once basic
-  functionality is solid.
+- ~~**Reconnect/error handling strategy** — currently the coordinator would
+  presumably just re-login every refresh cycle on failure~~ **CORRECTED
+  (2026-09-11): this assumption was wrong.** Verified by reading the
+  actual code (raised by the user while asking about `reqcount`
+  overflow, see below): `SmileConnectCoordinator._async_update_data()`
+  only calls `async_login()` when `self.api is None` — i.e. exactly
+  once, the first time. If the session becomes invalid for ANY reason
+  afterward (gateway reboot, network hiccup during a request, a
+  hypothetical `reqcount` issue - see the new bullet in "Next planned
+  work" below), every subsequent poll just fails with `UpdateFailed` and
+  entities go "unavailable" **permanently** — there is no automatic
+  re-login, ever, until Home Assistant itself restarts or the user
+  manually reloads the integration. Moved to "Next planned work" below
+  as a concrete, scoped item now that the actual gap is understood
+  precisely (not just "inefficient", but a real permanent-failure mode).
 - **Runtime verification of this round's changes** — see the "⚠️ Needs
   runtime verification" callout under "Integration Architecture": the
   `EntityCategory` import location, the `OptionsFlowHandler` base-class
@@ -949,10 +1023,12 @@ pytest tests/ -v
   scenes, both via the low-level `_validate_target_against_app_limits()`
   function directly and end-to-end through `set_scene(..., target=...)`;
   a case confirming `duration=` (the raw wire value) deliberately
-  bypasses that validation; and, new as of `0.0.21`, a case confirming
-  `set_scene("Leave", ..., target=...)` raises `NotImplementedError`, and
-  a companion case confirming `duration=` still works normally for Leave
-  (only the `target=` convenience path is blocked). Written specifically
+  bypasses that validation; and, as of `0.1.0` (2026-09-11), a case
+  confirming `set_scene("Leave", ..., target=...)` now sends a request
+  normally (Leave's `target=` block was removed once its formula was
+  confirmed identical to Party/Boost's — see the resolution entries
+  above), plus a companion case confirming `duration=` still works for
+  Leave too. Written specifically
   so the room-assignment guard can be regression-tested without
   repeating the live empty-list-hang incident documented above — run it
   with `python3 scripts/test_scene_guards_local.py`, no `.env`/
@@ -1055,7 +1131,18 @@ doesn't fit any model.
    was finally confirmed, after several rounds of educated-guess `set2`
    calls were rejected by the gateway, and how the `scene/set`
    `duration`/app-vs-gateway-limits investigation (also above) was
-   confirmed.
+   confirmed, and how Leave's write-side `duration` formula was finally
+   resolved (2026-09-11, see "Still untested / open" above) after
+   extensive single-point-probe guessing against our own API had failed.
+   **As of 2026-09-11, this technique is captured as a reusable repo
+   script instead of being done purely ad-hoc each time:**
+   `scripts/mitm_scene_capture.py` — an mitmdump addon that logs full
+   request+response bodies for `/api/scene/*` traffic (not just the
+   fields already known to matter) to a local JSON-Lines file. Run via
+   `mitmdump -s scripts/mitm_scene_capture.py`; see the script's own
+   docstring for the full setup/protocol. Worth extending to other path
+   prefixes (or generalizing to log everything) if a future investigation
+   needs a different endpoint family.
 
 **Preferred interaction pattern:** produce self-contained JS code blocks for
 manual paste into the browser console, rather than automated tab control —
@@ -1119,18 +1206,20 @@ construct a `device_info` dict inline.
   - `login.py` — challenge/response login, password hashing, AES devicetoken
     decryption.
   - `api_request.py` — signs and executes authenticated requests.
-  - `api_methods.py` — high-level per-endpoint methods. As of 2026-09-09,
-    also owns `SCENE_MAX`, `FRACTION_DURATION_SCENES`,
-    `RAW_DAYS_DURATION_SCENES`, `NO_DURATION_SCENES`, `SCENE_APP_LIMITS`,
-    and `LEAVE_TARGET_UNSUPPORTED_MSG` — see "Still untested / open" above
-    for what each encodes and why. `set_scene_rooms()` and `set_scene()`
-    both carry live-confirmed guard clauses (empty room list; no rooms
-    assigned; Leave's `target=` block) — see the same section.
+  - `api_methods.py` — high-level per-endpoint methods. Also owns
+    `SCENE_MAX`, `FRACTION_DURATION_SCENES`, `RAW_DAYS_DURATION_SCENES`,
+    `NO_DURATION_SCENES`, and `SCENE_APP_LIMITS` — see "Still untested /
+    open" above for what each encodes and why. `set_scene_rooms()` and
+    `set_scene()` both carry live-confirmed guard clauses (empty room
+    list; no rooms assigned) — see the same section. As of 2026-09-11,
+    Leave is handled identically to Party/Boost (no more special-case
+    block) — its formula was confirmed identical, see the resolution
+    entries above.
   - `scene_manager.py` — add/remove a room from a scene (handles the
-    getrooms/setrooms/set sequencing). **Holiday's
-    `SCENE_ACTIVATION_DURATION` entry needs fixing** per the re-opened
-    item above (still outstanding as of `0.0.21`) — Leave's entry is
-    confirmed correct as-is and should NOT be touched.
+    getrooms/setrooms/set sequencing). `const.SCENE_ACTIVATION_DURATION`
+    is now correct for all five tracked scenes (Holiday fixed in `0.1.0`
+    on 2026-09-10, Leave fixed in `0.1.0` on 2026-09-11 — see the
+    resolution entries above for both).
   - `credentials.py` — session state, including `reqcount` with correct
     post-increment semantics (see reqcount section above).
   - `ping.py` — **deliberately separate** from everything above: a plain,
@@ -1187,16 +1276,28 @@ construct a `device_info` dict inline.
   + a `translation_key` so the entity's display name combines its
   device's name with a translated "Thermostat" label (see `const.py`'s
   own comment on this choice).
-- `sensor.py` — two entity groups, both attached to the **gateway**
-  device via `device.gateway_device_info()`:
+- `sensor.py` — three entity groups:
   - Weather: outside temperature/min/max, sourced from
     `coordinator.data["weather"]` (fed by the main, authenticated
     coordinator). One parameterized `SmileConnectWeatherSensor` class
-    covers all three.
+    covers all three. Attached to the **gateway** device via
+    `device.gateway_device_info()`.
   - Diagnostics: `SmileConnectPingResponseTimeSensor`
     (`entity_category = DIAGNOSTIC`), fed by `SmileConnectPingCoordinator`
     instead — reports the gateway's own `"performance"` field from
-    `/api/ping`.
+    `/api/ping`. Also on the **gateway** device.
+  - Preset duration remaining (added 2026-09-11):
+    `SmileConnectPresetDurationSensor`, **four per room** (Boost/Party/
+    Leave/Holiday, `TIMED_PRESET_SCENE_NAMES`), sourced from
+    `coordinator.data["scene_active_rooms"]`/`["scene_duration_native"]`.
+    Attached to the **regler** device (via `device.regler_device_info()`,
+    the same device as that room's climate entity), NOT the gateway —
+    framed as a companion to the room's preset control. Deliberately
+    independent per (room, scene) pair rather than one dynamic sensor,
+    since the gateway allows genuinely compound preset states that
+    `climate.py`'s single-value `preset_mode` cannot represent — see the
+    `0.1.0` addendum #4 entry (Versioning section below) for the full
+    rationale and why `climate.py` itself needed no change for this.
 - `binary_sensor.py` — `SmileConnectConnectivitySensor`
   (`device_class = CONNECTIVITY`, `entity_category = DIAGNOSTIC`), also on
   the gateway device, fed by `SmileConnectPingCoordinator`. `uniqueid`,
@@ -1435,14 +1536,132 @@ must not proceed carelessly.
     multiple isolated live tests each, not implicated by the Leave
     finding.
   - No new user-facing HA feature — same category as `0.0.19`/`0.0.20`.
-- **The next round of work — the HA Action/service for setting mode,
-  preset, temperature, and switching times (see "Next planned work"
-  above) — starts the initial `0.1.x` release.** Per the beta-status rule
-  above, this means: do NOT commit it directly to `main`. Create a
-  dedicated feature branch first (e.g. `feature/ha-actions`), do the work
-  there, and merge via pull request once ready. This also means the
-  README status badge (see below) must be updated from pre-alpha to beta
-  as part of that work, not before.
+- **`0.1.0` (in progress, 2026-09-10, on branch `feature/ha-actions` — NOT
+  yet merged to `main`, so `0.0.21` above remains what's actually on
+  `main` until the PR lands).** Starts the `0.1.x` beta line — the first
+  HA Action for this integration. Contents:
+  - New entity Action `honeywell_smileconnect.set_preset_mode_with_duration`
+    (`climate.py`/`services.yaml`/`strings.json`/`translations/*.json`) —
+    see the "Next planned work" entry above for the full design rationale
+    (why this one Action, not three).
+  - `SceneManager.add_member_to_scene()` gained optional `target=`/
+    `duration=` parameters (`api/scene_manager.py`), defaulting to the
+    prior hardcoded behavior when omitted.
+  - Fixed `const.SCENE_ACTIVATION_DURATION["Holiday"]` (`0.5` → `15`) —
+    see the "Top priority" item above, resolved as part of this same
+    change since it touches the identical code path.
+  - **2026-09-11 addendum (same branch, folded into this same `0.1.0`
+    line rather than a separate version):** resolved Leave's write-side
+    `duration` formula, previously blocked entirely (`NotImplementedError`
+    on `target=`) since `0.0.21`. Investigated via a mitmproxy capture of
+    the real Smile App (`scripts/mitm_scene_capture.py`, new) plus a
+    direct confirmation through `ApiMethods.set_scene()` — see the
+    dedicated resolution entries above and `docs/protocol.md` §4d. Leave
+    turned out to use the identical fraction-of-scene_max formula as
+    Party/Boost; the earlier "unsolved mystery" was an artifact of
+    testing with raw values outside the gateway's actual `[0,1]` input
+    domain for this scene. Removed the `NotImplementedError`/
+    `LEAVE_TARGET_UNSUPPORTED_MSG` special-case in `api_methods.py`;
+    fixed `const.SCENE_ACTIVATION_DURATION["Leave"]` (`2` → `0.5`);
+    updated `scripts/test_scene_guards_local.py` accordingly.
+  - **2026-09-11 addendum #2 (same branch):** simplified the
+    `set_preset_mode_with_duration` Action now that `target` ("Duration")
+    covers Leave too — removed the `duration` field ("Raw duration"),
+    which existed only as a workaround for Leave's now-resolved block
+    (`climate.py`'s `SET_PRESET_MODE_WITH_DURATION_SCHEMA`,
+    `services.yaml`, `strings.json`/`translations/*.json`). `target`'s
+    field description now spells out all four presets' units/ranges
+    directly (sourced from `SCENE_APP_LIMITS` in `api_methods.py`:
+    Boost minutes 30–120 step 30, Party/Leave hours 1–12, Holiday days
+    1–30) instead of the old prose that also wrongly excluded Leave. The
+    underlying Python API (`ApiMethods.set_scene(duration=...)`,
+    `SceneManager.add_member_to_scene(duration=...)`) is unaffected -
+    only the HA-facing Action surface changed.
+  - **2026-09-11 addendum #3 (same branch): new
+    `set_hvac_mode_and_temperature` Action, plus a newly-found limitation
+    of the standard `climate.set_temperature` service on this entity.**
+    Live-tested this session (real HA instance, real gateway): calling
+    `climate.set_hvac_mode` alone works reliably, and calling
+    `climate.set_temperature` with only `temperature` works reliably
+    *while already in `auto`* — but `climate.set_temperature` called with
+    **both** `temperature` and `hvac_mode` together (HA core's combined-
+    call form) applies **neither** value, with no exception and no log
+    warning at all. The exact mechanism inside HA core's own handling for
+    this combined call was not pinned down further (out of scope - this
+    is HA core's service layer, not the gateway protocol this project
+    reverse-engineers). **Fix:** new entity Action
+    `honeywell_smileconnect.set_hvac_mode_and_temperature`
+    (`climate.py`/`services.yaml`/`strings.json`/`translations/*.json`)
+    that sequences the two writes itself, reusing the existing Standby
+    scene-membership logic. `async_set_hvac_mode()` is now a thin wrapper
+    around a new shared `_async_apply_hvac_mode()` helper (same pattern
+    as `_async_apply_preset()` from 2026-09-10). When a target
+    temperature is given alongside `hvac_mode: auto`, the helper writes
+    it directly instead of going through
+    `_nudge_temperature_after_leaving_standby()`'s jump-to-max-then-
+    drift-back workaround - a genuine target value already satisfies
+    that workaround's own "must be a real change" requirement (see that
+    method's docstring), so the extra round-trip is redundant here, and
+    was flagged as a plausible contributor to the standard service's
+    combined-call failure (two genuine writes in quick succession
+    instead of one) - not confirmed as the definitive root cause, just
+    the most likely explanation given the evidence. **Deliberately no
+    extra validation was added** (explicit project decision): `hvac_mode:
+    off` with a `temperature` given is accepted by the schema and the
+    temperature is simply ignored downstream, matching how the gateway
+    already silently ignores a temperature write while Standby is active
+    (see the "Standby persists silently" entry elsewhere in this file).
+    **This limitation of the standard `climate.set_temperature` service
+    itself is now the recommended thing to document once the README
+    rewrite happens** (see the new README bullet in "Next planned work")
+    - for now it's captured here and in the new Action's own
+    `strings.json` description, which explicitly points users at the new
+    Action for combined calls.
+  - **2026-09-11 addendum #4 (same branch): new per-room "preset duration
+    remaining" sensors.** User's idea, raised as a natural companion to
+    `set_preset_mode_with_duration`: nothing previously surfaced
+    `ApiMethods.get_scene_duration()` (the confirmed-reliable read side
+    of the exact duration API this session's Leave investigation already
+    reverse-engineered the write side of) anywhere in HA. New
+    `ApiMethods.get_scene_duration_native()` (`api_methods.py`) applies
+    the existing raw→real-world conversion recipe
+    (`get_scene_duration()`'s own docstring) so callers get a real-world
+    number directly. `coordinator.py`'s `_get_scene_active_rooms()`
+    (renamed `_get_scene_active_rooms_and_durations()`) now also returns
+    a `scene_duration_native` dict, reusing the same `get_scene_status()`
+    call and only fetching duration for scenes that are actually active
+    (same cost-conscious pattern as the existing room-membership fetch).
+    New `sensor.py` entity `SmileConnectPresetDurationSensor` - **four
+    independent sensors per room** (Boost/Party/Leave/Holiday), not one
+    dynamic "whichever preset is active" sensor. Deliberate design
+    decision, raised by the user: the Smile App lets scenes be combined
+    arbitrarily (e.g. Boost AND Party simultaneously active on the same
+    room), which `climate.py`'s single-value `preset_mode` structurally
+    cannot represent (`_update_active_preset()` picks one winner via a
+    fixed priority order when more than one scene is active - see its
+    own docstring). Four independent sensors sidestep this entirely -
+    each reads `coordinator.data` directly with zero dependency on
+    `climate.py`'s preset-resolution logic, so **`climate.py` itself did
+    NOT need to change** for this feature (confirmed directly with the
+    user during planning). New `TIMED_PRESET_SCENE_NAMES` constant in
+    `const.py` (`BOOST, PARTY, LEAVE, HOLIDAY` - mirrors
+    `TRACKED_SCENE_NAMES` but excludes `STANDBY`, which has no duration
+    concept). Each sensor uses its OWN preset's native unit (fixed per
+    entity instance - Boost: minutes, Party/Leave: hours, Holiday: days)
+    rather than a normalized common unit, and reads `None` ("unknown")
+    when the room isn't currently a member of that scene. New test
+    `tests/test_api_methods.py::TestGetSceneDurationNative` covers both
+    conversion branches; the sensor entities themselves are HA-dependent
+    and verified manually (no automated harness yet, per "Test Suite"
+    below).
+  - `manifest.json` version bump + README badges (version `0.1.0`, status
+    `pre-alpha` → `beta`).
+  - New tests in `tests/test_scene_manager.py` covering the `target=`/
+    `duration=` passthrough; `climate.py`'s Action registration itself is
+    HA-dependent and verified manually (no automated harness for it yet,
+    per "Test Suite" below).
+  - Per the beta-status rule above: developed on `feature/ha-actions`, to
+    be merged via pull request — not committed directly to `main`.
 - When proposing a plan (per the Session Workflow rules above), also
   propose the appropriate version bump and, once beta status applies,
   the branch name to use.

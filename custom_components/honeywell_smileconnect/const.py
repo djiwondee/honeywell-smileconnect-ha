@@ -1,5 +1,37 @@
 """Constants for the Honeywell Smile Connect integration."""
 # Change log:
+# - 2026-09-11 (b): Added TIMED_PRESET_SCENE_NAMES and four new
+#   SENSOR_TRANSLATION_KEY_*_DURATION constants for the new per-room,
+#   per-preset "duration remaining" sensors (sensor.py) - see
+#   coordinator.py's and sensor.py's own change logs.
+# - 2026-09-11 (a): Fixed SCENE_ACTIVATION_DURATION[LEAVE]: was 2 (an
+#   out-of-domain raw value that happened to reliably produce ~6h, but was
+#   never understood - see api_methods.py's 2026-09-09 change log). A live
+#   mitmproxy capture of the real Smile App plus a direct confirmation via
+#   ApiMethods.set_scene() (2026-09-11, see api_methods.py's change log)
+#   established that Leave uses the EXACT SAME fraction-of-scene_max
+#   formula as Party/Boost, and that the app itself never sends a raw
+#   value outside [0,1] - `2` was simply outside the domain the gateway
+#   was ever designed to handle for this scene, which is the real reason
+#   the 2026-09-09 wider sweep (1,3,4,5,6,8) produced non-monotonic
+#   garbage. New value: 0.5 (the correct in-domain fraction for 6h,
+#   matching Party's own SCENE_ACTIVATION_DURATION entry exactly - both
+#   scenes share scene_max=12h and the same 6h vendor default). Holiday/
+#   Party/Boost are untouched by this fix.
+# - 2026-09-10: Fixed SCENE_ACTIVATION_DURATION[HOLIDAY]: was 0.5 (intended
+#   to mean 15 real days, per the original x30-factor/cap-30d model derived
+#   alongside Leave/Party/Boost). api_methods.py's 2026-09-09 change log
+#   later established, via live testing, that Holiday's duration is sent
+#   as RAW DAYS, not a fraction like the other three (confirmed: sending 15
+#   is echoed back as ~15, sending 100 as ~100, no clamping at all) - this
+#   value was never updated to match, meaning every Holiday activation via
+#   add_member_to_scene() was actually sending 0.5 raw days (~12h), not 15
+#   days. Flagged as CLAUDE.md's top-priority outstanding item ("before
+#   anything else touching scene activation") and fixed here since this
+#   session's set_preset_mode_with_duration work touches exactly this code
+#   path. New value: 15 (raw days, matches SCENE_APP_LIMITS["Holiday"]'s
+#   own 1-30 day range). Leave/Party/Boost are untouched - their fraction-
+#   based values were independently re-confirmed live and are correct.
 # - 2026-09-01: Added SCENE_ACTIVATION_DURATION and TRACKED_SCENE_NAMES.
 #   Live investigation (docs/protocol.md §4d) found that the duration
 #   value scene_manager.py must SEND to activate a preset is not its
@@ -80,6 +112,10 @@ SENSOR_TRANSLATION_KEY_OUTSIDE_TEMPERATURE = "outside_temperature"
 SENSOR_TRANSLATION_KEY_OUTSIDE_TEMPERATURE_MIN = "outside_temperature_min"
 SENSOR_TRANSLATION_KEY_OUTSIDE_TEMPERATURE_MAX = "outside_temperature_max"
 SENSOR_TRANSLATION_KEY_RESPONSE_TIME = "response_time"
+SENSOR_TRANSLATION_KEY_BOOST_DURATION = "boost_duration_remaining"
+SENSOR_TRANSLATION_KEY_PARTY_DURATION = "party_duration_remaining"
+SENSOR_TRANSLATION_KEY_LEAVE_DURATION = "leave_duration_remaining"
+SENSOR_TRANSLATION_KEY_HOLIDAY_DURATION = "holiday_duration_remaining"
 BINARY_SENSOR_TRANSLATION_KEY_CONNECTIVITY = "connectivity"
 # "thermostat" was chosen over the German-specific "Regler"/"Heizungsregler"
 # for the *entity* display name specifically so it reads naturally in all
@@ -129,8 +165,8 @@ class SceneName(str, Enum):
 # lookups never need a special case - ApiMethods.set_scene() already
 # hardcodes duration=1 for Standby regardless of what's passed here.
 SCENE_ACTIVATION_DURATION: dict[SceneName, float] = {
-    SceneName.LEAVE: 2,  # -> 6h real (factor x3, cap 12h)
-    SceneName.HOLIDAY: 0.5,  # -> 15d real (factor x30, cap 30d)
+    SceneName.LEAVE: 0.5,  # -> 6h real (factor x12, cap 12h - same as Party)
+    SceneName.HOLIDAY: 15,  # -> 15d real (RAW DAYS, not a fraction - see change log)
     SceneName.PARTY: 0.5,  # -> 6h real (factor x12, cap 12h)
     SceneName.BOOST: 0.5,  # -> 60min real (factor x120, cap 120min)
     SceneName.STANDBY: 1,
@@ -146,6 +182,18 @@ TRACKED_SCENE_NAMES: tuple[SceneName, ...] = (
     SceneName.HOLIDAY,
     SceneName.PARTY,
     SceneName.BOOST,
+)
+
+# The four TRACKED_SCENE_NAMES that have a meaningful duration (excludes
+# STANDBY, which api_methods.py's NO_DURATION_SCENES already marks as
+# having no duration concept at all). Used by coordinator.py to know
+# which scenes to fetch get_scene_duration_native() for, and by
+# sensor.py to know which per-room duration-remaining sensors to create.
+TIMED_PRESET_SCENE_NAMES: tuple[SceneName, ...] = (
+    SceneName.BOOST,
+    SceneName.PARTY,
+    SceneName.LEAVE,
+    SceneName.HOLIDAY,
 )
 
 

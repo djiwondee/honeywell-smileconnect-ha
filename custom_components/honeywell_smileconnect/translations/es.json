@@ -51,6 +51,18 @@
       },
       "response_time": {
         "name": "Tiempo de respuesta de la pasarela"
+      },
+      "boost_duration_remaining": {
+        "name": "Boost restante"
+      },
+      "party_duration_remaining": {
+        "name": "Party restante"
+      },
+      "leave_duration_remaining": {
+        "name": "Leave restante"
+      },
+      "holiday_duration_remaining": {
+        "name": "Holiday restante"
       }
     },
     "binary_sensor": {
@@ -61,6 +73,36 @@
     "climate": {
       "thermostat": {
         "name": "Termostato"
+      }
+    }
+  },
+  "services": {
+    "set_preset_mode_with_duration": {
+      "name": "Establecer modo de preajuste con duración",
+      "description": "Activa un preajuste (Boost, Party, Holiday, Leave) con una duración personalizada, o borra el preajuste actual. El modo/preajuste/temperatura ya se pueden controlar mediante las acciones genéricas climate.* - esta acción existe específicamente para anular la duración predeterminada de fábrica de un preajuste.",
+      "fields": {
+        "preset_mode": {
+          "name": "Preajuste",
+          "description": "El preajuste a activar, o 'none' para borrar el preajuste actual."
+        },
+        "target": {
+          "name": "Duración",
+          "description": "Duración real en la unidad y el rango propios del preajuste — Boost: minutos (30–120, paso 30); Party: horas (1–12); Leave: horas (1–12); Holiday: días (1–30). No aplicable cuando el preajuste es 'none'."
+        }
+      }
+    },
+    "set_hvac_mode_and_temperature": {
+      "name": "Establecer modo HVAC y temperatura",
+      "description": "Establece hvac_mode y una temperatura objetivo juntos en una llamada fiable. La acción estándar climate.set_temperature técnicamente también puede aceptar ambos a la vez, pero no los aplica de forma fiable juntos en esta integración — usa esta acción en su lugar cuando necesites cambiar ambos. temperature se ignora cuando hvac_mode es 'off' (la pasarela rechaza silenciosamente los cambios de temperatura mientras Standby está activo).",
+      "fields": {
+        "hvac_mode": {
+          "name": "Modo HVAC",
+          "description": "'auto' (seguir el horario de la habitación) o 'off' (Standby)."
+        },
+        "temperature": {
+          "name": "Temperatura",
+          "description": "Temperatura objetivo en °C. Solo se aplica cuando hvac_mode es 'auto'."
+        }
       }
     }
   }

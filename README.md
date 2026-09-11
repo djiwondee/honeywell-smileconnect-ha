@@ -1,14 +1,15 @@
 # Honeywell Smile Connect — Home Assistant Integration
 
 [![hacs_badge](https://img.shields.io/badge/HACS-Custom-orange.svg)](https://github.com/hacs/integration)
-[![Version](https://img.shields.io/badge/version-0.0.21-yellow.svg)](https://github.com/djiwondee/honeywell-smileconnect-ha/releases)
-[![Status](https://img.shields.io/badge/status-pre--alpha-orange.svg)](CLAUDE.md#versioning--branching-strategy)
+[![Version](https://img.shields.io/badge/version-0.1.0-yellow.svg)](https://github.com/djiwondee/honeywell-smileconnect-ha/releases)
+[![Status](https://img.shields.io/badge/status-beta-yellow.svg)](CLAUDE.md#versioning--branching-strategy)
 [![License](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 [![Validate](https://github.com/djiwondee/honeywell-smileconnect-ha/actions/workflows/validate.yml/badge.svg)](https://github.com/djiwondee/honeywell-smileconnect-ha/actions/workflows/validate.yml)
 [![Lint](https://github.com/djiwondee/honeywell-smileconnect-ha/actions/workflows/lint.yml/badge.svg)](https://github.com/djiwondee/honeywell-smileconnect-ha/actions/workflows/lint.yml)
 
 A HACS-compatible Home Assistant custom integration for the **Honeywell Smile
-Connect** heating gateway (model **SCN-10**).
+Connect** heating gateway (model **SCN-10**) — local polling, no cloud
+dependency, reverse-engineered from the gateway's own protocol.
 
 ## ⚠️ Disclaimer
 
@@ -29,16 +30,51 @@ real heating behaviour in your home.
 
 ## Status
 
-Early-stage / actively developed. Core functionality (login, room list,
-temperature control, scene activation) has been verified against a real
-SCN-10 gateway. See [`CLAUDE.md`](CLAUDE.md) for the current state, open
-questions, and architecture notes.
+Beta. Login, room/climate control, scene (preset) activation, and both
+custom Actions below have all been live-verified against a real SCN-10
+gateway and a real Home Assistant instance. See [`CLAUDE.md`](CLAUDE.md) for
+the full architecture/history and [`docs/protocol.md`](docs/protocol.md) for
+the reverse-engineered wire protocol.
 
 ## Features
 
-- Local polling, no cloud dependency
-- Per-room climate entities (temperature read/set)
-- Scene-based presets: Boost, Party, Leave, Holiday, Standby
+- Local polling only — no cloud account, no internet dependency
+- One climate entity per room/SDC Regler, with temperature control and
+  schedule on/off (`auto`/`off`)
+- The gateway's five scenes as presets: **Boost**, **Party**, **Leave**,
+  **Holiday** (temporary overrides), plus **Standby** (schedule on/off)
+- Per-room sensors showing how long a preset has left to run
+- Outside-temperature sensors (from the gateway's own weather feed)
+- A lightweight, independent connectivity/response-time diagnostic, so you
+  can tell "gateway unreachable" apart from "login broken"
+- Two custom Actions for automations that need more control than the
+  standard `climate.*` services offer — see [Actions](#actions) below
+
+## Entities provided
+
+**Climate** (one per room):
+
+| Entity | Notes |
+|---|---|
+| `climate.<room>` | `hvac_mode`: `auto` (follow the room's schedule) or `off` (Standby). `preset_mode`: `none`/`Boost`/`Party`/`Leave`/`Holiday`. Target temperature read/write. |
+
+**Sensor**:
+
+| Entity | Scope | Category | Notes |
+|---|---|---|---|
+| Outside temperature / min / max | gateway | primary | From the gateway's own weather feed |
+| Gateway response time | gateway | diagnostic | From the unauthenticated `/api/ping` endpoint |
+| Boost / Party / Leave / Holiday remaining | **per room** | primary | Time left on that preset, in its own natural unit (minutes/hours/hours/days) — reads "unknown" when that specific preset isn't active for the room. See [Known limitations](#known-limitations) for why there are four independent sensors instead of one. |
+
+**Binary sensor**:
+
+| Entity | Scope | Category | Notes |
+|---|---|---|---|
+| Connectivity | gateway | diagnostic | Reachability via `/api/ping`, independent of login state |
+
+Devices: one **gateway** device (weather/connectivity/diagnostics), plus one
+**SDC Regler** sub-device per room (climate entity + that room's four preset
+sensors), linked to the gateway via `via_device`.
 
 ## Installation
 
@@ -54,6 +90,91 @@ questions, and architecture notes.
 
 Copy `custom_components/honeywell_smileconnect` into your Home Assistant
 `custom_components` directory and restart.
+
+## Configuration
+
+Set up via the UI (Settings → Devices & Services → Add Integration):
+
+| Field | Default | Notes |
+|---|---|---|
+| Gateway IP address | — | e.g. `192.168.1.132` |
+| Username / Password | — | Your Smile App login |
+| Polling interval | 30s | Room/climate/scene poll cycle |
+| Ping interval | 15s | Independent connectivity check — deliberately more responsive, and kept separate so a broken login never makes the connectivity sensor look wrong |
+
+All of the above, including credentials, can be changed later via the
+integration's **Configure** (Options) button without losing entity/device
+history.
+
+## Actions
+
+Standard `hvac_mode`, `preset_mode`, and temperature control already work
+through Home Assistant's generic `climate.set_hvac_mode` /
+`climate.set_preset_mode` / `climate.set_temperature` services — the two
+Actions below are additive, for cases those don't cover.
+
+### `honeywell_smileconnect.set_preset_mode_with_duration`
+
+Activate a preset with a custom duration instead of the fixed vendor
+default, or clear the current preset.
+
+```yaml
+action: honeywell_smileconnect.set_preset_mode_with_duration
+target:
+  entity_id: climate.living_room
+data:
+  preset_mode: Boost
+  target: 45
+```
+
+`target` is a real-world value in the preset's own unit and range:
+
+| Preset | Unit | Range |
+|---|---|---|
+| Boost | minutes | 30–120, step 30 |
+| Party | hours | 1–12 |
+| Leave | hours | 1–12 |
+| Holiday | days | 1–30 |
+
+Omit `target` to use the vendor default; set `preset_mode: none` (no
+`target`) to clear whatever preset is currently active.
+
+### `honeywell_smileconnect.set_hvac_mode_and_temperature`
+
+Reliably set `hvac_mode` and a target temperature together in one call —
+see [Known limitations](#known-limitations) for why this exists instead of
+just using `climate.set_temperature` with both fields.
+
+```yaml
+action: honeywell_smileconnect.set_hvac_mode_and_temperature
+target:
+  entity_id: climate.living_room
+data:
+  hvac_mode: auto
+  temperature: 20
+```
+
+`temperature` is optional; it's ignored when `hvac_mode` is `off` (see
+below for why).
+
+## Known limitations
+
+- **`climate.set_temperature` does not reliably apply `temperature` and
+  `hvac_mode` together in one call on this integration** — no error, it
+  just silently applies neither. Use `set_hvac_mode_and_temperature` above,
+  or two separate `climate.set_hvac_mode` / `climate.set_temperature`
+  calls, both of which work reliably on their own.
+- **Setting a temperature while `hvac_mode` is `off` (Standby active) is
+  silently ignored by the gateway itself** — not a bug in this
+  integration, the gateway's own firmware rejects it. Switch to
+  `hvac_mode: auto` first.
+- **Shower and Towel scenes are not exposed as entities.** The protocol
+  layer supports them, but there's no test hardware with hot water control
+  to verify against.
+- **No automatic reconnect if the gateway session is lost** (e.g. a
+  gateway reboot) — entities go "unavailable" until Home Assistant
+  restarts or the integration is reloaded. Tracked as a planned fix in
+  [`CLAUDE.md`](CLAUDE.md#next-planned-work-agreed-in-project-discussion-not-yet-started).
 
 ## Development
 

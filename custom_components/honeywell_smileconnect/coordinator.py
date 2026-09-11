@@ -1,4 +1,16 @@
 # Change log:
+# - 2026-09-11: Added "scene_duration_native" to coordinator.data - remaining
+#   duration for each TIMED_PRESET_SCENE_NAMES scene, already converted to
+#   its own real-world unit via the new ApiMethods.get_scene_duration_native()
+#   (minutes for Boost, hours for Party/Leave, days for Holiday). Backs the
+#   new per-room, per-preset "duration remaining" sensors (sensor.py).
+#   _get_scene_active_rooms() renamed to _get_scene_active_rooms_and_
+#   durations() and now returns both dicts from the ONE get_scene_status()
+#   call it already made, rather than fetching scene state twice -
+#   get_scene_duration_native() is only called for scenes that are
+#   actually active, mirroring the existing get_scene_rooms() cost-
+#   conscious pattern (most poll cycles have zero or one active timed
+#   preset, not four).
 # - 2026-09-01: Added "scene_active_rooms" to coordinator.data - per-scene
 #   room membership for Standby + the four presets, fetched via
 #   /api/scene/status + /api/scene/getrooms. roomstatus (already present
@@ -29,7 +41,7 @@ from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, Upda
 
 from .api.api_methods import ApiMethods
 from .api.login import Login
-from .const import TRACKED_SCENE_NAMES
+from .const import TIMED_PRESET_SCENE_NAMES, TRACKED_SCENE_NAMES
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -46,7 +58,11 @@ class SmileConnectCoordinator(DataUpdateCoordinator):
              is genuinely active right now (isActive AND room is a current
              member). See this file's change log and docs/protocol.md
              §4e/§4f for why this exists alongside (not instead of) each
-             room's own roomstatus field.}
+             room's own roomstatus field.
+         "scene_duration_native": {scene_name: float | None, ...} for every
+             TIMED_PRESET_SCENE_NAMES scene - remaining duration in the
+             scene's own real-world unit (minutes/hours/hours/days) if
+             active, else None. See this file's change log.}
     """
 
     def __init__(
@@ -83,29 +99,42 @@ class SmileConnectCoordinator(DataUpdateCoordinator):
         try:
             rooms = await self.hass.async_add_executor_job(self.api.get_rooms_list)
             weather = await self.hass.async_add_executor_job(self.api.get_weather)
-            scene_active_rooms = await self.hass.async_add_executor_job(
-                self._get_scene_active_rooms
+            scene_active_rooms, scene_duration_native = await self.hass.async_add_executor_job(
+                self._get_scene_active_rooms_and_durations
             )
         except Exception as err:
             raise UpdateFailed(f"Error communicating with gateway: {err}") from err
 
-        return {"rooms": rooms, "weather": weather, "scene_active_rooms": scene_active_rooms}
+        return {
+            "rooms": rooms,
+            "weather": weather,
+            "scene_active_rooms": scene_active_rooms,
+            "scene_duration_native": scene_duration_native,
+        }
 
-    def _get_scene_active_rooms(self) -> dict[str, set]:
-        """Ground-truth per-scene room membership, for every
-        TRACKED_SCENE_NAME - see this module's change log and
+    def _get_scene_active_rooms_and_durations(
+        self,
+    ) -> tuple[dict[str, set], dict[str, float | None]]:
+        """Ground-truth per-scene room membership (for every
+        TRACKED_SCENE_NAME) and remaining duration (for every
+        TIMED_PRESET_SCENE_NAMES scene) - see this module's change log and
         docs/protocol.md §4e/§4f for why roomstatus alone cannot be
-        trusted for this.
+        trusted for room membership.
 
         One /api/scene/status call covers isActive for every scene;
-        /api/scene/getrooms is only called for scenes that ARE active, to
-        keep the common case (most scenes inactive most of the time)
-        cheap.
+        /api/scene/getrooms and /api/scene/duration are only called for
+        scenes that ARE active, to keep the common case (most scenes
+        inactive most of the time) cheap.
         """
         active_names = {
             s["name"] for s in self.api.get_scene_status().get("scenes", []) if s.get("isActive")
         }
-        return {
+        active_rooms = {
             scene.value: set(self.api.get_scene_rooms(scene.value)) if scene.value in active_names else set()
             for scene in TRACKED_SCENE_NAMES
         }
+        duration_native = {
+            scene.value: self.api.get_scene_duration_native(scene.value) if scene.value in active_names else None
+            for scene in TIMED_PRESET_SCENE_NAMES
+        }
+        return active_rooms, duration_native

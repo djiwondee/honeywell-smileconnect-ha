@@ -1,5 +1,26 @@
 """Sensor platform for Honeywell Smile Connect (weather + ping diagnostics)."""
 # Change log:
+# - 2026-09-11: Added SmileConnectPresetDurationSensor - one sensor per
+#   room x TIMED_PRESET_SCENE_NAMES scene (Boost/Party/Leave/Holiday),
+#   reporting that scene's remaining duration in ITS OWN native unit
+#   (minutes/hours/hours/days) from the new
+#   coordinator.data["scene_duration_native"] field, or None ("unknown")
+#   when the room isn't currently a member of that scene. Deliberately
+#   four independent sensors per room rather than one dynamic "whichever
+#   preset is active" sensor - project decision: the Smile App lets
+#   scenes be combined arbitrarily (e.g. Boost AND Party simultaneously
+#   active on the same room), which climate.py's single-value
+#   preset_mode structurally cannot represent (it picks one winner via a
+#   fixed priority order - see _update_active_preset()'s own docstring).
+#   Four independent sensors sidestep that entirely: each reads
+#   coordinator.data directly with no "pick a winner" logic and no
+#   dependency on climate.py at all, so they can honestly show a genuine
+#   compound state. Attached to device.regler_device_info() (the same
+#   device as that room's climate entity) since these are framed as a
+#   companion to the room's preset control, not a gateway-wide reading
+#   like the weather sensors. async_setup_entry() gained a room loop
+#   (mirrors climate.py's existing room iteration) crossed with
+#   TIMED_PRESET_SCENE_NAMES.
 # - 2026-08-27 (b): Fixed weather sensors' device_info to use the shared
 #   device.gateway_device_info() builder (previously each entity built its
 #   own ad-hoc gateway dict, which is what originally caused a stray
@@ -29,15 +50,36 @@ from homeassistant.helpers.update_coordinator import CoordinatorEntity
 from . import device
 from .const import (
     DOMAIN,
+    SENSOR_TRANSLATION_KEY_BOOST_DURATION,
+    SENSOR_TRANSLATION_KEY_HOLIDAY_DURATION,
+    SENSOR_TRANSLATION_KEY_LEAVE_DURATION,
     SENSOR_TRANSLATION_KEY_OUTSIDE_TEMPERATURE,
     SENSOR_TRANSLATION_KEY_OUTSIDE_TEMPERATURE_MAX,
     SENSOR_TRANSLATION_KEY_OUTSIDE_TEMPERATURE_MIN,
+    SENSOR_TRANSLATION_KEY_PARTY_DURATION,
     SENSOR_TRANSLATION_KEY_RESPONSE_TIME,
+    TIMED_PRESET_SCENE_NAMES,
+    SceneName,
 )
 from .coordinator import SmileConnectCoordinator
 from .ping_coordinator import SmileConnectPingCoordinator
 
 _LOGGER = logging.getLogger(__name__)
+
+# Each TIMED_PRESET_SCENE_NAMES scene's own real-world unit/translation key
+# for SmileConnectPresetDurationSensor - see that class's docstring.
+_TIMED_PRESET_SENSOR_UNITS: dict[SceneName, str] = {
+    SceneName.BOOST: UnitOfTime.MINUTES,
+    SceneName.PARTY: UnitOfTime.HOURS,
+    SceneName.LEAVE: UnitOfTime.HOURS,
+    SceneName.HOLIDAY: UnitOfTime.DAYS,
+}
+_TIMED_PRESET_SENSOR_TRANSLATION_KEYS: dict[SceneName, str] = {
+    SceneName.BOOST: SENSOR_TRANSLATION_KEY_BOOST_DURATION,
+    SceneName.PARTY: SENSOR_TRANSLATION_KEY_PARTY_DURATION,
+    SceneName.LEAVE: SENSOR_TRANSLATION_KEY_LEAVE_DURATION,
+    SceneName.HOLIDAY: SENSOR_TRANSLATION_KEY_HOLIDAY_DURATION,
+}
 
 
 async def async_setup_entry(
@@ -47,32 +89,42 @@ async def async_setup_entry(
 ) -> None:
     data = hass.data[DOMAIN][config_entry.entry_id]
 
-    async_add_entities(
-        [
-            SmileConnectWeatherSensor(
-                data.coordinator,
-                data.unique_id,
-                weather_key="temperature",
-                translation_key=SENSOR_TRANSLATION_KEY_OUTSIDE_TEMPERATURE,
-                unique_id_suffix="outside_temperature",
-            ),
-            SmileConnectWeatherSensor(
-                data.coordinator,
-                data.unique_id,
-                weather_key="min",
-                translation_key=SENSOR_TRANSLATION_KEY_OUTSIDE_TEMPERATURE_MIN,
-                unique_id_suffix="outside_temperature_min",
-            ),
-            SmileConnectWeatherSensor(
-                data.coordinator,
-                data.unique_id,
-                weather_key="max",
-                translation_key=SENSOR_TRANSLATION_KEY_OUTSIDE_TEMPERATURE_MAX,
-                unique_id_suffix="outside_temperature_max",
-            ),
-            SmileConnectPingResponseTimeSensor(data.ping_coordinator, data.unique_id),
-        ]
-    )
+    entities = [
+        SmileConnectWeatherSensor(
+            data.coordinator,
+            data.unique_id,
+            weather_key="temperature",
+            translation_key=SENSOR_TRANSLATION_KEY_OUTSIDE_TEMPERATURE,
+            unique_id_suffix="outside_temperature",
+        ),
+        SmileConnectWeatherSensor(
+            data.coordinator,
+            data.unique_id,
+            weather_key="min",
+            translation_key=SENSOR_TRANSLATION_KEY_OUTSIDE_TEMPERATURE_MIN,
+            unique_id_suffix="outside_temperature_min",
+        ),
+        SmileConnectWeatherSensor(
+            data.coordinator,
+            data.unique_id,
+            weather_key="max",
+            translation_key=SENSOR_TRANSLATION_KEY_OUTSIDE_TEMPERATURE_MAX,
+            unique_id_suffix="outside_temperature_max",
+        ),
+        SmileConnectPingResponseTimeSensor(data.ping_coordinator, data.unique_id),
+    ]
+
+    for room in data.coordinator.data["rooms"]:
+        room_id = room["data"]["id"]
+        room_name = room["name"]
+        for scene in TIMED_PRESET_SCENE_NAMES:
+            entities.append(
+                SmileConnectPresetDurationSensor(
+                    data.coordinator, data.unique_id, room_id, room_name, scene
+                )
+            )
+
+    async_add_entities(entities)
 
 
 class SmileConnectWeatherSensor(CoordinatorEntity, SensorEntity):
@@ -146,3 +198,54 @@ class SmileConnectPingResponseTimeSensor(CoordinatorEntity, SensorEntity):
     def native_value(self):
         data = self.coordinator.data or {}
         return data.get("performance")
+
+
+class SmileConnectPresetDurationSensor(CoordinatorEntity, SensorEntity):
+    """Remaining duration for one room's membership in one timed preset
+    scene (Boost/Party/Leave/Holiday), in that scene's own native unit -
+    see module change log for why this is four independent sensors per
+    room rather than one dynamic "whichever preset is active" sensor.
+
+    Reads coordinator.data directly (scene_active_rooms + scene_duration_
+    native) - deliberately has no dependency on climate.py's preset_mode
+    logic, so it can represent a genuinely compound preset state that
+    climate.py's single-value preset_mode cannot.
+    """
+
+    _attr_has_entity_name = True
+    _attr_device_class = SensorDeviceClass.DURATION
+    _attr_state_class = SensorStateClass.MEASUREMENT
+
+    def __init__(
+        self,
+        coordinator: SmileConnectCoordinator,
+        gateway_unique_id: str,
+        room_id,
+        room_name: str,
+        scene: SceneName,
+    ) -> None:
+        super().__init__(coordinator)
+        self._gateway_unique_id = gateway_unique_id
+        self._room_id = room_id
+        self._room_name = room_name
+        self._scene = scene
+        self._attr_translation_key = _TIMED_PRESET_SENSOR_TRANSLATION_KEYS[scene]
+        self._attr_native_unit_of_measurement = _TIMED_PRESET_SENSOR_UNITS[scene]
+        self._attr_unique_id = f"{DOMAIN}_room_{room_id}_{scene.value.lower()}_duration"
+
+    @property
+    def device_info(self):
+        # Same device as this room's climate entity (device.regler_device_
+        # info()), not the gateway - these are framed as a companion to
+        # the room's preset control, unlike the gateway-wide weather
+        # sensors above.
+        return device.regler_device_info(self._gateway_unique_id, self._room_id, self._room_name)
+
+    @property
+    def native_value(self):
+        active_rooms = self.coordinator.data.get("scene_active_rooms", {}).get(
+            self._scene.value, set()
+        )
+        if self._room_id not in active_rooms:
+            return None
+        return self.coordinator.data.get("scene_duration_native", {}).get(self._scene.value)

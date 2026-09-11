@@ -238,7 +238,7 @@ scene override is layered on top). `preset_modes` deliberately has no
 rather than a string, which HA renders natively as "no preset selected".
 
 ## 4d. Scene `duration` parameter — the value you send is NOT the real
-duration (2026-09-01, corrected 2026-09-09)
+duration (2026-09-01, corrected 2026-09-09, Leave RESOLVED 2026-09-11)
 
 **Root cause of the original production symptom** ("selecting a preset in
 the climate entity shows briefly, then reverts on the next poll — the
@@ -284,9 +284,9 @@ exactly on live re-test — but turned out to still not generalize to a
 usable formula once a wider range was tested. Two clean, reproducible data
 points are necessary but not sufficient evidence for a linear model.
 
-| Preset | Measure (unit) | Min | Max | Default (real) | Write formula | Status (2026-09-09) |
+| Preset | Measure (unit) | Min | Max | Default (real) | Write formula | Status (2026-09-11) |
 |---|---|---|---|---|---|---|
-| Leave | Hours | 0 | 12 | 6 | **UNRESOLVED — see below** | `duration=2` confirmed to reliably produce `~6h`; no general formula found |
+| Leave | Hours | 0 | 12 | 6 | `duration` = target_hours / 12 (fraction of scene_max), clamps to `1` above — **identical to Party** | RESOLVED — confirmed live via mitmproxy capture + direct API confirmation, see below |
 | Holiday | Days | 0 | 30 | 15 | `duration` = raw days directly, no scaling | Gateway enforces no ceiling (tested to 100d); app's 30d limit is client-side only |
 | Party | Hours | 0 | 12 | 6 | `duration` = target_hours / 12 (fraction of scene_max), clamps to `1` above | Confirmed live, multiple isolated tests |
 | Boost | Minutes | 0 | 120 | 60 | `duration` = target_minutes / 120 (fraction of scene_max), clamps to `1` above | Confirmed live, multiple isolated tests (real-time countdown) |
@@ -317,40 +317,77 @@ physical-display observation:
   SCENE_ACTIVATION_DURATION["Holiday"]` in the HA integration layer still
   needs correcting to match this** — not yet done as of the API-layer fix
   in `0.0.21` (see CLAUDE.md's "Next planned work").
-- **Leave — the interesting one.** The original 2026-09-01 measurement
+- **Leave — RESOLVED 2026-09-11.** The original 2026-09-01 measurement
   (`2→6h`, `4→12h`, clean `×3` line) was **re-tested live on 2026-09-09
   and reproduced EXACTLY**, both together in one script run and again
   individually with an explicit poll-until-confirmed-inactive check
   before each send (ruling out request-timing contamination from a prior
   test). But a wider sweep of send-values (`1, 3, 5, 6, 8`), tested with
-  the same rigor, produced a table that fits NO model tried:
+  the same rigor, produced a table that fit NO model tried:
   ```
   sent:    1     2     3     4     5     6     8
   implied: 12h   6h    12h   12h   6h    12h   5h
   ```
-  Not `×3` (which predicts `3, 6, 9, 12, 15, 18, 24`h respectively —
-  only the `2` and `4` data points happen to match). Not
-  fraction-of-scene_max like Party/Boost (which would clamp uniformly
-  above `1`, not vary between `6h` and `12h` for different values all
-  `>1`). Not simple modular arithmetic on the sent value either. The
-  results are suspiciously clean fractions (`0.5`, `1.0`, `5/12`) rather
-  than noisy/random, which argues against a flaky sensor or
-  transcription error and FOR some real, currently unidentified
-  mechanism — possibly involving elapsed time or other session/gateway
-  state, in a similar spirit to the small, otherwise-unexplained offset
-  seen in Holiday's `get_scene_duration()` reads (`~15.0014` instead of
-  exactly `15`). **Conclusion: Leave's write-side duration is a genuine,
-  currently-unsolved mystery**, not merely a documentation gap like
-  Holiday's. `api_methods.set_scene()`'s `target=` parameter is
-  deliberately disabled for Leave as of `0.0.21` rather than exposing a
-  formula known to be incomplete. `duration=2` remains the one
-  known-reliable raw value (confirmed twice, live, for `~6h`); no other
-  value should be assumed safe for a specific real-world duration until
-  this is solved. If a future session wants to take another run at this,
-  the recommended next step is a genuine time-series investigation
-  (tracking `get_scene_duration()` continuously over an extended period
-  after a single send, across multiple sends spaced far apart in wall-
-  clock time) rather than more single-point probes.
+  This was wrongly concluded to be a genuine, unsolved mystery in the
+  fraction/gateway-firmware behavior itself. **The actual root cause,
+  found 2026-09-11: every one of those sent values (`1` through `8`) is
+  OUTSIDE the `[0,1]` fraction domain the gateway/app actually use for
+  this scene.** The real Smile App's own duration slider for Leave never
+  produces a raw wire value above `1` — sending a raw integer like `2`
+  or `8` directly (as the 2026-09-09 sweep did) is not a valid "2×" or
+  "8×" input, it is simply out-of-spec, and appears to hit an
+  unspecified/inconsistent gateway firmware code path (hence the
+  non-monotonic table above) rather than revealing anything about the
+  real formula.
+
+  **Confirmed via two independent pieces of live evidence, gathered in
+  one session (2026-09-11):**
+  1. A live **mitmproxy capture of the real Smile App** activating Leave
+     six times (`scripts/mitm_scene_capture.py` — captures full
+     `/api/scene/*` request AND response bodies, not just the known
+     `duration` field, specifically to rule out the app sending some
+     additional field this project didn't know about). The app almost
+     always sent a *not-perfectly-round* fraction for `duration` — e.g.
+     `0.06996047`, `0.222758`, `0.6771102` — never a clean `n/12` value
+     except at the slider's default (`0.5`) and hard maximum (`1`)
+     positions. `get_scene_duration()` read back immediately afterwards
+     always returned the value **rounded to the nearest `1/12` step**
+     (matching Leave's own `"step": 1` reported live in
+     `/api/scene/status`'s `scenes` array): `round(sent × 12) / 12`
+     reproduces the readback exactly for all three "noisy" sends (and
+     trivially for the two exact ones):
+     | Sent by app | Read back (`get_scene_duration()`) | `round(sent×12)/12` |
+     |---|---|---|
+     | `0.5` | `0.5` | `0.5` ✓ |
+     | `0.5` (repeat) | `0.5` | `0.5` ✓ |
+     | `0.06996047` | `0.08333333` (=1/12) | `0.08333333` ✓ |
+     | `1` | `1` | `1.0` ✓ |
+     | `0.222758` | `0.25` (=3/12) | `0.25` ✓ |
+     | `0.6771102` | `0.6666667` (=8/12) | `0.6666667` ✓ |
+
+     The "noise" is very likely the duration-picker UI widget reporting
+     its exact (slightly-off-grid) drag/touch position rather than the
+     display-rounded hour value, with the gateway then quantizing on
+     receipt — not a clock- or session-time effect as originally
+     speculated.
+  2. A **direct confirmation via this project's own
+     `ApiMethods.set_scene()`**, sending a clean in-domain fraction the
+     app capture hadn't produced exactly (`5/12 ≈ 0.41666667`, i.e. "5
+     hours"): `get_scene_duration()` returned exactly
+     `0.4166666666666667` (`5.00h`, no rounding needed since it was
+     already sent on-grid) — proving Party/Boost's fraction-of-scene_max
+     formula works identically for Leave through our own production code
+     path, once given valid input.
+
+  **Conclusion: Leave uses the IDENTICAL write formula to Party** (both
+  share `scene_max=12h`) — there was never a separate, unsolved Leave
+  mechanism, only an artifact of testing outside the valid input domain.
+  `api_methods.set_scene()`'s `target=` block for Leave has been removed;
+  it is now handled by the same `FRACTION_DURATION_SCENES` code path as
+  Party/Boost, with no Leave-specific logic anywhere.
+  `const.SCENE_ACTIVATION_DURATION["Leave"]` was corrected from the old,
+  never-understood `2` to `0.5` (the correct, now-understood fraction for
+  the 6h default — see `const.py`'s change log).
 
 **`get_scene_duration()` (`/api/scene/duration`) was not a usable
 verification source while the `duration=0` bug was still present** (fixed
@@ -508,12 +545,11 @@ code (`scene_manager.py`/`climate.py`) — see CLAUDE.md.
       to Holiday's code** — confirmed as a genuine gateway firmware quirk
       (2026-09-01, §4f), workaround (deactivate Standby first) verified
       live but not yet implemented in production code.
-- [ ] **Leave's write-side `duration` formula** — confirmed
-      (2026-09-09, §4d) to NOT follow any tested model (not the original
-      `×3` factor beyond two data points, not Party/Boost's fraction
-      formula, not simple modular arithmetic). `target=` deliberately
-      disabled for Leave in `api_methods.py` (`0.0.21`) rather than
-      shipping an incomplete formula. Recommended next step if revisited:
-      a genuine time-series investigation (continuous `get_scene_
-      duration()` tracking over an extended period, multiple sends spaced
-      far apart in wall-clock time) rather than more single-point probes.
+- [x] **Leave's write-side `duration` formula** — RESOLVED (2026-09-11,
+      §4d). Confirmed identical to Party/Boost's fraction-of-scene_max
+      formula via a live mitmproxy capture of the real Smile App plus a
+      direct confirmation through `ApiMethods.set_scene()`. The
+      2026-09-09 "unsolved mystery" conclusion was an artifact of testing
+      with raw values outside the gateway's actual `[0,1]` input domain
+      for this scene. `target=` unblocked for Leave; `const.
+      SCENE_ACTIVATION_DURATION["Leave"]` corrected from `2` to `0.5`.

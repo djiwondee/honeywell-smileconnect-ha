@@ -1,4 +1,13 @@
 # Change log:
+# - 2026-09-11: v4. Leave's target= block was removed at the API layer
+#   (see api_methods.py's 2026-09-11 change log: a live mitmproxy capture
+#   of the real Smile App plus a direct confirmation via set_scene()
+#   showed Leave uses the identical fraction-of-scene_max formula as
+#   Party/Boost). Replaced test_leave_target_raises_not_implemented() with
+#   test_leave_target_now_works_like_party_boost(), confirming target=
+#   for Leave now sends a request instead of raising. Removed the
+#   "unreachable in practice" comment on Leave's SCENE_APP_LIMITS case in
+#   test_validate_target_directly() - it's a normal, reachable path now.
 # - 2026-09-09: v3. Adds a test confirming set_scene("Leave", ...,
 #   target=...) raises NotImplementedError (see api_methods.py's
 #   2026-09-09 change log: Leave's write-side duration formula could not
@@ -19,8 +28,8 @@
 #   get_scene_rooms mocked so the room-assignment guard doesn't trigger
 #   first). Also confirms duration= (the raw wire value) deliberately
 #   bypasses this validation, as documented in set_scene()'s docstring.
-"""Local-only test for set_scene()/set_scene_rooms() guard clauses,
-SCENE_APP_LIMITS validation, and Leave's target= block.
+"""Local-only test for set_scene()/set_scene_rooms() guard clauses and
+SCENE_APP_LIMITS validation.
 
 Run this directly, no gateway or credentials needed:
 
@@ -122,10 +131,6 @@ def test_validate_target_directly() -> bool:
         ("Holiday", 30, False, "Holiday at max"),
         ("Holiday", 40, True, "Holiday above max (gateway itself does NOT clamp this)"),
         ("Holiday", 100, True, "Holiday far above max"),
-        # Leave's SCENE_APP_LIMITS entry still exists and is checked at
-        # this low level, even though set_scene() never reaches it for
-        # Leave anymore (blocked earlier by the NotImplementedError) -
-        # this just confirms the dict entry itself is still sane.
         ("Leave", 0, True, "Leave below min (0 not selectable in app)"),
         ("Leave", 6, False, "Leave mid-range"),
     ]
@@ -213,37 +218,32 @@ def test_duration_bypasses_app_limits() -> bool:
             return True
 
 
-# -- Leave target= block (v3) -----------------------------------
+# -- Leave target= (v4 - unblocked 2026-09-11) --------------------------
 
-def test_leave_target_raises_not_implemented() -> bool:
-    print("\n-- test: set_scene('Leave', ..., target=...) raises NotImplementedError --")
+def test_leave_target_now_works_like_party_boost() -> bool:
+    print("\n-- test: set_scene('Leave', ..., target=...) sends a request (no longer blocked) --")
     api = make_api()
     with patch.object(api, "get_scene_rooms", return_value=[1]):
         with patch.object(api, "_request") as mock_request:
             mock_request.request.return_value = {"success": True}
-            try:
-                api.set_scene("Leave", True, target=6)
-                print("   FAIL: no exception raised for Leave target=")
+            result = api.set_scene("Leave", True, target=5)
+            if not mock_request.request.called:
+                print("   FAIL: target= path did not send a request for Leave")
                 return False
-            except NotImplementedError as exc:
-                print(f"   OK: NotImplementedError raised: {exc}")
-            if mock_request.request.called:
-                print("   FAIL: a request was sent for Leave target= despite the block")
-                return False
-            print("   OK: no request was sent")
+            print(f"   OK: request was sent, result: {result}")
             return True
 
 
 def test_leave_duration_still_works() -> bool:
-    print("\n-- test: set_scene('Leave', ..., duration=...) still works (only target= is blocked) --")
+    print("\n-- test: set_scene('Leave', ..., duration=...) still works --")
     api = make_api()
     with patch.object(api, "get_scene_rooms", return_value=[1]):
         with patch.object(api, "_request") as mock_request:
             mock_request.request.return_value = {"success": True}
-            # duration=2 is the one raw value live-confirmed (2026-09-09)
-            # to produce ~6h for Leave - using it here only to confirm
-            # the code path isn't blocked, not to re-assert the formula.
-            result = api.set_scene("Leave", True, duration=2)
+            # 0.5 is the confirmed in-domain fraction for 6h (2026-09-11) -
+            # using it here only to confirm the code path works, not to
+            # re-assert the formula.
+            result = api.set_scene("Leave", True, duration=0.5)
             if not mock_request.request.called:
                 print("   FAIL: duration= path did not send a request for Leave")
                 return False
@@ -259,7 +259,7 @@ def main() -> None:
         test_validate_target_directly(),
         test_set_scene_target_enforces_limits(),
         test_duration_bypasses_app_limits(),
-        test_leave_target_raises_not_implemented(),
+        test_leave_target_now_works_like_party_boost(),
         test_leave_duration_still_works(),
     ]
     print("\n" + "=" * 60)

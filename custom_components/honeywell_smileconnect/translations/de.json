@@ -51,6 +51,18 @@
       },
       "response_time": {
         "name": "Gateway-Antwortzeit"
+      },
+      "boost_duration_remaining": {
+        "name": "Boost verbleibend"
+      },
+      "party_duration_remaining": {
+        "name": "Party verbleibend"
+      },
+      "leave_duration_remaining": {
+        "name": "Leave verbleibend"
+      },
+      "holiday_duration_remaining": {
+        "name": "Holiday verbleibend"
       }
     },
     "binary_sensor": {
@@ -61,6 +73,36 @@
     "climate": {
       "thermostat": {
         "name": "Thermostat"
+      }
+    }
+  },
+  "services": {
+    "set_preset_mode_with_duration": {
+      "name": "Preset-Modus mit Dauer setzen",
+      "description": "Aktiviert ein Preset (Boost, Party, Holiday, Leave) mit einer benutzerdefinierten Dauer oder hebt das aktuelle Preset auf. Modus/Preset/Temperatur lassen sich bereits über die generischen climate.*-Actions steuern - diese Action dient gezielt dazu, die werkseitige Standarddauer eines Presets zu überschreiben.",
+      "fields": {
+        "preset_mode": {
+          "name": "Preset",
+          "description": "Das zu aktivierende Preset, oder 'none' um das aktuelle Preset aufzuheben."
+        },
+        "target": {
+          "name": "Dauer",
+          "description": "Reale Dauer in der jeweiligen Einheit und im gültigen Bereich des Presets — Boost: Minuten (30–120, Schrittweite 30); Party: Stunden (1–12); Leave: Stunden (1–12); Holiday: Tage (1–30). Nicht anwendbar, wenn Preset 'none' ist."
+        }
+      }
+    },
+    "set_hvac_mode_and_temperature": {
+      "name": "HVAC-Modus und Temperatur setzen",
+      "description": "Setzt hvac_mode und eine Zieltemperatur zuverlässig in einem gemeinsamen Aufruf. Die Standard-Aktion climate.set_temperature kann technisch auch beides gleichzeitig entgegennehmen, wendet es bei dieser Integration aber nicht zuverlässig gemeinsam an — nutzt stattdessen diese Aktion, wenn beides zusammen geändert werden soll. temperature wird ignoriert, wenn hvac_mode 'off' ist (das Gateway verwirft Temperaturänderungen still, solange Standby aktiv ist).",
+      "fields": {
+        "hvac_mode": {
+          "name": "HVAC-Modus",
+          "description": "'auto' (dem Zeitplan des Raums folgen) oder 'off' (Standby)."
+        },
+        "temperature": {
+          "name": "Temperatur",
+          "description": "Zieltemperatur in °C. Wird nur angewendet, wenn hvac_mode 'auto' ist."
+        }
       }
     }
   }
