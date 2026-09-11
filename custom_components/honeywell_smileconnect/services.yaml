@@ -22,11 +22,25 @@ set_preset_mode_with_duration:
           max: 500
           step: 0.5
           mode: box
-    duration:
+
+set_hvac_mode_and_temperature:
+  target:
+    entity:
+      domain: climate
+      integration: honeywell_smileconnect
+  fields:
+    hvac_mode:
+      required: true
+      selector:
+        select:
+          options:
+            - "auto"
+            - "off"
+    temperature:
       required: false
       selector:
         number:
-          min: 0
-          max: 500
-          step: 0.01
+          min: 5
+          max: 35
+          step: 0.5
           mode: box

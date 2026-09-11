@@ -1,5 +1,56 @@
 """Climate platform for Honeywell Smile Connect."""
 # Change log:
+# - 2026-09-11 (c): Added the set_hvac_mode_and_temperature HA Action.
+#   Root cause: the standard climate.set_temperature service CAN carry an
+#   hvac_mode alongside temperature (HA core calls async_set_hvac_mode()
+#   then async_set_temperature() internally for that combined call), but
+#   live testing this session found it does not reliably apply either
+#   value when both are given together on this entity - no exception, no
+#   log warning, simply no effect - while each service works reliably on
+#   its own (climate.set_hvac_mode alone; climate.set_temperature alone
+#   while already in 'auto'). The exact mechanism inside HA core's
+#   handling was not pinned down further; instead of chasing that, this
+#   adds a dedicated Action that sequences the two writes itself,
+#   deliberately validation-free (project decision: no extra checks
+#   beyond what the two existing standard services already do - if a
+#   caller passes off+temperature, temperature is just ignored, matching
+#   the already-documented gateway behavior that temperature writes are
+#   silently rejected while Standby is active anyway). async_set_hvac_mode()
+#   is now a thin wrapper around a new shared _async_apply_hvac_mode()
+#   helper (mirrors the async_set_preset_mode()/_async_apply_preset()
+#   pattern from 2026-09-10) so the Action and the standard service share
+#   one code path. When a target temperature is supplied alongside
+#   hvac_mode=auto, the helper sets it directly instead of going through
+#   _nudge_temperature_after_leaving_standby()'s jump-to-max-then-drift-
+#   back workaround - a genuine target value already satisfies that
+#   nudge's own "must be a real change" requirement, so the extra
+#   round-trip is redundant here (and was a plausible contributor to the
+#   standard service's combined-call failure: two genuine writes in quick
+#   succession instead of one). See services.yaml/strings.json/
+#   translations for the schema/labels, and CLAUDE.md for the
+#   climate.set_temperature limitation this Action works around.
+# - 2026-09-11 (b): Removed the set_preset_mode_with_duration Action's
+#   `duration` field ("Raw duration" in the UI) - it existed only as a
+#   workaround for Leave, which used to have its `target=` path blocked
+#   (see the 2026-09-11 (a) entry below). Now that Leave's formula is
+#   confirmed identical to Party/Boost, `target` ("Duration") covers all
+#   four presets uniformly and there is no remaining reason for a
+#   user-facing raw-wire-value field. SET_PRESET_MODE_WITH_DURATION_SCHEMA
+#   dropped `duration` and the now-pointless vol.Exclusive grouping (a
+#   single optional field needs no exclusivity group);
+#   async_set_preset_mode_with_duration()/_async_apply_preset() dropped
+#   their `duration` parameters accordingly. The underlying Python API
+#   (ApiMethods.set_scene(duration=...), SceneManager.add_member_to_scene(
+#   duration=...)) is UNCHANGED - this only simplifies the HA-facing
+#   Action surface. See services.yaml/strings.json/translations for the
+#   matching schema/label changes, and CLAUDE.md for the full rationale.
+# - 2026-09-11 (a): Leave's target= block was removed at the API layer (see
+#   api_methods.py's change log) - Leave now uses the same fraction-of-
+#   scene_max formula as Party/Boost, confirmed live via a mitmproxy
+#   capture of the real Smile App. Updated the stale "e.g. Leave's
+#   target= block" comment below accordingly; no behavior change needed
+#   here otherwise, since the NotImplementedError/ValueError handling was
+#   already generic.
 # - 2026-09-10: Added the set_preset_mode_with_duration HA Action - the
 #   first custom Action for this integration (start of the 0.1.x beta
 #   line, see CLAUDE.md "Versioning & Branching Strategy"). hvac_mode,
@@ -175,6 +226,7 @@ from .coordinator import SmileConnectCoordinator
 _LOGGER = logging.getLogger(__name__)
 
 SERVICE_SET_PRESET_MODE_WITH_DURATION = "set_preset_mode_with_duration"
+SERVICE_SET_HVAC_MODE_AND_TEMPERATURE = "set_hvac_mode_and_temperature"
 
 # Mirrors _attr_preset_modes below - kept as a separate module-level list
 # (rather than importing the class attribute) since voluptuous schemas are
@@ -187,15 +239,26 @@ _PRESET_MODE_WITH_DURATION_VALUES = [
     SceneName.PARTY.value,
 ]
 
-# vol.Exclusive with a shared group name makes target/duration mutually
-# exclusive - the caller picks the real-world unit (target) or the raw
-# wire value (duration, power-user escape hatch), never both. See
-# ApiMethods.set_scene()'s own docstring for the full target-vs-duration
-# semantics this schema is just a thin HA-facing wrapper around.
+# `target` is a real-world duration in the preset's own unit (minutes for
+# Boost, hours for Party/Leave, days for Holiday) - see SCENE_APP_LIMITS
+# in api_methods.py for the exact per-preset range, and strings.json's
+# field description for the user-facing breakdown. The raw wire-value
+# `duration` parameter ApiMethods.set_scene() also supports is
+# deliberately NOT exposed here (see change log) - it remains available
+# to direct Python callers (scripts, tests), just not through this Action.
 SET_PRESET_MODE_WITH_DURATION_SCHEMA = {
     vol.Required("preset_mode"): vol.In(_PRESET_MODE_WITH_DURATION_VALUES),
-    vol.Exclusive("target", "duration_group"): vol.Coerce(float),
-    vol.Exclusive("duration", "duration_group"): vol.Coerce(float),
+    vol.Optional("target"): vol.Coerce(float),
+}
+
+# Deliberately no validation beyond type coercion (project decision,
+# 2026-09-11) - e.g. hvac_mode="off" with a temperature given is accepted
+# by the schema and simply ignored downstream, matching how the standard
+# climate.set_temperature service already behaves when the gateway
+# silently rejects a temperature write while Standby is active.
+SET_HVAC_MODE_AND_TEMPERATURE_SCHEMA = {
+    vol.Required("hvac_mode"): vol.In([HVACMode.AUTO.value, HVACMode.OFF.value]),
+    vol.Optional("temperature"): vol.Coerce(float),
 }
 
 
@@ -218,6 +281,11 @@ async def async_setup_entry(
         SERVICE_SET_PRESET_MODE_WITH_DURATION,
         SET_PRESET_MODE_WITH_DURATION_SCHEMA,
         "async_set_preset_mode_with_duration",
+    )
+    platform.async_register_entity_service(
+        SERVICE_SET_HVAC_MODE_AND_TEMPERATURE,
+        SET_HVAC_MODE_AND_TEMPERATURE_SCHEMA,
+        "async_set_hvac_mode_and_temperature",
     )
 
 
@@ -384,7 +452,6 @@ class SmileConnectClimate(CoordinatorEntity, ClimateEntity):
         self,
         preset_mode: str,
         target: float | None = None,
-        duration: float | None = None,
     ) -> None:
         """Back the set_preset_mode_with_duration HA Action.
 
@@ -392,28 +459,28 @@ class SmileConnectClimate(CoordinatorEntity, ClimateEntity):
         activation duration for this specific call instead of always
         getting the fixed vendor default - see
         SceneManager.add_member_to_scene()/ApiMethods.set_scene() for the
-        target=/duration= semantics this just forwards.
+        target= semantics this just forwards.
         """
-        if preset_mode == PRESET_NONE and (target is not None or duration is not None):
+        if preset_mode == PRESET_NONE and target is not None:
             raise ServiceValidationError(
-                "target/duration only apply when activating a preset - "
-                "preset_mode 'none' only clears the current preset, there "
-                "is nothing to apply a duration to."
+                "target only applies when activating a preset - preset_mode "
+                "'none' only clears the current preset, there is nothing to "
+                "apply a duration to."
             )
         try:
-            await self._async_apply_preset(preset_mode, target=target, duration=duration)
+            await self._async_apply_preset(preset_mode, target=target)
         except (NotImplementedError, ValueError) as err:
-            # e.g. Leave's target= block, or a SCENE_APP_LIMITS violation -
-            # both raised by ApiMethods.set_scene(). Re-raised as
-            # ServiceValidationError so the HA UI shows the actual message
-            # instead of a raw traceback.
+            # e.g. a SCENE_APP_LIMITS violation, raised by
+            # ApiMethods.set_scene(). Re-raised as ServiceValidationError
+            # so the HA UI shows the actual message instead of a raw
+            # traceback. NotImplementedError is still caught here even
+            # though no current scene raises it, in case a future one does.
             raise ServiceValidationError(str(err)) from err
 
     async def _async_apply_preset(
         self,
         preset_mode: str,
         target: float | None = None,
-        duration: float | None = None,
     ) -> None:
         previous = self._active_preset
         if previous is not None and previous != preset_mode:
@@ -429,12 +496,37 @@ class SmileConnectClimate(CoordinatorEntity, ClimateEntity):
                 self._room_id,
                 preset_mode,
                 target,
-                duration,
             )
         self._active_preset = None if preset_mode == PRESET_NONE else preset_mode
         await self.coordinator.async_request_refresh()
 
     async def async_set_hvac_mode(self, hvac_mode: HVACMode) -> None:
+        await self._async_apply_hvac_mode(hvac_mode)
+
+    async def async_set_hvac_mode_and_temperature(
+        self,
+        hvac_mode: str,
+        temperature: float | None = None,
+    ) -> None:
+        """Back the set_hvac_mode_and_temperature HA Action.
+
+        Exists because the standard climate.set_temperature service,
+        while technically able to carry hvac_mode alongside temperature,
+        does not reliably apply either when both are given together on
+        this entity (see module change log) - this Action sequences the
+        two writes itself instead. No extra validation beyond the schema
+        (project decision, 2026-09-11): hvac_mode='off' with a
+        temperature given is accepted and the temperature is simply
+        ignored, same as the gateway already silently ignoring a
+        temperature write while Standby is active.
+        """
+        await self._async_apply_hvac_mode(HVACMode(hvac_mode), temperature)
+
+    async def _async_apply_hvac_mode(
+        self,
+        hvac_mode: HVACMode,
+        temperature: float | None = None,
+    ) -> None:
         # Standby is no longer routed through the preset-mode machinery -
         # it's toggled directly here, independent of Boost/Party/Leave/
         # Holiday, matching how it actually behaves on this hardware.
@@ -446,7 +538,18 @@ class SmileConnectClimate(CoordinatorEntity, ClimateEntity):
             await self.hass.async_add_executor_job(
                 self._scene_manager.remove_member_from_scene, self._room_id, SceneName.STANDBY.value
             )
-            await self._nudge_temperature_after_leaving_standby()
+            if temperature is not None:
+                # A genuine target temperature write already satisfies
+                # the "must be a real change" requirement
+                # _nudge_temperature_after_leaving_standby() exists for
+                # (see its own docstring) - go straight to the real
+                # target instead of jumping to max_temp first and then
+                # immediately overwriting it with a second write.
+                await self.hass.async_add_executor_job(
+                    self.coordinator.api.set_temperature, temperature, self._room_id
+                )
+            else:
+                await self._nudge_temperature_after_leaving_standby()
         await self.coordinator.async_request_refresh()
 
     async def _nudge_temperature_after_leaving_standby(self) -> None:

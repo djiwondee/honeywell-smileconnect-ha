@@ -51,6 +51,18 @@
       },
       "response_time": {
         "name": "Temps de réponse de la passerelle"
+      },
+      "boost_duration_remaining": {
+        "name": "Boost restant"
+      },
+      "party_duration_remaining": {
+        "name": "Party restant"
+      },
+      "leave_duration_remaining": {
+        "name": "Leave restant"
+      },
+      "holiday_duration_remaining": {
+        "name": "Holiday restant"
       }
     },
     "binary_sensor": {
@@ -75,11 +87,21 @@
         },
         "target": {
           "name": "Durée",
-          "description": "Durée réelle dans l'unité propre au préréglage : minutes pour Boost, heures pour Party, jours pour Holiday. Non pris en charge pour Leave (utiliser « Durée brute » à la place) et non applicable si le préréglage est 'none'."
+          "description": "Durée réelle dans l'unité et la plage propres au préréglage — Boost : minutes (30–120, pas de 30) ; Party : heures (1–12) ; Leave : heures (1–12) ; Holiday : jours (1–30). Non applicable si le préréglage est 'none'."
+        }
+      }
+    },
+    "set_hvac_mode_and_temperature": {
+      "name": "Définir le mode HVAC et la température",
+      "description": "Définit hvac_mode et une température cible ensemble en un seul appel fiable. L'action standard climate.set_temperature peut techniquement aussi accepter les deux à la fois, mais ne les applique pas de façon fiable ensemble sur cette intégration — utilisez plutôt cette action lorsque vous devez modifier les deux. temperature est ignoré lorsque hvac_mode est 'off' (la passerelle rejette silencieusement les changements de température tant que Standby est actif).",
+      "fields": {
+        "hvac_mode": {
+          "name": "Mode HVAC",
+          "description": "'auto' (suivre le programme de la pièce) ou 'off' (Standby)."
         },
-        "duration": {
-          "name": "Durée brute",
-          "description": "Avancé : la valeur brute envoyée à la passerelle à la place d'une durée réelle. Requis pour Leave (une valeur connue fonctionnelle est 2, ≈ 6h) ; pour les autres préréglages, préférez « Durée »."
+        "temperature": {
+          "name": "Température",
+          "description": "Température cible en °C. Appliquée uniquement lorsque hvac_mode est 'auto'."
         }
       }
     }

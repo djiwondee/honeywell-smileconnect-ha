@@ -51,6 +51,18 @@
       },
       "response_time": {
         "name": "Gateway response time"
+      },
+      "boost_duration_remaining": {
+        "name": "Boost remaining"
+      },
+      "party_duration_remaining": {
+        "name": "Party remaining"
+      },
+      "leave_duration_remaining": {
+        "name": "Leave remaining"
+      },
+      "holiday_duration_remaining": {
+        "name": "Holiday remaining"
       }
     },
     "binary_sensor": {
@@ -75,11 +87,21 @@
         },
         "target": {
           "name": "Duration",
-          "description": "Real-world duration in the preset's own unit: minutes for Boost, hours for Party, days for Holiday. Not supported for Leave (use 'Raw duration' instead) and not applicable when preset is 'none'."
+          "description": "Real-world duration in the preset's own unit and range — Boost: minutes (30–120, step 30); Party: hours (1–12); Leave: hours (1–12); Holiday: days (1–30). Not applicable when preset is 'none'."
+        }
+      }
+    },
+    "set_hvac_mode_and_temperature": {
+      "name": "Set HVAC mode and temperature",
+      "description": "Set hvac_mode and a target temperature together in one reliable call. The standard climate.set_temperature action can technically accept both at once too, but does not reliably apply them together on this integration — use this action instead when you need to change both. temperature is ignored when hvac_mode is 'off' (the gateway silently rejects temperature changes while Standby is active).",
+      "fields": {
+        "hvac_mode": {
+          "name": "HVAC mode",
+          "description": "'auto' (follow the room's schedule) or 'off' (Standby)."
         },
-        "duration": {
-          "name": "Raw duration",
-          "description": "Advanced: the raw value sent to the gateway instead of a real-world duration. Required for Leave (a known-good value is 2, ≈ 6h); for other presets prefer 'Duration' instead."
+        "temperature": {
+          "name": "Temperature",
+          "description": "Target temperature in °C. Only applied when hvac_mode is 'auto'."
         }
       }
     }

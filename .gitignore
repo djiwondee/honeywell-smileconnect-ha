@@ -15,6 +15,9 @@ config/.ha_run.lock
 # Secrets - never commit real gateway credentials
 .env
 
+# Raw mitmproxy capture output (session-specific diagnostic data, not source)
+scripts/*.log
+
 .vscode/*
 !.vscode/extensions.json
 .DS_Store
