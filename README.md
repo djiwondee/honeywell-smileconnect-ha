@@ -1,7 +1,7 @@
 # Honeywell Smile Connect — Home Assistant Integration
 
 [![hacs_badge](https://img.shields.io/badge/HACS-Custom-orange.svg)](https://github.com/hacs/integration)
-[![Version](https://img.shields.io/badge/version-0.1.0-yellow.svg)](https://github.com/djiwondee/honeywell-smileconnect-ha/releases)
+[![Version](https://img.shields.io/badge/version-0.1.1-yellow.svg)](https://github.com/djiwondee/honeywell-smileconnect-ha/releases)
 [![Status](https://img.shields.io/badge/status-beta-yellow.svg)](CLAUDE.md#versioning--branching-strategy)
 [![License](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 [![Validate](https://github.com/djiwondee/honeywell-smileconnect-ha/actions/workflows/validate.yml/badge.svg)](https://github.com/djiwondee/honeywell-smileconnect-ha/actions/workflows/validate.yml)
@@ -44,7 +44,8 @@ the reverse-engineered wire protocol.
 - The gateway's five scenes as presets: **Boost**, **Party**, **Leave**,
   **Holiday** (temporary overrides), plus **Standby** (schedule on/off)
 - Per-room sensors showing how long a preset has left to run
-- Outside-temperature sensors (from the gateway's own weather feed)
+- Outside-temperature sensors (from the room's Regler, on single-room
+  installations — see [Entities provided](#entities-provided))
 - A lightweight, independent connectivity/response-time diagnostic, so you
   can tell "gateway unreachable" apart from "login broken"
 - Two custom Actions for automations that need more control than the
@@ -62,7 +63,7 @@ the reverse-engineered wire protocol.
 
 | Entity | Scope | Category | Notes |
 |---|---|---|---|
-| Outside temperature / min / max | gateway | primary | From the gateway's own weather feed |
+| Outside temperature / min / max | Regler (single-room installs); gateway otherwise | primary | Value comes from the gateway's `/api/weather` relay, but the physical sensor is wired to the Regler for its own weather-compensated control — see [Known limitations](#known-limitations) for the multi-room caveat |
 | Gateway response time | gateway | diagnostic | From the unauthenticated `/api/ping` endpoint |
 | Boost / Party / Leave / Holiday remaining | **per room** | primary | Time left on that preset, in its own natural unit (minutes/hours/hours/days) — reads "unknown" when that specific preset isn't active for the room. See [Known limitations](#known-limitations) for why there are four independent sensors instead of one. |
 
@@ -72,9 +73,11 @@ the reverse-engineered wire protocol.
 |---|---|---|---|
 | Connectivity | gateway | diagnostic | Reachability via `/api/ping`, independent of login state |
 
-Devices: one **gateway** device (weather/connectivity/diagnostics), plus one
-**SDC Regler** sub-device per room (climate entity + that room's four preset
-sensors), linked to the gateway via `via_device`.
+Devices: one **gateway** device (connectivity/diagnostics, plus weather on
+multi-room installs — see [Known limitations](#known-limitations)), plus
+one **SDC Regler** sub-device per room (climate entity + that room's four
+preset sensors, plus weather on single-room installs), linked to the
+gateway via `via_device`.
 
 ## Installation
 
@@ -175,6 +178,13 @@ below for why).
   gateway reboot) — entities go "unavailable" until Home Assistant
   restarts or the integration is reloaded. Tracked as a planned fix in
   [`CLAUDE.md`](CLAUDE.md#next-planned-work-agreed-in-project-discussion-not-yet-started).
+- **Outside temperature/min/max sensors stay on the gateway device on
+  multi-room installations** (an SRC-10 add-on module present), instead of
+  moving to the correct Regler as they do on single-room installs. The
+  gateway's `/api/weather` endpoint has no way to say which physical
+  Regler a reading came from once more than one exists, and there is no
+  SRC-10 hardware available to verify the right behavior against — see
+  [`CLAUDE.md`](CLAUDE.md) for the full reasoning.
 
 ## Development
 

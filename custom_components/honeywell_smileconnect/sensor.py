@@ -1,5 +1,27 @@
 """Sensor platform for Honeywell Smile Connect (weather + ping diagnostics)."""
 # Change log:
+# - 2026-09-15: Moved the 3 weather sensors (outside temperature/min/max)
+#   from the gateway device to the sole Regler's device, ON SINGLE-ROOM
+#   INSTALLATIONS ONLY. The physical outside-temperature sensor is wired
+#   directly to the Regler ("Smile Controller") for its own local
+#   weather-compensated control logic - the gateway only relays the
+#   already-measured value via /api/weather, which is why these were
+#   originally (wrongly) modeled as gateway-owned. Confirmed correct for
+#   this project's actual hardware, which has exactly one room ("Alle")
+#   and therefore exactly one Regler.
+#   Left attached to the gateway device whenever 2+ rooms are reported
+#   (i.e. an SRC-10 add-on module is present) - NOT a considered design
+#   choice, just leaving an unverified case unchanged rather than
+#   guessing. Per project discussion: the SRC-10 module adds *additional*
+#   room controllers on top of the SCN-10's always-present base Regler,
+#   rather than replacing it, which makes it plausible (but NOT confirmed
+#   - no SRC-10 hardware available to test) that the base Regler stays
+#   the first room reported by /api/room/list even with an SRC-10
+#   installed. /api/weather also takes no room parameter, so there is no
+#   protocol-level way to confirm which physical Regler a reading
+#   actually came from once more than one exists. Revisit this once real
+#   SRC-10 hardware is available to test against, rather than guessing
+#   now - see CLAUDE.md for the full discussion.
 # - 2026-09-11: Added SmileConnectPresetDurationSensor - one sensor per
 #   room x TIMED_PRESET_SCENE_NAMES scene (Boost/Party/Leave/Holiday),
 #   reporting that scene's remaining duration in ITS OWN native unit
@@ -88,6 +110,18 @@ async def async_setup_entry(
     async_add_entities: AddEntitiesCallback,
 ) -> None:
     data = hass.data[DOMAIN][config_entry.entry_id]
+    rooms = data.coordinator.data["rooms"]
+
+    # Weather sensors belong on the sole Regler's device on a single-room
+    # installation (the physical sensor is Regler-side - see this module's
+    # change log); left on the gateway device for 2+ rooms (SRC-10
+    # present), an untested case that is deliberately left unchanged
+    # rather than guessed at.
+    weather_room_id: object | None = None
+    weather_room_name: str | None = None
+    if len(rooms) == 1:
+        weather_room_id = rooms[0]["data"]["id"]
+        weather_room_name = rooms[0]["name"]
 
     entities = [
         SmileConnectWeatherSensor(
@@ -96,6 +130,8 @@ async def async_setup_entry(
             weather_key="temperature",
             translation_key=SENSOR_TRANSLATION_KEY_OUTSIDE_TEMPERATURE,
             unique_id_suffix="outside_temperature",
+            room_id=weather_room_id,
+            room_name=weather_room_name,
         ),
         SmileConnectWeatherSensor(
             data.coordinator,
@@ -103,6 +139,8 @@ async def async_setup_entry(
             weather_key="min",
             translation_key=SENSOR_TRANSLATION_KEY_OUTSIDE_TEMPERATURE_MIN,
             unique_id_suffix="outside_temperature_min",
+            room_id=weather_room_id,
+            room_name=weather_room_name,
         ),
         SmileConnectWeatherSensor(
             data.coordinator,
@@ -110,11 +148,13 @@ async def async_setup_entry(
             weather_key="max",
             translation_key=SENSOR_TRANSLATION_KEY_OUTSIDE_TEMPERATURE_MAX,
             unique_id_suffix="outside_temperature_max",
+            room_id=weather_room_id,
+            room_name=weather_room_name,
         ),
         SmileConnectPingResponseTimeSensor(data.ping_coordinator, data.unique_id),
     ]
 
-    for room in data.coordinator.data["rooms"]:
+    for room in rooms:
         room_id = room["data"]["id"]
         room_name = room["name"]
         for scene in TIMED_PRESET_SCENE_NAMES:
@@ -134,6 +174,12 @@ class SmileConnectWeatherSensor(CoordinatorEntity, SensorEntity):
     the same shape (a plain float under a known key in coordinator.data
     ["weather"]), so one parameterized class covers all of them rather than
     three near-duplicate classes.
+
+    The physical sensor behind this reading is wired to the Regler, not the
+    gateway (see module change log) - attached to that Regler's device when
+    `room_id`/`room_name` are given (the single-room case), else left on
+    the gateway device (2+ rooms / SRC-10 present, untested - see change
+    log for why this is deliberately left unresolved rather than guessed).
     """
 
     _attr_has_entity_name = True
@@ -148,15 +194,21 @@ class SmileConnectWeatherSensor(CoordinatorEntity, SensorEntity):
         weather_key: str,
         translation_key: str,
         unique_id_suffix: str,
+        room_id: object | None = None,
+        room_name: str | None = None,
     ) -> None:
         super().__init__(coordinator)
         self._weather_key = weather_key
         self._gateway_unique_id = gateway_unique_id
+        self._room_id = room_id
+        self._room_name = room_name
         self._attr_translation_key = translation_key
         self._attr_unique_id = f"{DOMAIN}_{unique_id_suffix}"
 
     @property
     def device_info(self):
+        if self._room_id is not None:
+            return device.regler_device_info(self._gateway_unique_id, self._room_id, self._room_name)
         return device.gateway_device_info(self._gateway_unique_id)
 
     @property

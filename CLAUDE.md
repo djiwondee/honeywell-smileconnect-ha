@@ -851,7 +851,7 @@ GET  /admin/login/index            (returns HTML of the config menu)
   for how the raw slot list should be shaped for a service call — see the
   bullet above this one; `get_switching_times`/`set_switching_times` in
   `api/api_methods.py` remain unwired to anything HA-facing).
-- **Possible future gateway-attached entities from `/api/weather`'s
+- ~~**Possible future gateway-attached entities from `/api/weather`'s
   remaining fields** (`iconUrl`, `forlocation`) — deliberately NOT
   implemented now. Per project discussion: the outside
   temperature/min/max sensors were confirmed to belong on the **regler**
@@ -863,13 +863,48 @@ GET  /admin/login/index            (returns HTML of the config menu)
   weather sensors to "the first reported room" would be a coin-flip on
   such a setup — single-regler installations like the current one don't
   expose this problem, but it would silently misattribute data on a
-  multi-regler one). `iconUrl` (a weather icon/condition) and
-  `forlocation` (the configured location name) are different in kind,
-  though: they are genuinely internet-weather-service data the *gateway*
-  itself fetches (not a regler-side physical measurement), so if/when
-  these are ever turned into entities, they belong on the **gateway**
-  device, not the regler — noted here so a future session doesn't have to
-  re-derive this reasoning.
+  multi-regler one).~~ **The "kept on the gateway to avoid ambiguity"
+  part is SUPERSEDED (2026-09-15, shipped in `0.1.1`)** — see the
+  dedicated entry directly below for the actual fix. The `iconUrl`/
+  `forlocation` observation is unaffected and still stands: they are
+  genuinely internet-weather-service data the *gateway* itself fetches
+  (not a regler-side physical measurement), so if/when these are ever
+  turned into entities, they belong on the **gateway** device, not the
+  regler — still not implemented, no change needed here.
+- **Outside temperature/min/max sensors moved from the gateway device to
+  the sole Regler's device, on single-room installations only (2026-09-15,
+  shipped in `0.1.1`, branch `feature/regler-weather-sensors`).** The user
+  confirmed the real hardware physically contradicts the original
+  gateway-attachment decision above: the outside-temperature sensor is
+  wired directly to the Regler ("Smile Controller"), which uses it locally
+  for its own weather-compensated control logic (e.g. lowering the
+  setpoint when it's warmer outside) — the gateway only relays the
+  already-measured value via `/api/weather`. Fixed in `sensor.py`:
+  `SmileConnectWeatherSensor` now takes optional `room_id`/`room_name`,
+  and `async_setup_entry` passes the sole room's id/name only when
+  exactly one room is reported, so `device_info` resolves to
+  `device.regler_device_info(...)` in that case.
+  **Multi-room (SRC-10 present) case deliberately left unresolved, NOT
+  fixed by this change:** discussed with the user — the optional SRC-10
+  add-on module (single-room control for up to 16 additional rooms) adds
+  its own room controllers *on top of* the SCN-10's always-present base
+  Regler, rather than replacing it. This makes it plausible (but **NOT
+  confirmed — no SRC-10 hardware available to test**) that the base
+  Regler stays the first room reported by `/api/room/list` even with an
+  SRC-10 installed. Rather than guess, `sensor.py` leaves the 3 weather
+  sensors on the gateway device whenever 2+ rooms are reported — exactly
+  the pre-`0.1.1` behavior, left unchanged rather than risking a wrong
+  guess for an untested configuration. `unique_id` for the 3 sensors was
+  deliberately left unchanged (no room segment) — only 3 instances are
+  ever created regardless of room count, so there's no collision risk,
+  and the entity registry's `unique_id` → device link updates
+  transparently in HA with no migration step needed; existing users only
+  see the entities' friendly name change (via `has_entity_name`, from
+  "Smile Connect Gateway <X>" to "<Room name> <X>") and move to the
+  Regler device. **Revisit the multi-room case once real SRC-10 hardware
+  is available to test against**, rather than guessing — see
+  `sensor.py`'s own change log for the exact reasoning to avoid
+  re-deriving it from scratch.
 - ~~**Reconnect/error handling strategy** — currently the coordinator would
   presumably just re-login every refresh cycle on failure~~ **CORRECTED
   (2026-09-11): this assumption was wrong.** Verified by reading the
@@ -1536,10 +1571,10 @@ must not proceed carelessly.
     multiple isolated live tests each, not implicated by the Leave
     finding.
   - No new user-facing HA feature — same category as `0.0.19`/`0.0.20`.
-- **`0.1.0` (in progress, 2026-09-10, on branch `feature/ha-actions` — NOT
-  yet merged to `main`, so `0.0.21` above remains what's actually on
-  `main` until the PR lands).** Starts the `0.1.x` beta line — the first
-  HA Action for this integration. Contents:
+- **`0.1.0` (2026-09-10/11, developed on branch `feature/ha-actions`,
+  merged to `main` via PR — superseding `0.0.21` as the current version).**
+  Starts the `0.1.x` beta line — the first HA Action for this integration.
+  Contents:
   - New entity Action `honeywell_smileconnect.set_preset_mode_with_duration`
     (`climate.py`/`services.yaml`/`strings.json`/`translations/*.json`) —
     see the "Next planned work" entry above for the full design rationale
@@ -1662,6 +1697,19 @@ must not proceed carelessly.
     per "Test Suite" below).
   - Per the beta-status rule above: developed on `feature/ha-actions`, to
     be merged via pull request — not committed directly to `main`.
+- **`0.1.1` (2026-09-15, developed on branch
+  `feature/regler-weather-sensors`, per the beta-status rule above — not
+  committed directly to `main`).** Corrects device attribution for the 3
+  existing outside temperature/min/max sensors — see the dedicated entry
+  under "Still untested / open" above for the full reasoning (SRC-10
+  module discussion, why the multi-room case is deliberately left
+  unresolved). No new user-facing capability, only a device/entity-naming
+  correction for existing sensors on single-room installs. Contents:
+  `sensor.py`'s `SmileConnectWeatherSensor` gained optional `room_id`/
+  `room_name`, wired up only when `async_setup_entry` sees exactly one
+  room; `manifest.json` + `README.md` version badge bumped to `0.1.1`;
+  `README.md`'s entity table and "Known limitations" updated to describe
+  the new per-install-size device attachment.
 - When proposing a plan (per the Session Workflow rules above), also
   propose the appropriate version bump and, once beta status applies,
   the branch name to use.
