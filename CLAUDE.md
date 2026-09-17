@@ -1927,6 +1927,34 @@ must not proceed carelessly.
        `translations/{en,de,es,fr}.json`); confirmed via a script that
        walks every string value in all 5 files checking for stray `{`/`}`
        characters, not just the two originally-reported ones.
+    3. **The `weekday` selector's dropdown literally showed
+       `[%key:common::time::monday%]` etc. instead of translated day
+       names** (screenshot evidence from the user's live HA instance).
+       Root cause: `[%key:...%]` is a build-time reference-substitution
+       syntax that HA core's OWN release pipeline (`script.translations`/
+       `hassfest`) expands into literal text before a core integration's
+       translations ever ship - by the time a real HA release runs, core
+       components' `strings.json`/`translations/*.json` no longer contain
+       raw `[%key:...%]` markers. **A HACS custom integration never goes
+       through that build step - the runtime frontend does NOT resolve
+       `[%key:...%]` on the fly for custom-component translations.**
+       This was a wrong assumption made while designing this feature
+       (intending to reuse HA's own common weekday translations to avoid
+       re-translating "Monday"/"Tuesday"/etc. in 4 languages) - looked
+       plausible from reading core's OWN `strings.json` examples (e.g.
+       `habitica`'s `"repeat"` selector uses exactly this pattern) without
+       noticing those are core-only, already-expanded artifacts, not a
+       runtime feature available to any integration. **Lesson: `[%key:
+       ...%]` must never be used in a custom (HACS) integration's own
+       strings.json/translations - always write the literal translated
+       text out in each of the 4 language files instead.** Fixed by
+       replacing all 7×5 weekday option strings with literal translated
+       day names (Monday..Sunday / Montag..Sonntag / Lunes..Domingo /
+       Lundi..Dimanche) in `strings.json` and all four
+       `translations/*.json` files. Re-confirmed via the same
+       stray-character scan approach used for bullet 2 above, generalized
+       to also grep for any remaining `[%key:` marker anywhere under
+       `custom_components/` - none found.
 - When proposing a plan (per the Session Workflow rules above), also
   propose the appropriate version bump and, once beta status applies,
   the branch name to use.

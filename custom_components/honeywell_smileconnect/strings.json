@@ -169,13 +169,13 @@
   "selector": {
     "weekday": {
       "options": {
-        "monday": "[%key:common::time::monday%]",
-        "tuesday": "[%key:common::time::tuesday%]",
-        "wednesday": "[%key:common::time::wednesday%]",
-        "thursday": "[%key:common::time::thursday%]",
-        "friday": "[%key:common::time::friday%]",
-        "saturday": "[%key:common::time::saturday%]",
-        "sunday": "[%key:common::time::sunday%]"
+        "monday": "Monday",
+        "tuesday": "Tuesday",
+        "wednesday": "Wednesday",
+        "thursday": "Thursday",
+        "friday": "Friday",
+        "saturday": "Saturday",
+        "sunday": "Sunday"
       }
     },
     "slot_type": {
