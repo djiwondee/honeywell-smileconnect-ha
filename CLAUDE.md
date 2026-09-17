@@ -720,6 +720,37 @@ GET  /admin/login/index            (returns HTML of the config menu)
 
 ### Next planned work (agreed in project discussion, not yet started)
 
+- **TOP PRIORITY (decided 2026-09-17, explicitly ordered before the
+  switching-times phase 2 bullet below): investigate how to write
+  `desiredTempDay`/`desiredTempDay2`/`desiredTempNight`** (the three
+  fixed per-room temperatures that a switching-time slot's `type`
+  selects between — confirmed 2026-09-15/17 by the user; `H` →
+  `desiredTempDay`, `L` → `desiredTempDay2`, implicit "Night" →
+  `desiredTempNight`) **is genuinely unconfirmed protocol territory,
+  deliberately out of scope for `0.2.0`.** Reading them is already free
+  (they pass through `get_rooms_list()`'s raw room dict unfiltered - see
+  `tests/fixtures/room_list_response.json`, which already contains all
+  three), but nothing in this project has ever tried to WRITE them.
+  `/api/room/settemperature`'s existing `change_mode` parameter is only
+  ever sent as `0` (the live/current setpoint) by `set_temperature()` -
+  whether other `change_mode` values address these three fixed fields, or
+  whether a different endpoint entirely is needed (as has repeatedly been
+  the case elsewhere in this project - see `switchingtimes/set2` and the
+  scene `duration` endpoints, both app-only features never reachable via
+  the admin console), is unknown and must be live-verified before
+  writing any code - per this project's own validation principle. A
+  dedicated `scripts/manual_probe_desired_temperatures.py` (following the
+  existing `scripts/manual_probe_*.py` pattern - read the current value,
+  try a candidate write, verify via a FRESH read afterward rather than
+  trusting `success:true`, given this project's long history of silent-
+  corruption failures on exactly that assumption) would be the way to
+  start this, not a guessed implementation. Rationale for doing this
+  BEFORE the native-helper/auto-sync phase below: the schedule Actions
+  shipped in `0.2.0` are already live-verified and usable end-to-end for
+  H/L selection, but the underlying temperatures those types actually
+  apply currently can't be managed from HA at all - closing that gap
+  first makes the whole feature meaningfully more complete before
+  investing in a fancier UI on top of it.
 - **Switching-times phase 2: native `schedule.*` helper UI + automatic
   Gateway↔HA sync** (deferred during planning for `0.2.0`, 2026-09-17 —
   see that version's changelog entry above for what phase 1 shipped
@@ -763,36 +794,13 @@ GET  /admin/login/index            (returns HTML of the config menu)
     hack (unsupported, can break across HA versions, races the running
     component's in-memory state).
   - `desiredTempDay`/`desiredTempDay2`/`desiredTempNight` write support
-    (see the dedicated bullet directly below - unrelated to whether this
-    phase happens, but relevant if a per-block temperature is ever wanted
-    beyond the H/L type selection phase 1 already supports).
+    (see the "TOP PRIORITY" bullet directly above - unrelated to whether
+    this phase happens, but relevant if a per-block temperature is ever
+    wanted beyond the H/L type selection phase 1 already supports).
   - `"N"` (Night) type support, if `"N"` is ever needed and if actual
     Honeywell Room Connect SRC-10 hardware becomes available to verify
     against — `switching_times.py` deliberately rejects `"N"` today (see
     `VALID_TYPES`) rather than guessing at unverified behavior.
-- **Writing `desiredTempDay`/`desiredTempDay2`/`desiredTempNight`** (the
-  three fixed per-room temperatures that a switching-time slot's `type`
-  selects between — confirmed 2026-09-15/17 by the user; `H` → 
-  `desiredTempDay`, `L` → `desiredTempDay2`, implicit "Night" →
-  `desiredTempNight`) **is genuinely unconfirmed protocol territory,
-  deliberately out of scope for `0.2.0`.** Reading them is already free
-  (they pass through `get_rooms_list()`'s raw room dict unfiltered - see
-  `tests/fixtures/room_list_response.json`, which already contains all
-  three), but nothing in this project has ever tried to WRITE them.
-  `/api/room/settemperature`'s existing `change_mode` parameter is only
-  ever sent as `0` (the live/current setpoint) by `set_temperature()` -
-  whether other `change_mode` values address these three fixed fields, or
-  whether a different endpoint entirely is needed (as has repeatedly been
-  the case elsewhere in this project - see `switchingtimes/set2` and the
-  scene `duration` endpoints, both app-only features never reachable via
-  the admin console), is unknown and must be live-verified before
-  writing any code - per this project's own validation principle. A
-  dedicated `scripts/manual_probe_desired_temperatures.py` (following the
-  existing `scripts/manual_probe_*.py` pattern - read the current value,
-  try a candidate write, verify via a FRESH read afterward rather than
-  trusting `success:true`, given this project's long history of silent-
-  corruption failures on exactly that assumption) would be the way to
-  start this, not a guessed implementation.
 - **No automatic re-login on session failure — coordinator gets
   permanently stuck "unavailable" until HA restart/integration reload**
   (found 2026-09-11, while investigating a user question about
@@ -1984,6 +1992,19 @@ must not proceed carelessly.
        regression tests in `tests/test_switching_times.py`. Service
        description text updated in all 5 translation files to mention the
        capacity check.
+  - **Full live verification, all four fixes above, confirmed working by
+    the user (2026-09-17) against the real gateway and a real HA
+    instance:** `get_schedule_room`/`set_schedule_room`/
+    `set_schedule_room_weekday` all confirmed working end-to-end,
+    including a deliberate test sending 4 slots on one day via
+    `set_schedule_room` (exceeds this room's 3-slot capacity) correctly
+    rejected with a clear validation error rather than a silent failure
+    or a raw traceback. No further switching-times bugs outstanding as of
+    this date - the read/write Action layer (phase 1) is considered done
+    and stable. Per the user's own explicit prioritization, the next
+    session's focus is the `desiredTempDay`/`desiredTempDay2`/
+    `desiredTempNight` write investigation (see the "TOP PRIORITY" entry
+    under "Next planned work" above), NOT phase 2's native helper UI.
 - When proposing a plan (per the Session Workflow rules above), also
   propose the appropriate version bump and, once beta status applies,
   the branch name to use.
