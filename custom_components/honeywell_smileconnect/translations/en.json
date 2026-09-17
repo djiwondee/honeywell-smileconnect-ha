@@ -107,7 +107,7 @@
     },
     "get_schedule_room": {
       "name": "Get room schedule",
-      "description": "Read a room's full weekly switching-time schedule from the gateway. Returns an object with one list per weekday (monday..sunday), each entry {from, to, type} — type is 'H' (Comfort Hi) or 'L' (Comfort Lo); a time not covered by any slot follows the room's implicit 'Night' behaviour. The response has the same shape set_schedule_room expects, so it can be read, edited, and written straight back."
+      "description": "Read a room's full weekly switching-time schedule from the gateway. Returns an object with one list per weekday (monday..sunday); each entry has from, to, and type — type is 'H' (Comfort Hi) or 'L' (Comfort Lo). A time not covered by any slot follows the room's implicit 'Night' behaviour. The response has the same shape set_schedule_room expects, so it can be read, edited, and written straight back."
     },
     "set_schedule_room": {
       "name": "Set room schedule",
@@ -115,7 +115,7 @@
       "fields": {
         "schedule": {
           "name": "Schedule",
-          "description": "Full weekly schedule as an object, e.g. {\"monday\": [{\"from\": \"04:30\", \"to\": \"07:30\", \"type\": \"H\"}], ...}. Switch to YAML mode in Developer Tools → Actions to enter this."
+          "description": "Full weekly schedule as an object: one list per weekday (monday..sunday), each entry with from, to, and type - see get_schedule_room's response for the exact shape. Switch to YAML mode in Developer Tools → Actions to enter this."
         }
       }
     },

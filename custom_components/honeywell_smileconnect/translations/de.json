@@ -107,7 +107,7 @@
     },
     "get_schedule_room": {
       "name": "Raum-Zeitplan abrufen",
-      "description": "Liest den vollständigen Wochen-Schaltzeitplan eines Raums vom Gateway. Liefert ein Objekt mit je einer Liste pro Wochentag (monday..sunday), jeder Eintrag {from, to, type} — type ist 'H' (Comfort Hi) oder 'L' (Comfort Lo); eine Uhrzeit ohne definiertes Zeitfenster folgt dem impliziten 'Nacht'-Verhalten des Raums. Die Antwort hat dieselbe Form, die set_schedule_room erwartet, kann also gelesen, bearbeitet und direkt zurückgeschrieben werden."
+      "description": "Liest den vollständigen Wochen-Schaltzeitplan eines Raums vom Gateway. Liefert ein Objekt mit je einer Liste pro Wochentag (monday..sunday); jeder Eintrag hat from, to und type — type ist 'H' (Comfort Hi) oder 'L' (Comfort Lo). Eine Uhrzeit ohne definiertes Zeitfenster folgt dem impliziten 'Nacht'-Verhalten des Raums. Die Antwort hat dieselbe Form, die set_schedule_room erwartet, kann also gelesen, bearbeitet und direkt zurückgeschrieben werden."
     },
     "set_schedule_room": {
       "name": "Raum-Zeitplan setzen",
@@ -115,7 +115,7 @@
       "fields": {
         "schedule": {
           "name": "Zeitplan",
-          "description": "Vollständiger Wochenzeitplan als Objekt, z.B. {\"monday\": [{\"from\": \"04:30\", \"to\": \"07:30\", \"type\": \"H\"}], ...}. Zum Eingeben in den Entwicklerwerkzeugen → Aktionen in den YAML-Modus wechseln."
+          "description": "Vollständiger Wochenzeitplan als Objekt: je eine Liste pro Wochentag (monday..sunday), jeder Eintrag mit from, to und type - siehe die Antwort von get_schedule_room für die genaue Form. Zum Eingeben in den Entwicklerwerkzeugen → Aktionen in den YAML-Modus wechseln."
         }
       }
     },

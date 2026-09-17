@@ -107,7 +107,7 @@
     },
     "get_schedule_room": {
       "name": "Obtenir le programme de la pièce",
-      "description": "Lit le programme hebdomadaire complet des plages horaires d'une pièce depuis la passerelle. Renvoie un objet avec une liste par jour de la semaine (monday..sunday), chaque entrée {from, to, type} — type vaut 'H' (Comfort Hi) ou 'L' (Comfort Lo) ; une heure non couverte par une plage suit le comportement implicite « Nuit » de la pièce. La réponse a la même forme que celle attendue par set_schedule_room, elle peut donc être lue, modifiée puis renvoyée telle quelle."
+      "description": "Lit le programme hebdomadaire complet des plages horaires d'une pièce depuis la passerelle. Renvoie un objet avec une liste par jour de la semaine (monday..sunday) ; chaque entrée a from, to et type — type vaut 'H' (Comfort Hi) ou 'L' (Comfort Lo). Une heure non couverte par une plage suit le comportement implicite « Nuit » de la pièce. La réponse a la même forme que celle attendue par set_schedule_room, elle peut donc être lue, modifiée puis renvoyée telle quelle."
     },
     "set_schedule_room": {
       "name": "Définir le programme de la pièce",
@@ -115,7 +115,7 @@
       "fields": {
         "schedule": {
           "name": "Programme",
-          "description": "Programme hebdomadaire complet sous forme d'objet, p. ex. {\"monday\": [{\"from\": \"04:30\", \"to\": \"07:30\", \"type\": \"H\"}], ...}. Passez en mode YAML dans Outils de développement → Actions pour le saisir."
+          "description": "Programme hebdomadaire complet sous forme d'objet : une liste par jour de la semaine (monday..sunday), chaque entrée avec from, to et type - voir la réponse de get_schedule_room pour la forme exacte. Passez en mode YAML dans Outils de développement → Actions pour le saisir."
         }
       }
     },

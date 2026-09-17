@@ -107,7 +107,7 @@
     },
     "get_schedule_room": {
       "name": "Obtener horario de la habitación",
-      "description": "Lee el horario semanal completo de conmutación de una habitación desde la pasarela. Devuelve un objeto con una lista por día de la semana (monday..sunday), cada entrada {from, to, type} — type es 'H' (Comfort Hi) o 'L' (Comfort Lo); una hora no cubierta por ningún intervalo sigue el comportamiento implícito de 'Noche' de la habitación. La respuesta tiene la misma forma que espera set_schedule_room, por lo que puede leerse, editarse y reenviarse directamente."
+      "description": "Lee el horario semanal completo de conmutación de una habitación desde la pasarela. Devuelve un objeto con una lista por día de la semana (monday..sunday); cada entrada tiene from, to y type — type es 'H' (Comfort Hi) o 'L' (Comfort Lo). Una hora no cubierta por ningún intervalo sigue el comportamiento implícito de 'Noche' de la habitación. La respuesta tiene la misma forma que espera set_schedule_room, por lo que puede leerse, editarse y reenviarse directamente."
     },
     "set_schedule_room": {
       "name": "Establecer horario de la habitación",
@@ -115,7 +115,7 @@
       "fields": {
         "schedule": {
           "name": "Horario",
-          "description": "Horario semanal completo como objeto, p. ej. {\"monday\": [{\"from\": \"04:30\", \"to\": \"07:30\", \"type\": \"H\"}], ...}. Cambia al modo YAML en Herramientas de desarrollo → Acciones para introducirlo."
+          "description": "Horario semanal completo como objeto: una lista por día de la semana (monday..sunday), cada entrada con from, to y type - consulta la respuesta de get_schedule_room para ver la forma exacta. Cambia al modo YAML en Herramientas de desarrollo → Acciones para introducirlo."
         }
       }
     },

@@ -1889,6 +1889,44 @@ must not proceed carelessly.
   - `manifest.json` + `README.md` version badge bumped to `0.2.0` (minor
     bump, not a patch — new user-facing capability, matching how
     `0.0.21→0.1.0` was handled when the first Action shipped).
+  - **2026-09-17 addendum (same branch, live-verification fixes, folded
+    into this same `0.2.0` rather than a separate version):** two real
+    bugs found testing against a real HA instance (not caught by unit
+    tests, since neither is exercisable without the actual HA frontend/
+    schema-validation machinery):
+    1. **`set_schedule_room_weekday` errored on a call where only
+       `slot_1` was filled in via the GUI.** Root cause: the HA
+       frontend's form for an untouched, optional field inside a
+       collapsed section (`slot_2`/`slot_3`) submits an empty string
+       `""` rather than omitting the key. `vol.Inclusive`'s "all or
+       none" grouping trivially passed (all three keys ARE present,
+       just empty), and `cv.time("")`/`vol.In(...)("")` then failed with
+       a confusing schema error for a slot the user never touched. Fixed
+       with a new `_drop_empty_slot_fields()` preprocessing step
+       (`climate.py`): `vol.All(_drop_empty_slot_fields,
+       cv.make_entity_service_schema(...))`, confirmed supported by
+       reading `homeassistant/helpers/service.py`'s/`config_validation.py`'s
+       own `is_entity_service_schema()` (explicitly walks into a
+       `vol.All`-wrapped entity-service schema, not just a bare dict).
+    2. **`INVALID_ARGUMENT_TYPE` "Translation error" shown in the HA UI
+       for `get_schedule_room` (and, latently, `set_schedule_room`'s
+       `schedule` field).** Root cause: HA's frontend renders service
+       descriptions through `intl-messageformat` (ICU MessageFormat),
+       which treats bare `{...}` in a string as argument-placeholder
+       syntax, not literal text. The English (and de/es/fr) description
+       strings for these two Actions illustrated the slot shape with
+       literal JSON-like snippets - `each entry {from, to, type}` and
+       `e.g. {"monday": [{"from": ..., "to": ..., "type": "H"}], ...}` -
+       which ICU tried to parse as a formatted argument (`to` is not a
+       valid ICU argument-type keyword, hence `INVALID_ARGUMENT_TYPE`).
+       **Lesson for any future service/field description text in this
+       project: never put a raw `{`/`}` JSON example directly in a
+       `strings.json`/`translations/*.json` string** - describe the
+       shape in prose instead (as the fixed versions of both descriptions
+       now do). Fixed in all 5 files (`strings.json` +
+       `translations/{en,de,es,fr}.json`); confirmed via a script that
+       walks every string value in all 5 files checking for stray `{`/`}`
+       characters, not just the two originally-reported ones.
 - When proposing a plan (per the Session Workflow rules above), also
   propose the appropriate version bump and, once beta status applies,
   the branch name to use.
