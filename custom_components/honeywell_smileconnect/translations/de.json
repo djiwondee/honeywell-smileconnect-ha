@@ -104,6 +104,85 @@
           "description": "Zieltemperatur in °C. Wird nur angewendet, wenn hvac_mode 'auto' ist."
         }
       }
+    },
+    "get_schedule_room": {
+      "name": "Raum-Zeitplan abrufen",
+      "description": "Liest den vollständigen Wochen-Schaltzeitplan eines Raums vom Gateway. Liefert ein Objekt mit je einer Liste pro Wochentag (monday..sunday), jeder Eintrag {from, to, type} — type ist 'H' (Comfort Hi) oder 'L' (Comfort Lo); eine Uhrzeit ohne definiertes Zeitfenster folgt dem impliziten 'Nacht'-Verhalten des Raums. Die Antwort hat dieselbe Form, die set_schedule_room erwartet, kann also gelesen, bearbeitet und direkt zurückgeschrieben werden."
+    },
+    "set_schedule_room": {
+      "name": "Raum-Zeitplan setzen",
+      "description": "Schreibt den vollständigen Wochen-Schaltzeitplan eines Raums. Dies ersetzt immer die GESAMTE Woche — das Gateway kennt keine Teil-Aktualisierung, daher zuerst mit get_schedule_room den aktuellen Zeitplan lesen, wenn nur ein Teil geändert werden soll. Bis zu 3 Zeitfenster pro Wochentag. Jedes definierte Zeitfenster muss from, to UND type enthalten — es gibt keinen Standardtyp. Ein im Zeitplan fehlender Wochentag bedeutet, dass an diesem Tag keine Zeitfenster aktiv sind.",
+      "fields": {
+        "schedule": {
+          "name": "Zeitplan",
+          "description": "Vollständiger Wochenzeitplan als Objekt, z.B. {\"monday\": [{\"from\": \"04:30\", \"to\": \"07:30\", \"type\": \"H\"}], ...}. Zum Eingeben in den Entwicklerwerkzeugen → Aktionen in den YAML-Modus wechseln."
+        }
+      }
+    },
+    "set_schedule_room_weekday": {
+      "name": "Raum-Zeitplan für einen Wochentag setzen",
+      "description": "Ersetzt die Zeitfenster eines Wochentags, alle anderen Tage bleiben unverändert. Bis zu 3 Zeitfenster (Slot 1–3). Für jedes zu setzende Zeitfenster müssen Von, Bis UND Typ gemeinsam angegeben werden — alle drei oder keins. Lässt man alle Felder eines Zeitfensters leer, wird es gelöscht.",
+      "fields": {
+        "weekday": {
+          "name": "Wochentag",
+          "description": "Der zu ändernde Tag. Alle anderen Tage bleiben unverändert."
+        },
+        "slot_1_from": {
+          "name": "Zeitfenster 1: Von",
+          "description": "Startzeit von Zeitfenster 1. Auch Bis und Typ angeben, oder alle drei leer lassen, um dieses Zeitfenster zu löschen."
+        },
+        "slot_1_to": {
+          "name": "Zeitfenster 1: Bis",
+          "description": "Endzeit von Zeitfenster 1."
+        },
+        "slot_1_type": {
+          "name": "Zeitfenster 1: Typ",
+          "description": "Comfort Hi oder Comfort Lo für Zeitfenster 1."
+        },
+        "slot_2_from": {
+          "name": "Zeitfenster 2: Von",
+          "description": "Startzeit von Zeitfenster 2. Auch Bis und Typ angeben, oder alle drei leer lassen, um dieses Zeitfenster zu löschen."
+        },
+        "slot_2_to": {
+          "name": "Zeitfenster 2: Bis",
+          "description": "Endzeit von Zeitfenster 2."
+        },
+        "slot_2_type": {
+          "name": "Zeitfenster 2: Typ",
+          "description": "Comfort Hi oder Comfort Lo für Zeitfenster 2."
+        },
+        "slot_3_from": {
+          "name": "Zeitfenster 3: Von",
+          "description": "Startzeit von Zeitfenster 3. Auch Bis und Typ angeben, oder alle drei leer lassen, um dieses Zeitfenster zu löschen."
+        },
+        "slot_3_to": {
+          "name": "Zeitfenster 3: Bis",
+          "description": "Endzeit von Zeitfenster 3."
+        },
+        "slot_3_type": {
+          "name": "Zeitfenster 3: Typ",
+          "description": "Comfort Hi oder Comfort Lo für Zeitfenster 3."
+        }
+      }
+    }
+  },
+  "selector": {
+    "weekday": {
+      "options": {
+        "monday": "[%key:common::time::monday%]",
+        "tuesday": "[%key:common::time::tuesday%]",
+        "wednesday": "[%key:common::time::wednesday%]",
+        "thursday": "[%key:common::time::thursday%]",
+        "friday": "[%key:common::time::friday%]",
+        "saturday": "[%key:common::time::saturday%]",
+        "sunday": "[%key:common::time::sunday%]"
+      }
+    },
+    "slot_type": {
+      "options": {
+        "H": "Comfort Hi",
+        "L": "Comfort Lo"
+      }
     }
   }
 }

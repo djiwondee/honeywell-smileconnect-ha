@@ -104,6 +104,85 @@
           "description": "Température cible en °C. Appliquée uniquement lorsque hvac_mode est 'auto'."
         }
       }
+    },
+    "get_schedule_room": {
+      "name": "Obtenir le programme de la pièce",
+      "description": "Lit le programme hebdomadaire complet des plages horaires d'une pièce depuis la passerelle. Renvoie un objet avec une liste par jour de la semaine (monday..sunday), chaque entrée {from, to, type} — type vaut 'H' (Comfort Hi) ou 'L' (Comfort Lo) ; une heure non couverte par une plage suit le comportement implicite « Nuit » de la pièce. La réponse a la même forme que celle attendue par set_schedule_room, elle peut donc être lue, modifiée puis renvoyée telle quelle."
+    },
+    "set_schedule_room": {
+      "name": "Définir le programme de la pièce",
+      "description": "Écrit le programme hebdomadaire complet des plages horaires d'une pièce. Ceci remplace toujours TOUTE la semaine — la passerelle n'a pas de point de terminaison de mise à jour partielle, donc lisez d'abord le programme actuel avec get_schedule_room si vous ne voulez modifier qu'une partie. Jusqu'à 3 plages par jour. Chaque plage définie doit inclure from, to ET type — il n'y a pas de type par défaut. Un jour absent du programme signifie qu'aucune plage n'est active ce jour-là.",
+      "fields": {
+        "schedule": {
+          "name": "Programme",
+          "description": "Programme hebdomadaire complet sous forme d'objet, p. ex. {\"monday\": [{\"from\": \"04:30\", \"to\": \"07:30\", \"type\": \"H\"}], ...}. Passez en mode YAML dans Outils de développement → Actions pour le saisir."
+        }
+      }
+    },
+    "set_schedule_room_weekday": {
+      "name": "Définir le programme de la pièce pour un jour",
+      "description": "Remplace les plages horaires d'un jour de la semaine, les autres jours restant inchangés. Jusqu'à 3 plages (1–3). Pour chaque plage à définir, indiquez son Début, sa Fin ET son Type ensemble — les trois ou aucun. Laissez tous les champs d'une plage vides pour l'effacer.",
+      "fields": {
+        "weekday": {
+          "name": "Jour de la semaine",
+          "description": "Le jour à mettre à jour. Les autres jours restent inchangés."
+        },
+        "slot_1_from": {
+          "name": "Plage 1 : Début",
+          "description": "Heure de début de la plage 1. Indiquez aussi Fin et Type, ou laissez les trois vides pour effacer cette plage."
+        },
+        "slot_1_to": {
+          "name": "Plage 1 : Fin",
+          "description": "Heure de fin de la plage 1."
+        },
+        "slot_1_type": {
+          "name": "Plage 1 : Type",
+          "description": "Comfort Hi ou Comfort Lo pour la plage 1."
+        },
+        "slot_2_from": {
+          "name": "Plage 2 : Début",
+          "description": "Heure de début de la plage 2. Indiquez aussi Fin et Type, ou laissez les trois vides pour effacer cette plage."
+        },
+        "slot_2_to": {
+          "name": "Plage 2 : Fin",
+          "description": "Heure de fin de la plage 2."
+        },
+        "slot_2_type": {
+          "name": "Plage 2 : Type",
+          "description": "Comfort Hi ou Comfort Lo pour la plage 2."
+        },
+        "slot_3_from": {
+          "name": "Plage 3 : Début",
+          "description": "Heure de début de la plage 3. Indiquez aussi Fin et Type, ou laissez les trois vides pour effacer cette plage."
+        },
+        "slot_3_to": {
+          "name": "Plage 3 : Fin",
+          "description": "Heure de fin de la plage 3."
+        },
+        "slot_3_type": {
+          "name": "Plage 3 : Type",
+          "description": "Comfort Hi ou Comfort Lo pour la plage 3."
+        }
+      }
+    }
+  },
+  "selector": {
+    "weekday": {
+      "options": {
+        "monday": "[%key:common::time::monday%]",
+        "tuesday": "[%key:common::time::tuesday%]",
+        "wednesday": "[%key:common::time::wednesday%]",
+        "thursday": "[%key:common::time::thursday%]",
+        "friday": "[%key:common::time::friday%]",
+        "saturday": "[%key:common::time::saturday%]",
+        "sunday": "[%key:common::time::sunday%]"
+      }
+    },
+    "slot_type": {
+      "options": {
+        "H": "Comfort Hi",
+        "L": "Comfort Lo"
+      }
     }
   }
 }

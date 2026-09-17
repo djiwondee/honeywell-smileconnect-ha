@@ -1,5 +1,42 @@
 """Climate platform for Honeywell Smile Connect."""
 # Change log:
+# - 2026-09-17: Added get_schedule_room/set_schedule_room/
+#   set_schedule_room_weekday HA Actions - the first phase of exposing
+#   room switching-time schedules (see docs/switching-times-api.md and
+#   CLAUDE.md for the protocol background and the product decisions this
+#   encodes). Deliberately scoped to just these three read/write Actions
+#   for now - a native schedule.* helper UI and automatic gateway sync are
+#   a later phase, not part of this change.
+#   Conversion/validation lives in the new, HA-independent
+#   switching_times.py module (unit-tested in tests/test_switching_times.py)
+#   rather than inline here, matching this file's existing pattern of
+#   keeping ValueError-raising validation out of the entity layer and just
+#   translating it to ServiceValidationError.
+#   set_schedule_room takes one `schedule` field (a nested per-weekday
+#   object/YAML value) - a whole week (up to 7x3x3 = 63 leaf values) is too
+#   large for a sane HA form UI, and HA's Developer Tools/Actions already
+#   has a built-in YAML editor for any action call, so nothing extra is
+#   needed to support that. set_schedule_room_weekday instead uses 9 FLAT
+#   fields (slot_1_from/_to/_type, slot_2_*, slot_3_*) grouped into
+#   vol.Inclusive("slot_N") triples - confirmed by reading ha-core's own
+#   services.yaml "collapsed: true / fields:" pattern (e.g.
+#   kitchen_sink/habitica) that such nested UI groups are COSMETIC ONLY and
+#   never produce a nested dict in the actual service-call data (still flat
+#   top-level keys) - so real per-slot Time/Select pickers require flat
+#   field names, not a services.yaml-nested "slot_1: {from,to,type}" object.
+#   vol.Inclusive enforces "all three or none" per slot at the schema
+#   level (a slot_N_from without slot_N_to/_type is a schema error, not a
+#   ValueError deep in our own code) - see SET_SCHEDULE_ROOM_WEEKDAY_SCHEMA.
+#   Only 3 slot groups exist at all (no slot_4_*), which is how the
+#   "max 3 slots per weekday" hardware limit is enforced structurally for
+#   this Action, on top of switching_times.py's own runtime check for
+#   set_schedule_room's free-form `schedule` input.
+#   Both set_* Actions use supports_response=OPTIONAL and return the
+#   freshly re-read schedule after writing - matches this project's
+#   long-standing principle of never trusting a bare `success:true` from
+#   the gateway (see api_methods.py's own change log for prior incidents)
+#   by giving the caller/automation an immediate, real confirmation without
+#   a second manual call.
 # - 2026-09-11 (c): Added the set_hvac_mode_and_temperature HA Action.
 #   Root cause: the standard climate.set_temperature service CAN carry an
 #   hvac_mode alongside temperature (HA core calls async_set_hvac_mode()
@@ -208,8 +245,9 @@ from homeassistant.components.climate import (
 )
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import ATTR_TEMPERATURE, UnitOfTemperature
-from homeassistant.core import HomeAssistant
+from homeassistant.core import HomeAssistant, SupportsResponse
 from homeassistant.exceptions import ServiceValidationError
+from homeassistant.helpers import config_validation as cv
 from homeassistant.helpers import entity_platform
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
@@ -222,11 +260,22 @@ from .const import (
     SceneName,
 )
 from .coordinator import SmileConnectCoordinator
+from .switching_times import (
+    VALID_TYPES,
+    WEEKDAYS,
+    ScheduleValidationError,
+    replace_weekday_slots,
+    switching_times_to_weekday_dict,
+    weekday_dict_to_switching_times,
+)
 
 _LOGGER = logging.getLogger(__name__)
 
 SERVICE_SET_PRESET_MODE_WITH_DURATION = "set_preset_mode_with_duration"
 SERVICE_SET_HVAC_MODE_AND_TEMPERATURE = "set_hvac_mode_and_temperature"
+SERVICE_GET_SCHEDULE_ROOM = "get_schedule_room"
+SERVICE_SET_SCHEDULE_ROOM = "set_schedule_room"
+SERVICE_SET_SCHEDULE_ROOM_WEEKDAY = "set_schedule_room_weekday"
 
 # Mirrors _attr_preset_modes below - kept as a separate module-level list
 # (rather than importing the class attribute) since voluptuous schemas are
@@ -261,6 +310,45 @@ SET_HVAC_MODE_AND_TEMPERATURE_SCHEMA = {
     vol.Optional("temperature"): vol.Coerce(float),
 }
 
+GET_SCHEDULE_ROOM_SCHEMA: dict = {}
+
+# `schedule` is deliberately a single free-form field (a nested per-weekday
+# object), not broken into per-day/per-slot fields - see this module's
+# change log for why (up to 63 leaf values, HA's own YAML action editor
+# already covers this). Deep validation happens in
+# switching_times.weekday_dict_to_switching_times(), not here - `dict` only
+# rejects a non-dict value outright.
+SET_SCHEDULE_ROOM_SCHEMA = {
+    vol.Required("schedule"): dict,
+}
+
+
+def _slot_group_schema(prefix: str) -> dict:
+    """3 flat, vol.Inclusive-grouped fields for one schedule slot.
+
+    vol.Inclusive(..., prefix) means: if ANY of this trio is given, ALL
+    three must be given - enforced by voluptuous itself, before the call
+    ever reaches our own code. See this module's change log for why these
+    are flat fields (slot_N_from/_to/_type) rather than a nested
+    `slot_N: {from, to, type}` object.
+    """
+    return {
+        vol.Inclusive(f"{prefix}_from", prefix): cv.time,
+        vol.Inclusive(f"{prefix}_to", prefix): cv.time,
+        vol.Inclusive(f"{prefix}_type", prefix): vol.In(VALID_TYPES),
+    }
+
+
+# Exactly 3 slot groups (slot_1/2/3) - no slot_4_* fields exist, which is
+# how the "max 3 slots per weekday" hardware limit is enforced structurally
+# for this Action (see module change log).
+SET_SCHEDULE_ROOM_WEEKDAY_SCHEMA = {
+    vol.Required("weekday"): vol.In(WEEKDAYS),
+    **_slot_group_schema("slot_1"),
+    **_slot_group_schema("slot_2"),
+    **_slot_group_schema("slot_3"),
+}
+
 
 async def async_setup_entry(
     hass: HomeAssistant,
@@ -286,6 +374,24 @@ async def async_setup_entry(
         SERVICE_SET_HVAC_MODE_AND_TEMPERATURE,
         SET_HVAC_MODE_AND_TEMPERATURE_SCHEMA,
         "async_set_hvac_mode_and_temperature",
+    )
+    platform.async_register_entity_service(
+        SERVICE_GET_SCHEDULE_ROOM,
+        GET_SCHEDULE_ROOM_SCHEMA,
+        "async_get_schedule_room",
+        supports_response=SupportsResponse.ONLY,
+    )
+    platform.async_register_entity_service(
+        SERVICE_SET_SCHEDULE_ROOM,
+        SET_SCHEDULE_ROOM_SCHEMA,
+        "async_set_schedule_room",
+        supports_response=SupportsResponse.OPTIONAL,
+    )
+    platform.async_register_entity_service(
+        SERVICE_SET_SCHEDULE_ROOM_WEEKDAY,
+        SET_SCHEDULE_ROOM_WEEKDAY_SCHEMA,
+        "async_set_schedule_room_weekday",
+        supports_response=SupportsResponse.OPTIONAL,
     )
 
 
@@ -582,3 +688,83 @@ class SmileConnectClimate(CoordinatorEntity, ClimateEntity):
                 "hvac_mode display may stay stale until the next change.",
                 self._room_id,
             )
+
+    async def _async_read_switching_times(self) -> list[dict | None]:
+        response = await self.hass.async_add_executor_job(
+            self.coordinator.api.get_switching_times, self._room["name"], self._room_id
+        )
+        return response["switchingtimes"]
+
+    async def async_get_schedule_room(self) -> dict:
+        """Back the get_schedule_room HA Action.
+
+        Returns {"monday": [...], ..., "sunday": [...]} - deliberately the
+        same shape set_schedule_room's `schedule` field expects, so the
+        response can be read, edited, and passed straight back.
+        """
+        switchingtimes = await self._async_read_switching_times()
+        return switching_times_to_weekday_dict(switchingtimes)
+
+    async def async_set_schedule_room(self, schedule: dict) -> dict:
+        """Back the set_schedule_room HA Action - writes a full week.
+
+        Always a full-schedule replacement (the gateway has no partial-
+        update endpoint - see docs/switching-times-api.md). Returns the
+        freshly re-read schedule after writing, rather than trusting the
+        gateway's bare success:true (see module change log).
+        """
+        try:
+            switchingtimes = weekday_dict_to_switching_times(schedule)
+        except ScheduleValidationError as err:
+            raise ServiceValidationError(str(err)) from err
+        await self.hass.async_add_executor_job(
+            self.coordinator.api.set_switching_times,
+            self._room["name"],
+            self._room_id,
+            switchingtimes,
+        )
+        return await self.async_get_schedule_room()
+
+    async def async_set_schedule_room_weekday(
+        self,
+        weekday: str,
+        slot_1_from=None,
+        slot_1_to=None,
+        slot_1_type=None,
+        slot_2_from=None,
+        slot_2_to=None,
+        slot_2_type=None,
+        slot_3_from=None,
+        slot_3_to=None,
+        slot_3_type=None,
+    ) -> dict:
+        """Back the set_schedule_room_weekday HA Action - writes one day.
+
+        Read-modify-write: reads the CURRENT full schedule, replaces only
+        `weekday`'s slots, leaves every other day untouched (the gateway
+        has no partial-update endpoint). vol.Inclusive in
+        SET_SCHEDULE_ROOM_WEEKDAY_SCHEMA already guarantees each given
+        slot_N_* trio is complete (all three or none) before this runs.
+        Returns the freshly re-read schedule after writing.
+        """
+        slots = [
+            {"from": slot_from.strftime("%H:%M"), "to": slot_to.strftime("%H:%M"), "type": slot_type}
+            for slot_from, slot_to, slot_type in (
+                (slot_1_from, slot_1_to, slot_1_type),
+                (slot_2_from, slot_2_to, slot_2_type),
+                (slot_3_from, slot_3_to, slot_3_type),
+            )
+            if slot_from is not None
+        ]
+        try:
+            current = await self._async_read_switching_times()
+            updated = replace_weekday_slots(current, weekday, slots)
+        except ScheduleValidationError as err:
+            raise ServiceValidationError(str(err)) from err
+        await self.hass.async_add_executor_job(
+            self.coordinator.api.set_switching_times,
+            self._room["name"],
+            self._room_id,
+            updated,
+        )
+        return await self.async_get_schedule_room()

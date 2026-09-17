@@ -44,3 +44,97 @@ set_hvac_mode_and_temperature:
           max: 35
           step: 0.5
           mode: box
+
+get_schedule_room:
+  target:
+    entity:
+      domain: climate
+      integration: honeywell_smileconnect
+
+set_schedule_room:
+  target:
+    entity:
+      domain: climate
+      integration: honeywell_smileconnect
+  fields:
+    schedule:
+      required: true
+      selector:
+        object:
+
+set_schedule_room_weekday:
+  target:
+    entity:
+      domain: climate
+      integration: honeywell_smileconnect
+  fields:
+    weekday:
+      required: true
+      selector:
+        select:
+          options:
+            - "monday"
+            - "tuesday"
+            - "wednesday"
+            - "thursday"
+            - "friday"
+            - "saturday"
+            - "sunday"
+          translation_key: "weekday"
+    slot_1:
+      collapsed: false
+      fields:
+        slot_1_from:
+          required: false
+          selector:
+            time:
+        slot_1_to:
+          required: false
+          selector:
+            time:
+        slot_1_type:
+          required: false
+          selector:
+            select:
+              options:
+                - "H"
+                - "L"
+              translation_key: "slot_type"
+    slot_2:
+      collapsed: true
+      fields:
+        slot_2_from:
+          required: false
+          selector:
+            time:
+        slot_2_to:
+          required: false
+          selector:
+            time:
+        slot_2_type:
+          required: false
+          selector:
+            select:
+              options:
+                - "H"
+                - "L"
+              translation_key: "slot_type"
+    slot_3:
+      collapsed: true
+      fields:
+        slot_3_from:
+          required: false
+          selector:
+            time:
+        slot_3_to:
+          required: false
+          selector:
+            time:
+        slot_3_type:
+          required: false
+          selector:
+            select:
+              options:
+                - "H"
+                - "L"
+              translation_key: "slot_type"
