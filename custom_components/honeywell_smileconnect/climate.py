@@ -1,6 +1,20 @@
 """Climate platform for Honeywell Smile Connect."""
 # Change log:
-# - 2026-09-17: Added get_schedule_room/set_schedule_room/
+# - 2026-09-17 (b): Fixed set_schedule_room_weekday erroring on a call
+#   where only slot_1 is filled in via the HA GUI. Root cause: the
+#   frontend's form for an untouched, optional field inside a collapsed
+#   section (slot_2/slot_3) submits an empty string `""` rather than
+#   omitting the key - vol.Inclusive's "all or none" grouping trivially
+#   passed (all three keys ARE present, just empty), and cv.time("")/
+#   vol.In(...)("")  then failed with a confusing schema error for a slot
+#   the user never touched. Fixed with a new _drop_empty_slot_fields()
+#   preprocessing step (vol.All(_drop_empty_slot_fields,
+#   cv.make_entity_service_schema(...))) that strips empty-string
+#   slot_N_* keys before the real schema runs - confirmed live via HA's
+#   own is_entity_service_schema()/make_entity_service_schema() that this
+#   composition is supported. Found during this session's live
+#   verification against a real HA instance (see CLAUDE.md).
+# - 2026-09-17 (a): Added get_schedule_room/set_schedule_room/
 #   set_schedule_room_weekday HA Actions - the first phase of exposing
 #   room switching-time schedules (see docs/switching-times-api.md and
 #   CLAUDE.md for the protocol background and the product decisions this
@@ -339,15 +353,41 @@ def _slot_group_schema(prefix: str) -> dict:
     }
 
 
+def _drop_empty_slot_fields(value: dict) -> dict:
+    """Treat an empty-string slot_N_* field as though it were omitted.
+
+    Live testing found the HA frontend's form for an untouched, optional
+    field inside a collapsed section (slot_2/slot_3 here) can submit an
+    empty string `""` rather than leaving the key out entirely. Without
+    this, vol.Inclusive's "all or none" check for that slot's group
+    trivially passes (all three keys ARE present, just empty), and THEN
+    cv.time("")/vol.In(...)("") fails with a confusing schema error for a
+    slot the user never touched. Runs as a vol.All() preprocessing step
+    before the real entity-service schema, so this is the only place
+    "" needs special-casing.
+    """
+    return {k: v for k, v in value.items() if not (k.startswith("slot_") and v == "")}
+
+
 # Exactly 3 slot groups (slot_1/2/3) - no slot_4_* fields exist, which is
 # how the "max 3 slots per weekday" hardware limit is enforced structurally
-# for this Action (see module change log).
-SET_SCHEDULE_ROOM_WEEKDAY_SCHEMA = {
-    vol.Required("weekday"): vol.In(WEEKDAYS),
-    **_slot_group_schema("slot_1"),
-    **_slot_group_schema("slot_2"),
-    **_slot_group_schema("slot_3"),
-}
+# for this Action (see module change log). Wrapped in vol.All() with
+# _drop_empty_slot_fields (see its own docstring) - cv.make_entity_service_schema()
+# is called explicitly here (rather than passing a plain dict, as the other
+# schemas in this file do) so it can be composed with that preprocessing
+# step; HA's own is_entity_service_schema() check explicitly supports a
+# vol.All()-wrapped entity-service schema like this.
+SET_SCHEDULE_ROOM_WEEKDAY_SCHEMA = vol.All(
+    _drop_empty_slot_fields,
+    cv.make_entity_service_schema(
+        {
+            vol.Required("weekday"): vol.In(WEEKDAYS),
+            **_slot_group_schema("slot_1"),
+            **_slot_group_schema("slot_2"),
+            **_slot_group_schema("slot_3"),
+        }
+    ),
+)
 
 
 async def async_setup_entry(
