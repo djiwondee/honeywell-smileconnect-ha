@@ -97,9 +97,10 @@ set_schedule_room_weekday:
           selector:
             select:
               options:
-                - "H"
-                - "L"
-              translation_key: "slot_type"
+                - value: "H"
+                  label: "Comfort Hi"
+                - value: "L"
+                  label: "Comfort Lo"
     slot_2:
       collapsed: true
       fields:
@@ -116,9 +117,10 @@ set_schedule_room_weekday:
           selector:
             select:
               options:
-                - "H"
-                - "L"
-              translation_key: "slot_type"
+                - value: "H"
+                  label: "Comfort Hi"
+                - value: "L"
+                  label: "Comfort Lo"
     slot_3:
       collapsed: true
       fields:
@@ -135,6 +137,7 @@ set_schedule_room_weekday:
           selector:
             select:
               options:
-                - "H"
-                - "L"
-              translation_key: "slot_type"
+                - value: "H"
+                  label: "Comfort Hi"
+                - value: "L"
+                  label: "Comfort Lo"

@@ -177,12 +177,6 @@
         "saturday": "Samstag",
         "sunday": "Sonntag"
       }
-    },
-    "slot_type": {
-      "options": {
-        "H": "Comfort Hi",
-        "L": "Comfort Lo"
-      }
     }
   }
 }
