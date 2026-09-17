@@ -111,7 +111,7 @@
     },
     "set_schedule_room": {
       "name": "Establecer horario de la habitación",
-      "description": "Escribe el horario semanal completo de conmutación de una habitación. Esto siempre reemplaza TODA la semana — la pasarela no tiene un endpoint de actualización parcial, así que primero lee el horario actual con get_schedule_room si solo quieres cambiar una parte. Hasta 3 intervalos por día. Cada intervalo definido debe incluir from, to Y type — no hay un tipo predeterminado. Un día de la semana ausente del horario significa que no hay intervalos activos ese día.",
+      "description": "Escribe el horario semanal completo de conmutación de una habitación. Esto siempre reemplaza TODA la semana — la pasarela no tiene un endpoint de actualización parcial, así que primero lee el horario actual con get_schedule_room si solo quieres cambiar una parte. El número de intervalos por día no puede superar la capacidad actual del horario de la habitación (normalmente 3) — esto se comprueba automáticamente contra una lectura reciente antes de escribir. Cada intervalo definido debe incluir from, to Y type — no hay un tipo predeterminado. Un día de la semana ausente del horario significa que no hay intervalos activos ese día.",
       "fields": {
         "schedule": {
           "name": "Horario",

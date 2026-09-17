@@ -111,7 +111,7 @@
     },
     "set_schedule_room": {
       "name": "Set room schedule",
-      "description": "Write a room's full weekly switching-time schedule. This always replaces the ENTIRE week — the gateway has no partial-update endpoint, so read the current schedule via get_schedule_room first if you only want to change part of it. Up to 3 slots per weekday. Every defined slot must include from, to, AND type — there is no default type. A weekday left out of the schedule means no active slots that day.",
+      "description": "Write a room's full weekly switching-time schedule. This always replaces the ENTIRE week — the gateway has no partial-update endpoint, so read the current schedule via get_schedule_room first if you only want to change part of it. The number of slots per weekday must not exceed the room's current schedule capacity (usually 3) — this is checked automatically against a fresh read before writing. Every defined slot must include from, to, AND type — there is no default type. A weekday left out of the schedule means no active slots that day.",
       "fields": {
         "schedule": {
           "name": "Schedule",

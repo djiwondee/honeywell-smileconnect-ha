@@ -147,42 +147,75 @@ def _check_order_and_overlap(day_name: str, slots: list[dict]) -> list[dict]:
 
 
 def weekday_dict_to_switching_times(
-    schedule: dict[str, list[dict]], *, max_slots_per_day: int = MAX_SLOTS_PER_DAY
+    schedule: dict[str, list[dict]],
+    *,
+    slots_per_day: int | None = None,
+    max_slots_per_day: int = MAX_SLOTS_PER_DAY,
 ) -> list[dict | None]:
     """Reverse of switching_times_to_weekday_dict(), with full validation.
 
     A weekday key missing from `schedule` means "no slots that day" (empty
     list), not an error. Raises ScheduleValidationError (a ValueError
     subclass) - never silently guesses - for: an unknown weekday key, more
-    than `max_slots_per_day` slots on one day, a slot missing from/to/type,
-    an invalid/unsupported type, `from >= to`, or overlapping slots on the
-    same day.
+    slots on one day than fit, a slot missing from/to/type, an invalid/
+    unsupported type, `from >= to`, or overlapping slots on the same day.
+
+    `slots_per_day`, when given, FIXES the output array's per-day width to
+    exactly this value. **Required for a full-schedule write** - live-
+    verified (2026-09-17) that the gateway rejects a `switchingtimes` array
+    whose length doesn't match the room's own currently-configured
+    slots-per-day, even though the length is still a valid multiple of 7
+    (`success: false, "The input format is invalid: 14"` when a 2-slots/day
+    schedule, 14 elements, was sent to a room whose gateway-side shape is
+    fixed at 3 slots/day, 21 elements). Callers writing a FULL schedule
+    (`set_schedule_room`) MUST read the room's current switchingtimes
+    length first (`len(current) // 7`) and pass it here - see
+    `climate.py`'s `async_set_schedule_room()`.
+
+    If `slots_per_day` is None (only meant for tests/offline conversion
+    with no live gateway reference), the width is instead derived
+    dynamically from the busiest day actually used, validated against
+    `max_slots_per_day` as a ceiling - this was this function's ONLY
+    behavior before the live-verification finding above; it must never be
+    used for an actual gateway write.
     """
     unknown = set(schedule) - set(WEEKDAYS)
     if unknown:
         raise ScheduleValidationError(f"Unknown weekday key(s): {sorted(unknown)}")
 
+    limit = slots_per_day if slots_per_day is not None else max_slots_per_day
     per_day: dict[str, list[dict]] = {}
     for day_name in WEEKDAYS:
         day_slots = schedule.get(day_name) or []
-        if len(day_slots) > max_slots_per_day:
+        if len(day_slots) > limit:
+            if slots_per_day is not None:
+                raise ScheduleValidationError(
+                    f"{day_name}: {len(day_slots)} slots given, but this "
+                    f"room's current schedule only has room for {limit} "
+                    "slot(s) per day - use set_schedule_room_weekday's "
+                    "single-day slots, or first change the schedule shape "
+                    "some other way, to use a different slot count."
+                )
             raise ScheduleValidationError(
                 f"{day_name}: {len(day_slots)} slots given, but this gateway "
-                f"only supports {max_slots_per_day} slots per day."
+                f"only supports {limit} slots per day."
             )
         for slot_idx, slot in enumerate(day_slots):
             _validate_slot_shape(day_name, slot_idx, slot)
         per_day[day_name] = _check_order_and_overlap(day_name, day_slots) if day_slots else []
 
-    # At least 1 slot/day so a fully-empty schedule ("clear everything")
-    # still produces a well-formed 7-element list rather than a degenerate
-    # zero-length one.
-    slots_per_day = max((len(v) for v in per_day.values()), default=1) or 1
+    if slots_per_day is not None:
+        target = slots_per_day
+    else:
+        # At least 1 slot/day so a fully-empty schedule ("clear
+        # everything") still produces a well-formed 7-element list rather
+        # than a degenerate zero-length one.
+        target = max((len(v) for v in per_day.values()), default=1) or 1
 
     result: list[dict | None] = []
     for day_name in WEEKDAYS:
         day_slots = per_day[day_name]
-        result.extend(day_slots + [None] * (slots_per_day - len(day_slots)))
+        result.extend(day_slots + [None] * (target - len(day_slots)))
     return result
 
 

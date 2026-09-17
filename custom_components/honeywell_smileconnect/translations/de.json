@@ -111,7 +111,7 @@
     },
     "set_schedule_room": {
       "name": "Raum-Zeitplan setzen",
-      "description": "Schreibt den vollständigen Wochen-Schaltzeitplan eines Raums. Dies ersetzt immer die GESAMTE Woche — das Gateway kennt keine Teil-Aktualisierung, daher zuerst mit get_schedule_room den aktuellen Zeitplan lesen, wenn nur ein Teil geändert werden soll. Bis zu 3 Zeitfenster pro Wochentag. Jedes definierte Zeitfenster muss from, to UND type enthalten — es gibt keinen Standardtyp. Ein im Zeitplan fehlender Wochentag bedeutet, dass an diesem Tag keine Zeitfenster aktiv sind.",
+      "description": "Schreibt den vollständigen Wochen-Schaltzeitplan eines Raums. Dies ersetzt immer die GESAMTE Woche — das Gateway kennt keine Teil-Aktualisierung, daher zuerst mit get_schedule_room den aktuellen Zeitplan lesen, wenn nur ein Teil geändert werden soll. Die Anzahl der Zeitfenster pro Wochentag darf die aktuelle Kapazität des Raum-Zeitplans nicht überschreiten (meist 3) — das wird vor dem Schreiben automatisch gegen eine frische Abfrage geprüft. Jedes definierte Zeitfenster muss from, to UND type enthalten — es gibt keinen Standardtyp. Ein im Zeitplan fehlender Wochentag bedeutet, dass an diesem Tag keine Zeitfenster aktiv sind.",
       "fields": {
         "schedule": {
           "name": "Zeitplan",

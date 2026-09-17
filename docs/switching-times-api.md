@@ -152,6 +152,27 @@ modify the one entry in the resulting Python structure, and send the
 **entire** modified list back via `set2` — every other slot must be
 included unchanged, or it will be cleared.
 
+**5. The array length must match the room's OWN currently-configured
+slots-per-day — "a multiple of 7" is necessary but not sufficient.**
+Live-verified (2026-09-17): sending a 14-element array (2 slots/day) to a
+room whose gateway-side shape is fixed at 21 elements (3 slots/day) is
+**rejected outright**, not silently corrupted like point 3 above:
+```json
+{"success":false,"message":"The input format is invalid: 14","loginRejected":false,"language":"en","performance":0.04}
+```
+The number in the message is the rejected array's length. This means a
+full-schedule write built purely from "how many slots does the caller
+actually need" (e.g. deriving `slots_per_day` as the busiest day's own
+slot count) can produce a technically-valid-shaped but too-short array
+that the gateway refuses outright. **Any code building a full
+`switchingtimes` array from scratch must first read the room's current
+`get2` response and pad every day out to that exact same
+`len(current) // 7` width**, never a value derived only from the new
+content being written. This is exactly the same "read first, preserve the
+existing shape" discipline point 4 already requires for single-slot
+edits — it turns out to also apply to the array's overall dimensions, not
+just to which slots must stay populated.
+
 ### Response
 
 ```json

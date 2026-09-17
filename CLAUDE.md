@@ -1890,10 +1890,11 @@ must not proceed carelessly.
     bump, not a patch — new user-facing capability, matching how
     `0.0.21→0.1.0` was handled when the first Action shipped).
   - **2026-09-17 addendum (same branch, live-verification fixes, folded
-    into this same `0.2.0` rather than a separate version):** two real
-    bugs found testing against a real HA instance (not caught by unit
-    tests, since neither is exercisable without the actual HA frontend/
-    schema-validation machinery):
+    into this same `0.2.0` rather than a separate version):** four real
+    bugs found testing against a real HA instance and a real gateway (not
+    caught by unit tests, since none of the first three is exercisable
+    without the actual HA frontend/schema-validation machinery, and the
+    fourth needed the real gateway's own wire-level response):
     1. **`set_schedule_room_weekday` errored on a call where only
        `slot_1` was filled in via the GUI.** Root cause: the HA
        frontend's form for an untouched, optional field inside a
@@ -1955,6 +1956,34 @@ must not proceed carelessly.
        stray-character scan approach used for bullet 2 above, generalized
        to also grep for any remaining `[%key:` marker anywhere under
        `custom_components/` - none found.
+    4. **`set_schedule_room` failed against the real gateway with
+       `success:false, "The input format is invalid: 14"` and wrote
+       nothing** (confirmed via the user's HA debug log and a follow-up
+       `get2` read showing the room's schedule unchanged). Root cause,
+       and full protocol details, now in `docs/switching-times-api.md`'s
+       wire-format point 5: the gateway rejects a `switchingtimes` array
+       whose length doesn't match the room's OWN currently-configured
+       slots-per-day, even though the length is still a valid multiple of
+       7 - "a multiple of 7" (the only rule previously documented) is
+       necessary but not sufficient. The user's test schedule needed only
+       2 slots on its busiest day (Monday), so `weekday_dict_to_
+       switching_times()` produced a 14-element array (2×7) - but this
+       room's gateway-side shape is fixed at 21 elements (3×7), and the
+       write was flatly rejected rather than silently corrupted like the
+       point-3 contiguous-slot issue. `set_schedule_room_weekday` never
+       hit this because it already reads the current schedule first
+       (read-modify-write) and inherits its exact length - the bug was
+       specific to `set_schedule_room`, which built an array from
+       scratch. Fixed: `weekday_dict_to_switching_times()` gained a
+       `slots_per_day` parameter that, when given, FIXES the output width
+       instead of deriving it from the busiest day in the new content;
+       `climate.py`'s `async_set_schedule_room()` now reads the room's
+       current `switchingtimes` first (purely to learn its length) before
+       building the write payload, mirroring what
+       `set_schedule_room_weekday` already did correctly. Two new
+       regression tests in `tests/test_switching_times.py`. Service
+       description text updated in all 5 translation files to mention the
+       capacity check.
 - When proposing a plan (per the Session Workflow rules above), also
   propose the appropriate version bump and, once beta status applies,
   the branch name to use.

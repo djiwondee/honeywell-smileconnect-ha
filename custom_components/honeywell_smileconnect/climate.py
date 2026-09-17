@@ -752,9 +752,23 @@ class SmileConnectClimate(CoordinatorEntity, ClimateEntity):
         update endpoint - see docs/switching-times-api.md). Returns the
         freshly re-read schedule after writing, rather than trusting the
         gateway's bare success:true (see module change log).
+
+        Reads the room's CURRENT switchingtimes first purely to learn its
+        slots-per-day width, and passes that to
+        weekday_dict_to_switching_times() as a fixed target - live-verified
+        (2026-09-17) that the gateway rejects a switchingtimes array whose
+        length doesn't match the room's own currently-configured
+        slots-per-day, even though it's still a valid multiple of 7 (see
+        that function's docstring for the exact error). Without this, a
+        schedule needing fewer slots/day than the room's actual shape
+        silently produced a too-short array and the write was rejected.
         """
+        current = await self._async_read_switching_times()
+        current_slots_per_day = len(current) // 7
         try:
-            switchingtimes = weekday_dict_to_switching_times(schedule)
+            switchingtimes = weekday_dict_to_switching_times(
+                schedule, slots_per_day=current_slots_per_day
+            )
         except ScheduleValidationError as err:
             raise ServiceValidationError(str(err)) from err
         await self.hass.async_add_executor_job(

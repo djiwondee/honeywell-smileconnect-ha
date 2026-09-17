@@ -111,7 +111,7 @@
     },
     "set_schedule_room": {
       "name": "Définir le programme de la pièce",
-      "description": "Écrit le programme hebdomadaire complet des plages horaires d'une pièce. Ceci remplace toujours TOUTE la semaine — la passerelle n'a pas de point de terminaison de mise à jour partielle, donc lisez d'abord le programme actuel avec get_schedule_room si vous ne voulez modifier qu'une partie. Jusqu'à 3 plages par jour. Chaque plage définie doit inclure from, to ET type — il n'y a pas de type par défaut. Un jour absent du programme signifie qu'aucune plage n'est active ce jour-là.",
+      "description": "Écrit le programme hebdomadaire complet des plages horaires d'une pièce. Ceci remplace toujours TOUTE la semaine — la passerelle n'a pas de point de terminaison de mise à jour partielle, donc lisez d'abord le programme actuel avec get_schedule_room si vous ne voulez modifier qu'une partie. Le nombre de plages par jour ne doit pas dépasser la capacité actuelle du programme de la pièce (généralement 3) — ceci est vérifié automatiquement par rapport à une lecture fraîche avant l'écriture. Chaque plage définie doit inclure from, to ET type — il n'y a pas de type par défaut. Un jour absent du programme signifie qu'aucune plage n'est active ce jour-là.",
       "fields": {
         "schedule": {
           "name": "Programme",

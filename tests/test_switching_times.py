@@ -140,6 +140,38 @@ class TestWeekdayDictToSwitchingTimes:
         with pytest.raises(ScheduleValidationError, match="overlapping"):
             weekday_dict_to_switching_times(schedule)
 
+    def test_explicit_slots_per_day_pads_to_that_width(self):
+        """Regression test for the live-verified gateway rejection:
+        sending a 2-slots/day (14-element) array to a room whose gateway-
+        side shape is fixed at 3 slots/day (21 elements) failed with
+        "The input format is invalid: 14". set_schedule_room must fix the
+        output width to the room's own current slots_per_day, not derive
+        it from the busiest day in the given schedule.
+        """
+        schedule = {
+            "monday": [
+                {"from": "04:30", "to": "08:30", "type": "H"},
+                {"from": "14:30", "to": "16:30", "type": "L"},
+            ],
+            "tuesday": [{"from": "04:30", "to": "07:30", "type": "H"}],
+        }
+        flat = weekday_dict_to_switching_times(schedule, slots_per_day=3)
+        assert len(flat) == 21  # 7 * 3, NOT 7 * 2
+        back = switching_times_to_weekday_dict(flat)
+        assert back["monday"] == schedule["monday"]
+        assert back["tuesday"] == schedule["tuesday"]
+        assert back["wednesday"] == []
+
+    def test_explicit_slots_per_day_too_few_raises_with_specific_message(self):
+        schedule = {
+            "monday": [
+                {"from": "01:00", "to": "02:00", "type": "H"},
+                {"from": "03:00", "to": "04:00", "type": "H"},
+            ]
+        }
+        with pytest.raises(ScheduleValidationError, match="current schedule only has room for"):
+            weekday_dict_to_switching_times(schedule, slots_per_day=1)
+
     def test_full_week_round_trip(self):
         schedule = {
             "monday": [{"from": "04:30", "to": "07:30", "type": "H"}],
