@@ -104,6 +104,79 @@
           "description": "Target temperature in °C. Only applied when hvac_mode is 'auto'."
         }
       }
+    },
+    "get_schedule_room": {
+      "name": "Get room schedule",
+      "description": "Read a room's full weekly switching-time schedule from the gateway. Returns an object with one list per weekday (monday..sunday); each entry has from, to, and type — type is 'H' (Comfort Hi) or 'L' (Comfort Lo). A time not covered by any slot follows the room's implicit 'Night' behaviour. The response has the same shape set_schedule_room expects, so it can be read, edited, and written straight back."
+    },
+    "set_schedule_room": {
+      "name": "Set room schedule",
+      "description": "Write a room's full weekly switching-time schedule. This always replaces the ENTIRE week — the gateway has no partial-update endpoint, so read the current schedule via get_schedule_room first if you only want to change part of it. The number of slots per weekday must not exceed the room's current schedule capacity (usually 3) — this is checked automatically against a fresh read before writing. Every defined slot must include from, to, AND type — there is no default type. A weekday left out of the schedule means no active slots that day.",
+      "fields": {
+        "schedule": {
+          "name": "Schedule",
+          "description": "Full weekly schedule as an object: one list per weekday (monday..sunday), each entry with from, to, and type - see get_schedule_room's response for the exact shape. Switch to YAML mode in Developer Tools → Actions to enter this."
+        }
+      }
+    },
+    "set_schedule_room_weekday": {
+      "name": "Set room schedule for one weekday",
+      "description": "Replace one weekday's switching-time slots, leaving every other day unchanged. Up to 3 slots (slot 1–3). For each slot you want to set, give its From, To, AND Type together — all three or none. Leave a slot's fields all empty to clear it.",
+      "fields": {
+        "weekday": {
+          "name": "Weekday",
+          "description": "The day to update. All other days are left unchanged."
+        },
+        "slot_1_from": {
+          "name": "Slot 1: From",
+          "description": "Start time of slot 1. Give To and Type as well, or leave all three empty to clear this slot."
+        },
+        "slot_1_to": {
+          "name": "Slot 1: To",
+          "description": "End time of slot 1."
+        },
+        "slot_1_type": {
+          "name": "Slot 1: Type",
+          "description": "Comfort Hi or Comfort Lo for slot 1."
+        },
+        "slot_2_from": {
+          "name": "Slot 2: From",
+          "description": "Start time of slot 2. Give To and Type as well, or leave all three empty to clear this slot."
+        },
+        "slot_2_to": {
+          "name": "Slot 2: To",
+          "description": "End time of slot 2."
+        },
+        "slot_2_type": {
+          "name": "Slot 2: Type",
+          "description": "Comfort Hi or Comfort Lo for slot 2."
+        },
+        "slot_3_from": {
+          "name": "Slot 3: From",
+          "description": "Start time of slot 3. Give To and Type as well, or leave all three empty to clear this slot."
+        },
+        "slot_3_to": {
+          "name": "Slot 3: To",
+          "description": "End time of slot 3."
+        },
+        "slot_3_type": {
+          "name": "Slot 3: Type",
+          "description": "Comfort Hi or Comfort Lo for slot 3."
+        }
+      }
+    }
+  },
+  "selector": {
+    "weekday": {
+      "options": {
+        "monday": "Monday",
+        "tuesday": "Tuesday",
+        "wednesday": "Wednesday",
+        "thursday": "Thursday",
+        "friday": "Friday",
+        "saturday": "Saturday",
+        "sunday": "Sunday"
+      }
     }
   }
 }

@@ -720,6 +720,87 @@ GET  /admin/login/index            (returns HTML of the config menu)
 
 ### Next planned work (agreed in project discussion, not yet started)
 
+- **TOP PRIORITY (decided 2026-09-17, explicitly ordered before the
+  switching-times phase 2 bullet below): investigate how to write
+  `desiredTempDay`/`desiredTempDay2`/`desiredTempNight`** (the three
+  fixed per-room temperatures that a switching-time slot's `type`
+  selects between — confirmed 2026-09-15/17 by the user; `H` →
+  `desiredTempDay`, `L` → `desiredTempDay2`, implicit "Night" →
+  `desiredTempNight`) **is genuinely unconfirmed protocol territory,
+  deliberately out of scope for `0.2.0`.** Reading them is already free
+  (they pass through `get_rooms_list()`'s raw room dict unfiltered - see
+  `tests/fixtures/room_list_response.json`, which already contains all
+  three), but nothing in this project has ever tried to WRITE them.
+  `/api/room/settemperature`'s existing `change_mode` parameter is only
+  ever sent as `0` (the live/current setpoint) by `set_temperature()` -
+  whether other `change_mode` values address these three fixed fields, or
+  whether a different endpoint entirely is needed (as has repeatedly been
+  the case elsewhere in this project - see `switchingtimes/set2` and the
+  scene `duration` endpoints, both app-only features never reachable via
+  the admin console), is unknown and must be live-verified before
+  writing any code - per this project's own validation principle. A
+  dedicated `scripts/manual_probe_desired_temperatures.py` (following the
+  existing `scripts/manual_probe_*.py` pattern - read the current value,
+  try a candidate write, verify via a FRESH read afterward rather than
+  trusting `success:true`, given this project's long history of silent-
+  corruption failures on exactly that assumption) would be the way to
+  start this, not a guessed implementation. Rationale for doing this
+  BEFORE the native-helper/auto-sync phase below: the schedule Actions
+  shipped in `0.2.0` are already live-verified and usable end-to-end for
+  H/L selection, but the underlying temperatures those types actually
+  apply currently can't be managed from HA at all - closing that gap
+  first makes the whole feature meaningfully more complete before
+  investing in a fancier UI on top of it.
+- **Switching-times phase 2: native `schedule.*` helper UI + automatic
+  Gateway↔HA sync** (deferred during planning for `0.2.0`, 2026-09-17 —
+  see that version's changelog entry above for what phase 1 shipped
+  instead). Phase 1 covers the raw read/write Action layer only; this
+  phase would add:
+  - A native HA "Schedule" helper per room as the visual weekly-plan
+    input surface, with the H/L type tagged via each block's `data` field
+    (a real HA core feature since 2024.10 — `CONF_DATA` in
+    `homeassistant.components.schedule`) — **confirmed during planning
+    that the stock visual block editor does NOT expose this field**; the
+    user would need to use the helper's "Edit in YAML" advanced view to
+    set it. Options-flow work needed: a room ↔ `schedule.*` entity
+    mapping step (`EntitySelector(domain="schedule")`), which also
+    requires fixing a **real latent bug** found in `config_flow.py`
+    during planning: `OptionsFlowHandler.async_step_init()` currently
+    calls `async_create_entry(title="", data=user_input)` — this
+    OVERWRITES the entire options dict with only the connection-settings
+    fields, so adding a second options category (the schedule mapping)
+    without also fixing this would silently wipe it out the next time
+    someone just changes the poll interval. Must become
+    `data={**dict(self.config_entry.options), **user_input}` (merge, not
+    replace) in both the existing step and any new one.
+  - Automatic HA→Gateway sync on every coordinator poll cycle, with
+    conflict detection: only auto-push when the HA-side schedule changed
+    since our own last push; if the gateway itself differs from what we
+    last pushed (i.e. the user edited via the Smile App), do NOT
+    overwrite it — surface a "diverged" diagnostic sensor instead. This
+    guards against the failure mode where a naive unconditional push
+    would clobber a fresh App-made change with a stale HA copy.
+  - **Confirmed during planning: true automatic Gateway→HA sync (writing
+    a detected App-side change back into the native helper) is NOT
+    achievable at all**, regardless of implementation language (Python,
+    HA script, or automation) — `homeassistant/components/schedule/
+    __init__.py` exposes no public service or `hass.data` entry for its
+    `ScheduleStorageCollection`; the only mutation path is a private,
+    frontend-only WebSocket route. The realistic fallback is a generated
+    YAML snippet (from the gateway's current schedule) for the user to
+    manually paste into the helper's YAML view — this is a deliberate
+    design decision given HA's actual capabilities, not a shortcut taken
+    for lack of time; do not re-attempt a `.storage/schedule` direct-write
+    hack (unsupported, can break across HA versions, races the running
+    component's in-memory state).
+  - `desiredTempDay`/`desiredTempDay2`/`desiredTempNight` write support
+    (see the "TOP PRIORITY" bullet directly above - unrelated to whether
+    this phase happens, but relevant if a per-block temperature is ever
+    wanted beyond the H/L type selection phase 1 already supports).
+  - `"N"` (Night) type support, if `"N"` is ever needed and if actual
+    Honeywell Room Connect SRC-10 hardware becomes available to verify
+    against — `switching_times.py` deliberately rejects `"N"` today (see
+    `VALID_TYPES`) rather than guessing at unverified behavior.
 - **No automatic re-login on session failure — coordinator gets
   permanently stuck "unavailable" until HA restart/integration reload**
   (found 2026-09-11, while investigating a user question about
@@ -822,9 +903,12 @@ GET  /admin/login/index            (returns HTML of the config menu)
   working** (see "Still untested / open" entry above, 2026-09-09) — the
   wire-format bug that made `set_switching_times()` unusable is fixed,
   and both are regression-tested against the real `ApiMethods` code path.
-  Still not wired to anything in the HA integration layer (service or
-  entity) — this is now the concrete next step, not a blocked-on-
-  verification item anymore. See the new HA Action bullet directly below.
+  ~~Still not wired to anything in the HA integration layer~~ **WIRED
+  (2026-09-17, `0.2.0`, `feature/switching-times`)** — see the
+  "Versioning & Branching Strategy" `0.2.0` entry below for the full
+  writeup: three new entity Actions (`get_schedule_room`/
+  `set_schedule_room`/`set_schedule_room_weekday`) on `climate.py`, backed
+  by the new `switching_times.py` conversion module.
 - **Home Assistant Action (service) to let automations set hvac mode,
   preset, thermostat temperature, and switching times.** **PARTIALLY
   SHIPPED (2026-09-10, `0.1.0`, on `feature/ha-actions` — starts the
@@ -1540,7 +1624,7 @@ must not proceed carelessly.
 - Before beta status (i.e. `x.0.y`), direct commits to `main` are
   acceptable for rapid early-stage iteration, as has been the practice so
   far in this project.
-- **Current version: `0.0.21`** (bumped 2026-09-09, patch-only — still
+- **`0.0.21`** (bumped 2026-09-09, patch-only — still
   `0.0.x`, so this is a normal direct-to-`main` release per the rule
   above, not an exception to it). Fixes a real defect introduced in
   `0.0.20`: `set_scene()`'s new `target=` parameter assumed Leave shares
@@ -1710,6 +1794,217 @@ must not proceed carelessly.
   room; `manifest.json` + `README.md` version badge bumped to `0.1.1`;
   `README.md`'s entity table and "Known limitations" updated to describe
   the new per-install-size device attachment.
+- **Current version: `0.2.0`** (2026-09-17, developed on branch
+  `feature/switching-times`, per the beta-status rule above — not
+  committed directly to `main`). First phase of exposing room switching-
+  time schedules (Schaltzeiten) to Home Assistant — see
+  `docs/switching-times-api.md` for the underlying protocol reference
+  (already live-verified against the gateway, 2026-09-09, but previously
+  completely unwired) and the "Still untested / open" entries below for
+  the product decisions made while designing this. Deliberately scoped to
+  just the read/write Action layer for this release — a native
+  `schedule.*` helper UI and automatic gateway↔HA sync were designed in
+  an earlier planning pass but explicitly deferred to a later phase (see
+  "Next planned work" below) once it became clear during planning that
+  (a) a nested per-block `data` field isn't settable from HA's stock
+  visual schedule-helper editor (only via its "Edit in YAML" advanced
+  view), and (b) the `schedule` core component has no public write API at
+  all for creating/updating a helper's config programmatically (confirmed
+  by reading `homeassistant/components/schedule/__init__.py` — its
+  `ScheduleStorageCollection` is a local variable in `async_setup()`,
+  never exposed via `hass.data` or a service; the only mutation path is a
+  private, frontend-only WebSocket route) — so automatic Gateway→HA sync
+  into a native helper is not achievable without an unsupported storage
+  hack, which this project deliberately does not build (see "Reverse-
+  Engineering Method"/validation principle above: don't ship what can't
+  be verified/kept working across HA versions).
+  Contents:
+  - New, HA-independent module `switching_times.py` (no `homeassistant.*`
+    import) — converts between the gateway's flat, day-major
+    `switchingtimes` wire format and a `{"monday": [...], ...,
+    "sunday": [...]}` per-weekday dict shape. Encodes two explicit
+    product decisions made during planning:
+    1. **No implicit type default.** A slot with `from`/`to` but no
+       `type` is a hard validation error, never silently treated as
+       "Comfort Lo" or as the implicit "Night" state. This corrects an
+       earlier draft of the plan that HAD considered defaulting a
+       missing type to `"L"` on the assumption that "no type" and
+       "Night" were the same thing — the user explicitly corrected this:
+       `"N"` (Night) is its own independent, real switching type, not a
+       fallback value for "type omitted". `"N"` itself is deliberately
+       rejected as a settable value (with a dedicated error message)
+       since it requires the Honeywell Room Connect SRC-10 hardware
+       extension to be meaningful, which is not available on this
+       project's test installation — shipping support for it without any
+       way to verify it live would repeat mistakes this project has
+       already paid for elsewhere (see the many `api_request.py`/
+       `api_methods.py` silent-corruption incidents above).
+    2. `MAX_SLOTS_PER_DAY = 3` is kept as this hardware's empirically
+       confirmed ceiling (`docs/switching-times-api.md`) and used as a
+       default/validation bound, but `replace_weekday_slots()` (the
+       single-weekday write path) always derives the REAL ceiling from
+       the current live schedule's own length instead of trusting the
+       constant — a single-weekday write must not silently change the
+       slot-count shape of every other day.
+  - Three new HA Actions on `climate.py`, registered the same way as the
+    existing `set_preset_mode_with_duration`/`set_hvac_mode_and_temperature`
+    (`entity_platform.async_register_entity_service()`):
+    - `get_schedule_room` — no parameters, `supports_response=ONLY`,
+      returns the per-weekday dict. Deliberately the same shape
+      `set_schedule_room` expects, for a read→edit→write-back workflow.
+    - `set_schedule_room` — one `schedule` field (a nested object/YAML
+      value covering the whole week, up to 7×3×3 = 63 leaf values).
+      Deliberately NOT broken into per-day/per-slot fields — that would
+      mean ~21 field groups in the HA UI, a poor form experience for
+      something users will mostly compose in an automation/script anyway.
+      HA's Developer Tools → Actions already has a built-in YAML editor
+      for any action call, so nothing extra was built for this - the
+      user just switches modes there.
+    - `set_schedule_room_weekday` — `weekday` + 9 FLAT fields
+      (`slot_1_from`/`_to`/`_type`, `slot_2_*`, `slot_3_*`), each trio
+      grouped via `vol.Inclusive(..., "slot_N")` so voluptuous itself
+      enforces "all three or none" per slot, before the call ever
+      reaches our own code. These are flat fields, not a nested
+      `slot_1: {from, to, type}` object, because reading ha-core's own
+      `services.yaml` "collapsed: true / fields:" pattern (used e.g. by
+      `kitchen_sink`/`habitica` for grouped/"Advanced" UI sections)
+      confirmed such nested groups are COSMETIC ONLY — the actual
+      service-call data stays flat regardless, confirmed against those
+      components' own voluptuous schemas. Exactly 3 slot groups exist (no
+      `slot_4_*`) — this is how "max 3 slots per weekday" is enforced
+      STRUCTURALLY for this Action, on top of `switching_times.py`'s own
+      runtime check for `set_schedule_room`'s free-form input.
+      Internally does read-modify-write via the new
+      `replace_weekday_slots()` helper (the gateway has no partial-update
+      endpoint - see `docs/switching-times-api.md`, point 4).
+  - Both `set_*` Actions use `supports_response=OPTIONAL` and return the
+    freshly re-read schedule after writing, rather than trusting a bare
+    `success:true` — matches this project's long-standing "verify via a
+    fresh read" principle (see the many `api_request.py`/`api_methods.py`
+    incidents above where `success:true` alone had already been shown to
+    lie).
+  - New `tests/test_switching_times.py` (21 tests, no HA/gateway
+    dependency) locks in the no-default-type rule, the `"N"`-rejection
+    message, the max-3-slots validation, overlap/ordering checks, and
+    that `replace_weekday_slots()` never touches any day other than the
+    one given.
+  - Localization: `get_schedule_room`/`set_schedule_room`/
+    `set_schedule_room_weekday` added to `strings.json` +
+    `translations/{en,de,es,fr}.json`, plus a new top-level `"selector"`
+    section (`weekday` — reusing HA's own `[%key:common::time::monday%]`-
+    style common keys rather than re-translating weekday names; and
+    `slot_type` for the H/L dropdown labels "Comfort Hi"/"Comfort Lo").
+  - `manifest.json` + `README.md` version badge bumped to `0.2.0` (minor
+    bump, not a patch — new user-facing capability, matching how
+    `0.0.21→0.1.0` was handled when the first Action shipped).
+  - **2026-09-17 addendum (same branch, live-verification fixes, folded
+    into this same `0.2.0` rather than a separate version):** four real
+    bugs found testing against a real HA instance and a real gateway (not
+    caught by unit tests, since none of the first three is exercisable
+    without the actual HA frontend/schema-validation machinery, and the
+    fourth needed the real gateway's own wire-level response):
+    1. **`set_schedule_room_weekday` errored on a call where only
+       `slot_1` was filled in via the GUI.** Root cause: the HA
+       frontend's form for an untouched, optional field inside a
+       collapsed section (`slot_2`/`slot_3`) submits an empty string
+       `""` rather than omitting the key. `vol.Inclusive`'s "all or
+       none" grouping trivially passed (all three keys ARE present,
+       just empty), and `cv.time("")`/`vol.In(...)("")` then failed with
+       a confusing schema error for a slot the user never touched. Fixed
+       with a new `_drop_empty_slot_fields()` preprocessing step
+       (`climate.py`): `vol.All(_drop_empty_slot_fields,
+       cv.make_entity_service_schema(...))`, confirmed supported by
+       reading `homeassistant/helpers/service.py`'s/`config_validation.py`'s
+       own `is_entity_service_schema()` (explicitly walks into a
+       `vol.All`-wrapped entity-service schema, not just a bare dict).
+    2. **`INVALID_ARGUMENT_TYPE` "Translation error" shown in the HA UI
+       for `get_schedule_room` (and, latently, `set_schedule_room`'s
+       `schedule` field).** Root cause: HA's frontend renders service
+       descriptions through `intl-messageformat` (ICU MessageFormat),
+       which treats bare `{...}` in a string as argument-placeholder
+       syntax, not literal text. The English (and de/es/fr) description
+       strings for these two Actions illustrated the slot shape with
+       literal JSON-like snippets - `each entry {from, to, type}` and
+       `e.g. {"monday": [{"from": ..., "to": ..., "type": "H"}], ...}` -
+       which ICU tried to parse as a formatted argument (`to` is not a
+       valid ICU argument-type keyword, hence `INVALID_ARGUMENT_TYPE`).
+       **Lesson for any future service/field description text in this
+       project: never put a raw `{`/`}` JSON example directly in a
+       `strings.json`/`translations/*.json` string** - describe the
+       shape in prose instead (as the fixed versions of both descriptions
+       now do). Fixed in all 5 files (`strings.json` +
+       `translations/{en,de,es,fr}.json`); confirmed via a script that
+       walks every string value in all 5 files checking for stray `{`/`}`
+       characters, not just the two originally-reported ones.
+    3. **The `weekday` selector's dropdown literally showed
+       `[%key:common::time::monday%]` etc. instead of translated day
+       names** (screenshot evidence from the user's live HA instance).
+       Root cause: `[%key:...%]` is a build-time reference-substitution
+       syntax that HA core's OWN release pipeline (`script.translations`/
+       `hassfest`) expands into literal text before a core integration's
+       translations ever ship - by the time a real HA release runs, core
+       components' `strings.json`/`translations/*.json` no longer contain
+       raw `[%key:...%]` markers. **A HACS custom integration never goes
+       through that build step - the runtime frontend does NOT resolve
+       `[%key:...%]` on the fly for custom-component translations.**
+       This was a wrong assumption made while designing this feature
+       (intending to reuse HA's own common weekday translations to avoid
+       re-translating "Monday"/"Tuesday"/etc. in 4 languages) - looked
+       plausible from reading core's OWN `strings.json` examples (e.g.
+       `habitica`'s `"repeat"` selector uses exactly this pattern) without
+       noticing those are core-only, already-expanded artifacts, not a
+       runtime feature available to any integration. **Lesson: `[%key:
+       ...%]` must never be used in a custom (HACS) integration's own
+       strings.json/translations - always write the literal translated
+       text out in each of the 4 language files instead.** Fixed by
+       replacing all 7×5 weekday option strings with literal translated
+       day names (Monday..Sunday / Montag..Sonntag / Lunes..Domingo /
+       Lundi..Dimanche) in `strings.json` and all four
+       `translations/*.json` files. Re-confirmed via the same
+       stray-character scan approach used for bullet 2 above, generalized
+       to also grep for any remaining `[%key:` marker anywhere under
+       `custom_components/` - none found.
+    4. **`set_schedule_room` failed against the real gateway with
+       `success:false, "The input format is invalid: 14"` and wrote
+       nothing** (confirmed via the user's HA debug log and a follow-up
+       `get2` read showing the room's schedule unchanged). Root cause,
+       and full protocol details, now in `docs/switching-times-api.md`'s
+       wire-format point 5: the gateway rejects a `switchingtimes` array
+       whose length doesn't match the room's OWN currently-configured
+       slots-per-day, even though the length is still a valid multiple of
+       7 - "a multiple of 7" (the only rule previously documented) is
+       necessary but not sufficient. The user's test schedule needed only
+       2 slots on its busiest day (Monday), so `weekday_dict_to_
+       switching_times()` produced a 14-element array (2×7) - but this
+       room's gateway-side shape is fixed at 21 elements (3×7), and the
+       write was flatly rejected rather than silently corrupted like the
+       point-3 contiguous-slot issue. `set_schedule_room_weekday` never
+       hit this because it already reads the current schedule first
+       (read-modify-write) and inherits its exact length - the bug was
+       specific to `set_schedule_room`, which built an array from
+       scratch. Fixed: `weekday_dict_to_switching_times()` gained a
+       `slots_per_day` parameter that, when given, FIXES the output width
+       instead of deriving it from the busiest day in the new content;
+       `climate.py`'s `async_set_schedule_room()` now reads the room's
+       current `switchingtimes` first (purely to learn its length) before
+       building the write payload, mirroring what
+       `set_schedule_room_weekday` already did correctly. Two new
+       regression tests in `tests/test_switching_times.py`. Service
+       description text updated in all 5 translation files to mention the
+       capacity check.
+  - **Full live verification, all four fixes above, confirmed working by
+    the user (2026-09-17) against the real gateway and a real HA
+    instance:** `get_schedule_room`/`set_schedule_room`/
+    `set_schedule_room_weekday` all confirmed working end-to-end,
+    including a deliberate test sending 4 slots on one day via
+    `set_schedule_room` (exceeds this room's 3-slot capacity) correctly
+    rejected with a clear validation error rather than a silent failure
+    or a raw traceback. No further switching-times bugs outstanding as of
+    this date - the read/write Action layer (phase 1) is considered done
+    and stable. Per the user's own explicit prioritization, the next
+    session's focus is the `desiredTempDay`/`desiredTempDay2`/
+    `desiredTempNight` write investigation (see the "TOP PRIORITY" entry
+    under "Next planned work" above), NOT phase 2's native helper UI.
 - When proposing a plan (per the Session Workflow rules above), also
   propose the appropriate version bump and, once beta status applies,
   the branch name to use.

@@ -104,6 +104,79 @@
           "description": "Temperatura objetivo en °C. Solo se aplica cuando hvac_mode es 'auto'."
         }
       }
+    },
+    "get_schedule_room": {
+      "name": "Obtener horario de la habitación",
+      "description": "Lee el horario semanal completo de conmutación de una habitación desde la pasarela. Devuelve un objeto con una lista por día de la semana (monday..sunday); cada entrada tiene from, to y type — type es 'H' (Comfort Hi) o 'L' (Comfort Lo). Una hora no cubierta por ningún intervalo sigue el comportamiento implícito de 'Noche' de la habitación. La respuesta tiene la misma forma que espera set_schedule_room, por lo que puede leerse, editarse y reenviarse directamente."
+    },
+    "set_schedule_room": {
+      "name": "Establecer horario de la habitación",
+      "description": "Escribe el horario semanal completo de conmutación de una habitación. Esto siempre reemplaza TODA la semana — la pasarela no tiene un endpoint de actualización parcial, así que primero lee el horario actual con get_schedule_room si solo quieres cambiar una parte. El número de intervalos por día no puede superar la capacidad actual del horario de la habitación (normalmente 3) — esto se comprueba automáticamente contra una lectura reciente antes de escribir. Cada intervalo definido debe incluir from, to Y type — no hay un tipo predeterminado. Un día de la semana ausente del horario significa que no hay intervalos activos ese día.",
+      "fields": {
+        "schedule": {
+          "name": "Horario",
+          "description": "Horario semanal completo como objeto: una lista por día de la semana (monday..sunday), cada entrada con from, to y type - consulta la respuesta de get_schedule_room para ver la forma exacta. Cambia al modo YAML en Herramientas de desarrollo → Acciones para introducirlo."
+        }
+      }
+    },
+    "set_schedule_room_weekday": {
+      "name": "Establecer horario de la habitación para un día",
+      "description": "Reemplaza los intervalos de un día de la semana, dejando los demás días sin cambios. Hasta 3 intervalos (1–3). Para cada intervalo que quieras establecer, indica su Desde, Hasta Y Tipo juntos — los tres o ninguno. Deja todos los campos de un intervalo vacíos para borrarlo.",
+      "fields": {
+        "weekday": {
+          "name": "Día de la semana",
+          "description": "El día a actualizar. Los demás días quedan sin cambios."
+        },
+        "slot_1_from": {
+          "name": "Intervalo 1: Desde",
+          "description": "Hora de inicio del intervalo 1. Indica también Hasta y Tipo, o deja los tres vacíos para borrar este intervalo."
+        },
+        "slot_1_to": {
+          "name": "Intervalo 1: Hasta",
+          "description": "Hora de fin del intervalo 1."
+        },
+        "slot_1_type": {
+          "name": "Intervalo 1: Tipo",
+          "description": "Comfort Hi o Comfort Lo para el intervalo 1."
+        },
+        "slot_2_from": {
+          "name": "Intervalo 2: Desde",
+          "description": "Hora de inicio del intervalo 2. Indica también Hasta y Tipo, o deja los tres vacíos para borrar este intervalo."
+        },
+        "slot_2_to": {
+          "name": "Intervalo 2: Hasta",
+          "description": "Hora de fin del intervalo 2."
+        },
+        "slot_2_type": {
+          "name": "Intervalo 2: Tipo",
+          "description": "Comfort Hi o Comfort Lo para el intervalo 2."
+        },
+        "slot_3_from": {
+          "name": "Intervalo 3: Desde",
+          "description": "Hora de inicio del intervalo 3. Indica también Hasta y Tipo, o deja los tres vacíos para borrar este intervalo."
+        },
+        "slot_3_to": {
+          "name": "Intervalo 3: Hasta",
+          "description": "Hora de fin del intervalo 3."
+        },
+        "slot_3_type": {
+          "name": "Intervalo 3: Tipo",
+          "description": "Comfort Hi o Comfort Lo para el intervalo 3."
+        }
+      }
+    }
+  },
+  "selector": {
+    "weekday": {
+      "options": {
+        "monday": "Lunes",
+        "tuesday": "Martes",
+        "wednesday": "Miércoles",
+        "thursday": "Jueves",
+        "friday": "Viernes",
+        "saturday": "Sábado",
+        "sunday": "Domingo"
+      }
     }
   }
 }

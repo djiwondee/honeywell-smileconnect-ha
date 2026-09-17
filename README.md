@@ -1,7 +1,7 @@
 # Honeywell Smile Connect — Home Assistant Integration
 
 [![hacs_badge](https://img.shields.io/badge/HACS-Custom-orange.svg)](https://github.com/hacs/integration)
-[![Version](https://img.shields.io/badge/version-0.1.1-yellow.svg)](https://github.com/djiwondee/honeywell-smileconnect-ha/releases)
+[![Version](https://img.shields.io/badge/version-0.2.0-yellow.svg)](https://github.com/djiwondee/honeywell-smileconnect-ha/releases)
 [![Status](https://img.shields.io/badge/status-beta-yellow.svg)](CLAUDE.md#versioning--branching-strategy)
 [![License](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 [![Validate](https://github.com/djiwondee/honeywell-smileconnect-ha/actions/workflows/validate.yml/badge.svg)](https://github.com/djiwondee/honeywell-smileconnect-ha/actions/workflows/validate.yml)
@@ -30,11 +30,12 @@ real heating behaviour in your home.
 
 ## Status
 
-Beta. Login, room/climate control, scene (preset) activation, and both
+Beta. Login, room/climate control, scene (preset) activation, and all five
 custom Actions below have all been live-verified against a real SCN-10
 gateway and a real Home Assistant instance. See [`CLAUDE.md`](CLAUDE.md) for
-the full architecture/history and [`docs/protocol.md`](docs/protocol.md) for
-the reverse-engineered wire protocol.
+the full architecture/history and [`docs/protocol.md`](docs/protocol.md) /
+[`docs/switching-times-api.md`](docs/switching-times-api.md) for the
+reverse-engineered wire protocol.
 
 ## Features
 
@@ -48,8 +49,9 @@ the reverse-engineered wire protocol.
   installations — see [Entities provided](#entities-provided))
 - A lightweight, independent connectivity/response-time diagnostic, so you
   can tell "gateway unreachable" apart from "login broken"
-- Two custom Actions for automations that need more control than the
-  standard `climate.*` services offer — see [Actions](#actions) below
+- Five custom Actions for automations that need more control than the
+  standard `climate.*` services offer, including full read/write access to
+  a room's weekly switching-time schedule — see [Actions](#actions) below
 
 ## Entities provided
 
@@ -160,6 +162,81 @@ data:
 `temperature` is optional; it's ignored when `hvac_mode` is `off` (see
 below for why).
 
+### `honeywell_smileconnect.get_schedule_room`
+
+Read a room's full weekly switching-time schedule from the gateway.
+
+```yaml
+action: honeywell_smileconnect.get_schedule_room
+target:
+  entity_id: climate.living_room
+```
+
+Returns an object with one list per weekday (`monday`..`sunday`); each
+entry has `from`, `to`, and `type` (`H` = Comfort Hi, `L` = Comfort Lo). A
+time not covered by any slot follows the room's implicit "Night" behaviour.
+The response has the same shape `set_schedule_room` expects below, so it
+can be read, tweaked, and written straight back.
+
+### `honeywell_smileconnect.set_schedule_room`
+
+Write a room's full weekly switching-time schedule. This always replaces
+the **entire week** — the gateway has no partial-update endpoint, so read
+the current schedule via `get_schedule_room` first if you only want to
+change part of it.
+
+```yaml
+action: honeywell_smileconnect.set_schedule_room
+target:
+  entity_id: climate.living_room
+data:
+  schedule:
+    monday:
+      - from: "04:30"
+        to: "08:30"
+        type: H
+      - from: "14:30"
+        to: "16:30"
+        type: L
+    tuesday:
+      - from: "04:30"
+        to: "07:30"
+        type: H
+    # ... wednesday..sunday, or omit a day entirely for "no active slots"
+```
+
+The `schedule` field is a nested object (up to 7 days × 3 slots × 3 fields
+— too large for a sane form UI), so it's entered via YAML: switch to
+**Edit in YAML** in Developer Tools → Actions to type it directly. Every
+defined slot must include `from`, `to`, **and** `type` — there is no
+default type. The number of slots per weekday must not exceed the room's
+current schedule capacity (usually 3); this is checked automatically
+against a fresh read before writing, and a schedule that doesn't fit is
+rejected with a clear error rather than silently failing.
+
+### `honeywell_smileconnect.set_schedule_room_weekday`
+
+Replace one weekday's switching-time slots, leaving every other day
+unchanged — a lighter-weight alternative to `set_schedule_room` for the
+common case of editing a single day.
+
+```yaml
+action: honeywell_smileconnect.set_schedule_room_weekday
+target:
+  entity_id: climate.living_room
+data:
+  weekday: monday
+  slot_1_from: "04:00:00"
+  slot_1_to: "08:00:00"
+  slot_1_type: L
+```
+
+Up to 3 slots (`slot_1`/`slot_2`/`slot_3`), each with its own `_from`/`_to`/
+`_type` fields. For a slot you want to set, give all three of its fields
+together — the HA UI shows this as three checkboxes per slot that must all
+be checked at once; leaving all three of a slot's fields empty clears that
+slot.
+
 ## Known limitations
 
 - **`climate.set_temperature` does not reliably apply `temperature` and
@@ -174,6 +251,23 @@ below for why).
 - **Shower and Towel scenes are not exposed as entities.** The protocol
   layer supports them, but there's no test hardware with hot water control
   to verify against.
+- **A switching-time slot's `type` (Comfort Hi/Lo) selects between two
+  fixed, per-room temperatures already configured on the gateway/in the
+  Smile App — it does not let you set an arbitrary temperature per slot.**
+  Writing those two underlying temperatures directly from Home Assistant
+  is a planned follow-up (needs its own live protocol verification first —
+  see [`CLAUDE.md`](CLAUDE.md#next-planned-work-agreed-in-project-discussion-not-yet-started)).
+- **The "Night" switching-time type (`N`) is not supported.** It requires
+  the Honeywell Room Connect SRC-10 hardware extension, which isn't
+  available to verify against; only `H` (Comfort Hi) and `L` (Comfort Lo)
+  are accepted.
+- **No native visual weekly-schedule editor yet** — the three schedule
+  Actions above are the read/write foundation; a proper UI (e.g. a native
+  HA "Schedule" helper per room) and automatic gateway↔HA sync are a
+  planned follow-up, deliberately scoped out of this release. See
+  [`CLAUDE.md`](CLAUDE.md#next-planned-work-agreed-in-project-discussion-not-yet-started)
+  for why true two-way auto-sync isn't achievable with HA's native helper
+  at all.
 - **No automatic reconnect if the gateway session is lost** (e.g. a
   gateway reboot) — entities go "unavailable" until Home Assistant
   restarts or the integration is reloaded. Tracked as a planned fix in
@@ -201,8 +295,9 @@ automatically read [`CLAUDE.md`](CLAUDE.md) for full project context
 (protocol details, open questions, conventions), so no manual copy-pasting
 of prior research is needed.
 
-See [`docs/protocol.md`](docs/protocol.md) for the reverse-engineered API
-protocol documentation.
+See [`docs/protocol.md`](docs/protocol.md) and
+[`docs/switching-times-api.md`](docs/switching-times-api.md) for the
+reverse-engineered API protocol documentation.
 
 ## License
 
