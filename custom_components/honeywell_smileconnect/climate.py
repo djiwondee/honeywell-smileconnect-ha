@@ -1,5 +1,11 @@
 """Climate platform for Honeywell Smile Connect."""
 # Change log:
+# - 2026-09-18 (b): The set_desired_temperature Action's `type` values are
+#   now comfort_hi/comfort_lo/night instead of H/L/N. hassfest rejects
+#   select-option translation keys that are not [a-z0-9-_]+ (the option
+#   values double as translation keys), so uppercase letters cannot be used
+#   there. The API layer (api_methods.DESIRED_TEMP_TARGETS) still uses H/L/N;
+#   this module maps between the two. Also matches the response keys.
 # - 2026-09-18: Added the set_desired_temperature entity Action (new
 #   async_set_desired_temperature handler): writes one of the room's three
 #   fixed schedule temperatures - H=desiredTempDay ("Comfort Hi"),
@@ -352,10 +358,16 @@ GET_SCHEDULE_ROOM_SCHEMA: dict = {}
 
 # Own three-way selector built from api_methods.DESIRED_TEMP_TARGETS - NOT
 # switching_times.VALID_TYPES, which excludes "N" for schedule slot types.
+# The Action's `type` uses the lowercase response_key (comfort_hi/
+# comfort_lo/night) because select-option values double as translation keys
+# and hassfest requires [a-z0-9-_]+; it is mapped back to H/L/N below.
+_DESIRED_TEMP_KEY_TO_TARGET = {
+    target["response_key"]: letter for letter, target in DESIRED_TEMP_TARGETS.items()
+}
 # The exact per-type temperature range is enforced in the handler (it needs
 # the rounded value), not in the schema.
 SET_DESIRED_TEMPERATURE_SCHEMA = {
-    vol.Required("type"): vol.In(list(DESIRED_TEMP_TARGETS)),
+    vol.Required("type"): vol.In(list(_DESIRED_TEMP_KEY_TO_TARGET)),
     vol.Required("temperature"): vol.Coerce(float),
 }
 
@@ -866,15 +878,17 @@ class SmileConnectClimate(CoordinatorEntity, ClimateEntity):
         """Back the set_desired_temperature HA Action.
 
         Writes one of the room's three fixed schedule temperatures
-        (H=desiredTempDay, L=desiredTempDay2, N=desiredTempNight), then
+        (comfort_hi=desiredTempDay, comfort_lo=desiredTempDay2,
+        night=desiredTempNight), then
         re-reads the room straight from the gateway and returns what is
         actually stored instead of trusting the bare success:true. The
         re-read is a direct API call, not coordinator.async_request_refresh():
         that goes through HA's Debouncer, so a second write inside its
         cooldown would return WITHOUT polling and we would report stale data.
         """
+        target = _DESIRED_TEMP_KEY_TO_TARGET[type]
         try:
-            sent = validate_desired_temperature(type, temperature)
+            sent = validate_desired_temperature(target, temperature)
         except ValueError as err:
             raise ServiceValidationError(str(err)) from err
 
@@ -885,7 +899,7 @@ class SmileConnectClimate(CoordinatorEntity, ClimateEntity):
             self.coordinator.api.set_desired_temperature,
             temperature,
             self._room_id,
-            type,
+            target,
         )
         room = await self.hass.async_add_executor_job(
             self.coordinator.api.get_specific_room, self._room_id
@@ -896,7 +910,7 @@ class SmileConnectClimate(CoordinatorEntity, ClimateEntity):
                 "after writing."
             )
         room_data = room["data"]
-        stored = room_data.get(DESIRED_TEMP_TARGETS[type]["field"])
+        stored = room_data.get(DESIRED_TEMP_TARGETS[target]["field"])
         verified = stored == sent
         if not verified:
             _LOGGER.warning(

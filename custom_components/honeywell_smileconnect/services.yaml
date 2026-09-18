@@ -153,9 +153,9 @@ set_desired_temperature:
       selector:
         select:
           options:
-            - "H"
-            - "L"
-            - "N"
+            - "comfort_hi"
+            - "comfort_lo"
+            - "night"
           translation_key: "desired_temperature_type"
     temperature:
       required: true

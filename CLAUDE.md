@@ -2049,7 +2049,7 @@ must not proceed carelessly.
     `validate_desired_temperature()` (range checked on the ROUNDED value).
   - New entity Action `honeywell_smileconnect.set_desired_temperature`
     (`climate.py`, `SupportsResponse.OPTIONAL`) with an explicit required
-    `type` (`H`/`L`/`N`, its own enum - NOT `switching_times.VALID_TYPES`,
+    `type` (`comfort_hi`/`comfort_lo`/`night` - its own enum, NOT `switching_times.VALID_TYPES`,
     which excludes `N` for schedule SLOT types only) + `temperature`.
     Response comes from a direct `api.get_specific_room()` re-read rather
     than `coordinator.async_request_refresh()` (Debouncer could skip the
@@ -2061,7 +2061,13 @@ must not proceed carelessly.
     `H`/`L`/`N` as keys and HA's YAML view rendered `"N"` quoted (YAML 1.1
     reads a bare N as a boolean) - keys are now `comfort_hi`/`comfort_lo`/
     `night`. Lesson: don't use bare single letters (N/Y) as dict keys in
-    service responses.
+    service responses. **Second live/CI finding (hassfest, PR #4):**
+    select-option values in `services.yaml` double as translation keys and
+    must match `[a-z0-9-_]+`, so the Action's `type` input is likewise
+    `comfort_hi`/`comfort_lo`/`night` (climate.py maps to the API layer's
+    H/L/N via `_DESIRED_TEMP_KEY_TO_TARGET`), not H/L/N. (Same rule that
+    already bit the weekday selector in 0.2.0 - the schedule slot `type`
+    selector uses `value:`/`label:` pairs and is unaffected.)
   - New `number.py` platform (`Platform.NUMBER`) - three config sliders per
     room, see the module layout entry above. Entity names in en/de/es/fr
     under `entity.number.*`.

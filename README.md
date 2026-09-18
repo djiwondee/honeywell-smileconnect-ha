@@ -188,18 +188,18 @@ action: honeywell_smileconnect.set_desired_temperature
 target:
   entity_id: climate.living_room
 data:
-  type: H
+  type: comfort_hi
   temperature: 21.5
 ```
 
-`type` is `H` (Comfort Hi, 15–25 °C), `L` (Comfort Lo, 13–21 °C) or `N`
-(Night, 12–14.5 °C). The value is rounded to the nearest 0.5 °C, and a value
+`type` is `comfort_hi` (15–25 °C), `comfort_lo` (13–21 °C) or `night`
+(12–14.5 °C). The value is rounded to the nearest 0.5 °C, and a value
 outside the range for its type is rejected before anything is sent. The
 response (enable "Return response" in Developer Tools) is read back from the
 gateway after writing:
 
 ```yaml
-type: H
+type: comfort_hi
 requested: 21.3
 sent: 21.5
 stored: 21.5
@@ -311,7 +311,7 @@ slot.
   slots.** It requires the Honeywell Room Connect SRC-10 hardware
   extension, which isn't available to verify against; only `H` (Comfort Hi)
   and `L` (Comfort Lo) are accepted for a slot's `type`. Setting the Night
-  *temperature* (slider / `set_desired_temperature` with `type: N`) is
+  *temperature* (slider / `set_desired_temperature` with `type: night`) is
   supported.
 - **No native visual weekly-schedule editor yet** — the three schedule
   Actions above are the read/write foundation; a proper UI (e.g. a native

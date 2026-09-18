@@ -205,9 +205,9 @@
     },
     "desired_temperature_type": {
       "options": {
-        "H": "Confort alto",
-        "L": "Confort bajo",
-        "N": "Noche"
+        "comfort_hi": "Confort alto",
+        "comfort_lo": "Confort bajo",
+        "night": "Noche"
       }
     }
   }
