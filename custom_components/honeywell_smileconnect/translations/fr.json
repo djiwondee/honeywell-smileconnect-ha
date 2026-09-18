@@ -74,6 +74,17 @@
       "thermostat": {
         "name": "Thermostat"
       }
+    },
+    "number": {
+      "comfort_hi": {
+        "name": "Température confort haut"
+      },
+      "comfort_lo": {
+        "name": "Température confort bas"
+      },
+      "night": {
+        "name": "Température nuit"
+      }
     }
   },
   "services": {
@@ -164,6 +175,20 @@
           "description": "Comfort Hi ou Comfort Lo pour la plage 3."
         }
       }
+    },
+    "set_desired_temperature": {
+      "name": "Définir la température souhaitée de la pièce",
+      "description": "Définit l'une des trois températures fixes du programme d'une pièce : Confort haut, Confort bas ou Nuit. Ce sont les températures que le programme hebdomadaire applique pendant une plage du type correspondant. La valeur est arrondie à 0,5 °C avant l'envoi, et la réponse indique ce que la passerelle a réellement enregistré après une nouvelle lecture. Pour modifier à la place la température cible actuelle de la pièce, utilisez le service standard climate.set_temperature.",
+      "fields": {
+        "type": {
+          "name": "Type de température",
+          "description": "Laquelle des trois températures modifier : Confort haut, Confort bas ou Nuit."
+        },
+        "temperature": {
+          "name": "Température",
+          "description": "Nouvelle valeur en °C. La plage autorisée dépend du type : Confort haut de 15 à 25 °C, Confort bas de 13 à 21 °C, Nuit de 12 à 14,5 °C. Arrondie à 0,5 °C."
+        }
+      }
     }
   },
   "selector": {
@@ -176,6 +201,13 @@
         "friday": "Vendredi",
         "saturday": "Samedi",
         "sunday": "Dimanche"
+      }
+    },
+    "desired_temperature_type": {
+      "options": {
+        "comfort_hi": "Confort haut",
+        "comfort_lo": "Confort bas",
+        "night": "Nuit"
       }
     }
   }

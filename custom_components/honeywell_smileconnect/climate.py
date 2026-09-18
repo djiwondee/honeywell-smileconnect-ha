@@ -1,5 +1,33 @@
 """Climate platform for Honeywell Smile Connect."""
 # Change log:
+# - 2026-09-18 (b): The set_desired_temperature Action's `type` values are
+#   now comfort_hi/comfort_lo/night instead of H/L/N. hassfest rejects
+#   select-option translation keys that are not [a-z0-9-_]+ (the option
+#   values double as translation keys), so uppercase letters cannot be used
+#   there. The API layer (api_methods.DESIRED_TEMP_TARGETS) still uses H/L/N;
+#   this module maps between the two. Also matches the response keys.
+# - 2026-09-18: Added the set_desired_temperature entity Action (new
+#   async_set_desired_temperature handler): writes one of the room's three
+#   fixed schedule temperatures - H=desiredTempDay ("Comfort Hi"),
+#   L=desiredTempDay2 ("Comfort Lo"), N=desiredTempNight - via the new
+#   ApiMethods.set_desired_temperature() (docs/protocol.md §4g). Design
+#   decisions: (1) the type selector is its own 3-way enum built from
+#   api_methods.DESIRED_TEMP_TARGETS, NOT switching_times.VALID_TYPES (that
+#   one excludes "N" for schedule SLOT types, unrelated to this); (2) the
+#   per-type range check (Smile App limits) runs on the ROUNDED value via
+#   validate_desired_temperature() and only that pure validation is wrapped
+#   into ServiceValidationError - the network call is deliberately not
+#   wrapped in `except ValueError`, since json.JSONDecodeError is a
+#   ValueError too and would be mis-reported as a user input error; (3) the
+#   returned response comes from a direct api.get_specific_room() re-read,
+#   not coordinator.async_request_refresh(): the coordinator's Debouncer
+#   can skip the poll for a second write inside its cooldown, which would
+#   make us report stale data - exactly what the re-read exists to catch.
+#   A mismatch is reported as verified=False plus a warning, not raised.
+#   The response's desired_temperatures dict uses comfort_hi/comfort_lo/
+#   night as keys (DESIRED_TEMP_TARGETS[...]["response_key"]) instead of
+#   H/L/N: found live that HA's YAML view renders a bare "N" key quoted,
+#   since YAML 1.1 reads N as a boolean.
 # - 2026-09-17 (b): Fixed set_schedule_room_weekday erroring on a call
 #   where only slot_1 is filled in via the HA GUI. Root cause: the
 #   frontend's form for an untouched, optional field inside a collapsed
@@ -260,13 +288,14 @@ from homeassistant.components.climate import (
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import ATTR_TEMPERATURE, UnitOfTemperature
 from homeassistant.core import HomeAssistant, SupportsResponse
-from homeassistant.exceptions import ServiceValidationError
+from homeassistant.exceptions import HomeAssistantError, ServiceValidationError
 from homeassistant.helpers import config_validation as cv
 from homeassistant.helpers import entity_platform
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
 from . import device
+from .api.api_methods import DESIRED_TEMP_TARGETS, validate_desired_temperature
 from .api.scene_manager import SceneManager
 from .const import (
     CLIMATE_TRANSLATION_KEY_THERMOSTAT,
@@ -290,6 +319,7 @@ SERVICE_SET_HVAC_MODE_AND_TEMPERATURE = "set_hvac_mode_and_temperature"
 SERVICE_GET_SCHEDULE_ROOM = "get_schedule_room"
 SERVICE_SET_SCHEDULE_ROOM = "set_schedule_room"
 SERVICE_SET_SCHEDULE_ROOM_WEEKDAY = "set_schedule_room_weekday"
+SERVICE_SET_DESIRED_TEMPERATURE = "set_desired_temperature"
 
 # Mirrors _attr_preset_modes below - kept as a separate module-level list
 # (rather than importing the class attribute) since voluptuous schemas are
@@ -325,6 +355,21 @@ SET_HVAC_MODE_AND_TEMPERATURE_SCHEMA = {
 }
 
 GET_SCHEDULE_ROOM_SCHEMA: dict = {}
+
+# Own three-way selector built from api_methods.DESIRED_TEMP_TARGETS - NOT
+# switching_times.VALID_TYPES, which excludes "N" for schedule slot types.
+# The Action's `type` uses the lowercase response_key (comfort_hi/
+# comfort_lo/night) because select-option values double as translation keys
+# and hassfest requires [a-z0-9-_]+; it is mapped back to H/L/N below.
+_DESIRED_TEMP_KEY_TO_TARGET = {
+    target["response_key"]: letter for letter, target in DESIRED_TEMP_TARGETS.items()
+}
+# The exact per-type temperature range is enforced in the handler (it needs
+# the rounded value), not in the schema.
+SET_DESIRED_TEMPERATURE_SCHEMA = {
+    vol.Required("type"): vol.In(list(_DESIRED_TEMP_KEY_TO_TARGET)),
+    vol.Required("temperature"): vol.Coerce(float),
+}
 
 # `schedule` is deliberately a single free-form field (a nested per-weekday
 # object), not broken into per-day/per-slot fields - see this module's
@@ -431,6 +476,12 @@ async def async_setup_entry(
         SERVICE_SET_SCHEDULE_ROOM_WEEKDAY,
         SET_SCHEDULE_ROOM_WEEKDAY_SCHEMA,
         "async_set_schedule_room_weekday",
+        supports_response=SupportsResponse.OPTIONAL,
+    )
+    platform.async_register_entity_service(
+        SERVICE_SET_DESIRED_TEMPERATURE,
+        SET_DESIRED_TEMPERATURE_SCHEMA,
+        "async_set_desired_temperature",
         supports_response=SupportsResponse.OPTIONAL,
     )
 
@@ -822,3 +873,62 @@ class SmileConnectClimate(CoordinatorEntity, ClimateEntity):
             updated,
         )
         return await self.async_get_schedule_room()
+
+    async def async_set_desired_temperature(self, type: str, temperature: float) -> dict:
+        """Back the set_desired_temperature HA Action.
+
+        Writes one of the room's three fixed schedule temperatures
+        (comfort_hi=desiredTempDay, comfort_lo=desiredTempDay2,
+        night=desiredTempNight), then
+        re-reads the room straight from the gateway and returns what is
+        actually stored instead of trusting the bare success:true. The
+        re-read is a direct API call, not coordinator.async_request_refresh():
+        that goes through HA's Debouncer, so a second write inside its
+        cooldown would return WITHOUT polling and we would report stale data.
+        """
+        target = _DESIRED_TEMP_KEY_TO_TARGET[type]
+        try:
+            sent = validate_desired_temperature(target, temperature)
+        except ValueError as err:
+            raise ServiceValidationError(str(err)) from err
+
+        # Deliberately not wrapped in `except ValueError`: json decode errors
+        # are ValueErrors too and would be mis-reported as user input errors.
+        # Range/type were already validated above; the api layer re-checks.
+        await self.hass.async_add_executor_job(
+            self.coordinator.api.set_desired_temperature,
+            temperature,
+            self._room_id,
+            target,
+        )
+        room = await self.hass.async_add_executor_job(
+            self.coordinator.api.get_specific_room, self._room_id
+        )
+        if room is None:
+            raise HomeAssistantError(
+                f"Room {self._room_id} was not found in the gateway's room list "
+                "after writing."
+            )
+        room_data = room["data"]
+        stored = room_data.get(DESIRED_TEMP_TARGETS[target]["field"])
+        verified = stored == sent
+        if not verified:
+            _LOGGER.warning(
+                "Desired temperature %s for room %s: sent %s but gateway reports %s",
+                type,
+                self._room_id,
+                sent,
+                stored,
+            )
+        await self.coordinator.async_request_refresh()
+        return {
+            "type": type,
+            "requested": temperature,
+            "sent": sent,
+            "stored": stored,
+            "verified": verified,
+            "desired_temperatures": {
+                target["response_key"]: room_data.get(target["field"])
+                for target in DESIRED_TEMP_TARGETS.values()
+            },
+        }

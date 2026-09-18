@@ -479,6 +479,67 @@ deactivated first, `roomstatus` reached Holiday's code (`7`) **immediately**
 (0.0s), no staleness, no nudge needed. Not yet implemented in production
 code (`scene_manager.py`/`climate.py`) — see CLAUDE.md.
 
+## 4g. Writing `desiredTempDay`/`desiredTempDay2`/`desiredTempNight` — same
+endpoint as the live setpoint, different `change_mode` (confirmed 2026-09-18)
+
+Confirms the hypothesis raised in CLAUDE.md's "TOP PRIORITY" entry: no
+separate endpoint is needed. `/api/room/settemperature` — the exact same
+endpoint `ApiMethods.set_temperature()` already uses with `change_mode=0`
+for the live setpoint — also accepts `change_mode=1`/`2`/`3` to write the
+three fixed per-slot-type temperatures.
+
+**Method:** live mitmproxy capture of the real Smile App
+(`scripts/mitm_desired_temp_capture.py`, scoped to ALL `/api/` traffic
+since the target endpoint was unknown up front — the app sets these values
+in its weekly-schedule screen, which also drives the unrelated
+`switchingtimes/set2` endpoint, so a narrower `/api/room/` scope could
+plausibly have missed a genuinely different endpoint). The user set H
+("Comfort Hi"), L ("Comfort Lo"), and N ("Night") for one room, several
+times each, while the capture ran.
+
+**Confirmed `change_mode` mapping**, cross-referenced against the
+`/api/room/list` response taken immediately after each write (not just
+trusting `success:true` — see this project's long-standing verification
+principle, e.g. §4d/§4e below and the many `api_methods.py` incidents in
+CLAUDE.md):
+
+| `change_mode` | Field | 
+|---|---|
+| `0` | `desiredTemperature` (live setpoint — already known, unchanged by this finding) |
+| `1` | `desiredTempNight` |
+| `2` | `desiredTempDay` |
+| `3` | `desiredTempDay2` |
+
+**Confirmed rounding: the gateway floors the sent value to the nearest
+lower 0.5 °C step** — `stored = floor(sent / 0.5) * 0.5`. Evidence (each
+row is one write, immediately followed by a `room/list` read; the German-
+locale app sends a comma decimal separator, which the gateway parses
+correctly — not truncated at the comma):
+
+| sent (`temperature=`) | `change_mode` | stored value read back | `floor(sent/0.5)*0.5` |
+|---|---|---|---|
+| `23,94957` | `2` (Day) | `23.5` | `23.5` ✓ |
+| `15,32586` | `3` (Day2) | `15.0` | `15.0` ✓ |
+| `12,71069` | `1` (Night) | `12.5` | `12.5` ✓ |
+| `21,14241` | `2` (Day) | `21.0` | `21.0` ✓ |
+| `15,20336` | `3` (Day2) | `15.0` | `15.0` ✓ |
+
+All five held exactly. This rounding was never previously characterized
+for this endpoint — the existing decimal-value confirmation for
+`change_mode=0` (§5's "Decimal temperature values" item, 2026-08-30) only
+ever tested `24.5`, a value already on the 0.5 grid, so it could not have
+revealed flooring behavior either way. Whether `change_mode=0` floors the
+same way on an off-grid input is still unconfirmed — not exercised by
+this session's capture, since the live setpoint wasn't touched during it.
+
+**Implemented in 0.3.0:** `ApiMethods.set_desired_temperature()`, the
+`set_desired_temperature` HA Action and per-room `number` sliders
+(`number.py`). Per-type ranges enforced client-side (from the Smile App UI,
+user-provided 2026-09-18): H 15-25, L 13-21, N 12-14.5 degC. Still
+untested: `roomid` scoping on multi-room installs (the capture and live
+tests only covered the single room, `roomid=1`), and whether writes are
+ignored under Standby.
+
 ## 5. Open Items (as of project handover)
 
 - [ ] Verify the exact PBKDF2/SHA512 parameters for password hashing
@@ -553,3 +614,8 @@ code (`scene_manager.py`/`climate.py`) — see CLAUDE.md.
       with raw values outside the gateway's actual `[0,1]` input domain
       for this scene. `target=` unblocked for Leave; `const.
       SCENE_ACTIVATION_DURATION["Leave"]` corrected from `2` to `0.5`.
+- [x] **Writing `desiredTempDay`/`desiredTempDay2`/`desiredTempNight`** —
+      RESOLVED (2026-09-18), see §4g. Same `/api/room/settemperature`
+      endpoint as the live setpoint, `change_mode=2`/`3`/`1` respectively;
+      gateway floors the sent value to the nearest 0.5 °C step. Implemented
+      in 0.3.0 (`set_desired_temperature()` Action + sliders), see §4g.

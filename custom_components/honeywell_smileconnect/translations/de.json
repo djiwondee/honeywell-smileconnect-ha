@@ -74,6 +74,17 @@
       "thermostat": {
         "name": "Thermostat"
       }
+    },
+    "number": {
+      "comfort_hi": {
+        "name": "Temperatur Komfort Hoch"
+      },
+      "comfort_lo": {
+        "name": "Temperatur Komfort Tief"
+      },
+      "night": {
+        "name": "Temperatur Nacht"
+      }
     }
   },
   "services": {
@@ -164,6 +175,20 @@
           "description": "Comfort Hi oder Comfort Lo für Zeitfenster 3."
         }
       }
+    },
+    "set_desired_temperature": {
+      "name": "Solltemperatur des Raums festlegen",
+      "description": "Legt eine der drei festen Zeitplan-Temperaturen eines Raums fest: Komfort Hoch, Komfort Tief oder Nacht. Das sind die Temperaturen, die der Wochenplan während einer Zeitspanne des passenden Typs anwendet. Der Wert wird vor dem Senden auf 0,5 °C gerundet, und die Antwort zeigt, was das Gateway nach erneutem Auslesen tatsächlich gespeichert hat. Um stattdessen die aktuelle Zieltemperatur des Raums zu ändern, verwenden Sie den Standarddienst climate.set_temperature.",
+      "fields": {
+        "type": {
+          "name": "Temperaturtyp",
+          "description": "Welche der drei Temperaturen geändert werden soll: Komfort Hoch, Komfort Tief oder Nacht."
+        },
+        "temperature": {
+          "name": "Temperatur",
+          "description": "Neuer Wert in °C. Der zulässige Bereich hängt vom Typ ab: Komfort Hoch 15 bis 25 °C, Komfort Tief 13 bis 21 °C, Nacht 12 bis 14,5 °C. Wird auf 0,5 °C gerundet."
+        }
+      }
     }
   },
   "selector": {
@@ -176,6 +201,13 @@
         "friday": "Freitag",
         "saturday": "Samstag",
         "sunday": "Sonntag"
+      }
+    },
+    "desired_temperature_type": {
+      "options": {
+        "comfort_hi": "Komfort Hoch",
+        "comfort_lo": "Komfort Tief",
+        "night": "Nacht"
       }
     }
   }

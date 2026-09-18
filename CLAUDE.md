@@ -720,37 +720,46 @@ GET  /admin/login/index            (returns HTML of the config menu)
 
 ### Next planned work (agreed in project discussion, not yet started)
 
-- **TOP PRIORITY (decided 2026-09-17, explicitly ordered before the
+- ~~**TOP PRIORITY (decided 2026-09-17, explicitly ordered before the
   switching-times phase 2 bullet below): investigate how to write
-  `desiredTempDay`/`desiredTempDay2`/`desiredTempNight`** (the three
-  fixed per-room temperatures that a switching-time slot's `type`
-  selects between — confirmed 2026-09-15/17 by the user; `H` →
-  `desiredTempDay`, `L` → `desiredTempDay2`, implicit "Night" →
-  `desiredTempNight`) **is genuinely unconfirmed protocol territory,
-  deliberately out of scope for `0.2.0`.** Reading them is already free
-  (they pass through `get_rooms_list()`'s raw room dict unfiltered - see
-  `tests/fixtures/room_list_response.json`, which already contains all
-  three), but nothing in this project has ever tried to WRITE them.
-  `/api/room/settemperature`'s existing `change_mode` parameter is only
-  ever sent as `0` (the live/current setpoint) by `set_temperature()` -
-  whether other `change_mode` values address these three fixed fields, or
-  whether a different endpoint entirely is needed (as has repeatedly been
-  the case elsewhere in this project - see `switchingtimes/set2` and the
-  scene `duration` endpoints, both app-only features never reachable via
-  the admin console), is unknown and must be live-verified before
-  writing any code - per this project's own validation principle. A
-  dedicated `scripts/manual_probe_desired_temperatures.py` (following the
-  existing `scripts/manual_probe_*.py` pattern - read the current value,
-  try a candidate write, verify via a FRESH read afterward rather than
-  trusting `success:true`, given this project's long history of silent-
-  corruption failures on exactly that assumption) would be the way to
-  start this, not a guessed implementation. Rationale for doing this
-  BEFORE the native-helper/auto-sync phase below: the schedule Actions
-  shipped in `0.2.0` are already live-verified and usable end-to-end for
-  H/L selection, but the underlying temperatures those types actually
-  apply currently can't be managed from HA at all - closing that gap
-  first makes the whole feature meaningfully more complete before
-  investing in a fancier UI on top of it.
+  `desiredTempDay`/`desiredTempDay2`/`desiredTempNight`**~~ **RESOLVED
+  (2026-09-18, branch `feature/desired-temperatures`).** Live mitmproxy
+  capture of the real Smile App (`scripts/mitm_desired_temp_capture.py` —
+  new, generalized from `mitm_scene_capture.py` to scope ALL `/api/`
+  traffic rather than one endpoint family, since the target endpoint was
+  genuinely unknown up front) while the user set H/L/N for one room
+  several times, cross-referenced against `/api/room/list` reads taken
+  immediately after each write — not just trusting `success:true`.
+  **Confirmed: no separate endpoint needed.** `/api/room/settemperature` —
+  the exact same endpoint `set_temperature()` already uses with
+  `change_mode=0` for the live setpoint — also accepts `change_mode=1`
+  (→ `desiredTempNight`), `change_mode=2` (→ `desiredTempDay`), and
+  `change_mode=3` (→ `desiredTempDay2`). **Also discovered along the way:
+  the gateway floors the sent value to the nearest lower 0.5 °C step**
+  (`stored = floor(sent / 0.5) * 0.5`) for all three modes — confirmed
+  across 5 separate writes, each verified via a fresh `room/list` read
+  matching the formula exactly. This rounding behavior was never
+  previously characterized for this endpoint (the existing `change_mode=0`
+  decimal-value confirmation from 2026-08-30 only ever tested `24.5`, a
+  value already on the 0.5 grid, so it couldn't have revealed flooring
+  either way — whether `change_mode=0` floors identically on an off-grid
+  input remains unconfirmed). Full evidence table and methodology in
+  `docs/protocol.md` §4g — do not re-derive this from scratch.
+  **Not yet implemented in `api_methods.py` or exposed to HA** — this
+  session only confirmed the protocol; see the new bullet directly below
+  for the implementation, which still needs its own plan/options
+  discussion per the Session Workflow rules before any code is written.
+  Rationale for prioritizing this investigation before the native-helper/
+  auto-sync phase further below stands as originally stated: the schedule
+  Actions shipped in `0.2.0` are already live-verified and usable
+  end-to-end for H/L selection, but the underlying temperatures those
+  types actually apply couldn't be managed from HA at all until this gap
+  closes.
+- ~~**Implement write support for `desiredTempDay`/`desiredTempDay2`/
+  `desiredTempNight` in `api_methods.py` and expose it to HA**~~ **DONE
+  (2026-09-18, shipped in `0.3.0`)** — see the `0.3.0` entry in
+  "Versioning & Branching Strategy" below for the design decisions taken
+  (dedicated method, new Action with explicit `type`, per-room sliders).
 - **Switching-times phase 2: native `schedule.*` helper UI + automatic
   Gateway↔HA sync** (deferred during planning for `0.2.0`, 2026-09-17 —
   see that version's changelog entry above for what phase 1 shipped
@@ -1417,6 +1426,17 @@ construct a `device_info` dict inline.
     `climate.py`'s single-value `preset_mode` cannot represent — see the
     `0.1.0` addendum #4 entry (Versioning section below) for the full
     rationale and why `climate.py` itself needed no change for this.
+- `number.py` — `SmileConnectDesiredTemperatureNumber` (added 2026-09-18,
+  `0.3.0`): three sliders per room (Comfort Hi/Lo/Night =
+  `desiredTempDay`/`desiredTempDay2`/`desiredTempNight`,
+  `EntityCategory.CONFIG`, `NumberMode.SLIDER`, 0.5 °C step) on the
+  **regler** device. min/max come from `api_methods.DESIRED_TEMP_APP_LIMITS`;
+  rooms are looked up by id (not index); writes call
+  `ApiMethods.set_desired_temperature()` and then
+  `coordinator.async_refresh()` (NOT `async_request_refresh()`: the
+  Debouncer's 10 s cooldown could skip the refresh after a second quick
+  drag and leave a stale slider). No optimistic state - a write the
+  gateway ignores makes the slider snap back after the refresh.
 - `binary_sensor.py` — `SmileConnectConnectivitySensor`
   (`device_class = CONNECTIVITY`, `entity_category = DIAGNOSTIC`), also on
   the gateway device, fed by `SmileConnectPingCoordinator`. `uniqueid`,
@@ -1794,7 +1814,7 @@ must not proceed carelessly.
   room; `manifest.json` + `README.md` version badge bumped to `0.1.1`;
   `README.md`'s entity table and "Known limitations" updated to describe
   the new per-install-size device attachment.
-- **Current version: `0.2.0`** (2026-09-17, developed on branch
+- **`0.2.0`** (2026-09-17, developed on branch
   `feature/switching-times`, per the beta-status rule above — not
   committed directly to `main`). First phase of exposing room switching-
   time schedules (Schaltzeiten) to Home Assistant — see
@@ -2005,6 +2025,63 @@ must not proceed carelessly.
     session's focus is the `desiredTempDay`/`desiredTempDay2`/
     `desiredTempNight` write investigation (see the "TOP PRIORITY" entry
     under "Next planned work" above), NOT phase 2's native helper UI.
+- **Current version: `0.3.0`** (2026-09-18, developed on branch
+  `feature/desired-temperatures`, per the beta-status rule above — merged
+  via pull request, not committed directly to `main`). Adds write support
+  for the three fixed per-room schedule temperatures (`desiredTempDay` =
+  H "Comfort Hi", `desiredTempDay2` = L "Comfort Lo", `desiredTempNight` =
+  N), the "TOP PRIORITY" item that followed `0.2.0`. Contents:
+  - **Protocol (see `docs/protocol.md` §4g):** found via a live mitmproxy
+    capture of the real Smile App (`scripts/mitm_desired_temp_capture.py`,
+    scoped to ALL `/api/` traffic since the endpoint was unknown up
+    front). No new endpoint: `/api/room/settemperature` with `change_mode`
+    1 (Night) / 2 (Day) / 3 (Day2). The gateway floors the sent value to
+    a 0.5 °C step (`floor(sent/0.5)*0.5`), verified across 5 writes via
+    fresh `room/list` reads. The German-locale app sends a comma decimal
+    separator, which the gateway parses correctly.
+  - `api_methods.py`: new `set_desired_temperature(temperature, room_id,
+    target)` (existing `set_temperature()` untouched, still
+    `change_mode=0`), `DESIRED_TEMP_TARGETS` (letter → change_mode, field,
+    response_key), `DESIRED_TEMP_APP_LIMITS` (H 15-25, L 13-21, N 12-14.5,
+    user-provided from the Smile App UI; enforced client-side, whether the
+    gateway enforces them is unknown), `round_to_gateway_step()` (half-up,
+    deliberately NOT Python's banker's `round()`), and
+    `validate_desired_temperature()` (range checked on the ROUNDED value).
+  - New entity Action `honeywell_smileconnect.set_desired_temperature`
+    (`climate.py`, `SupportsResponse.OPTIONAL`) with an explicit required
+    `type` (`comfort_hi`/`comfort_lo`/`night` - its own enum, NOT `switching_times.VALID_TYPES`,
+    which excludes `N` for schedule SLOT types only) + `temperature`.
+    Response comes from a direct `api.get_specific_room()` re-read rather
+    than `coordinator.async_request_refresh()` (Debouncer could skip the
+    poll on a second write in its cooldown and report stale data):
+    `{type, requested, sent, stored, verified, desired_temperatures}`.
+    Mismatch → `verified: false` + warning, not an exception. The network
+    call is deliberately not wrapped in `except ValueError` (JSONDecodeError
+    is a ValueError). **Live-found:** `desired_temperatures` originally used
+    `H`/`L`/`N` as keys and HA's YAML view rendered `"N"` quoted (YAML 1.1
+    reads a bare N as a boolean) - keys are now `comfort_hi`/`comfort_lo`/
+    `night`. Lesson: don't use bare single letters (N/Y) as dict keys in
+    service responses. **Second live/CI finding (hassfest, PR #4):**
+    select-option values in `services.yaml` double as translation keys and
+    must match `[a-z0-9-_]+`, so the Action's `type` input is likewise
+    `comfort_hi`/`comfort_lo`/`night` (climate.py maps to the API layer's
+    H/L/N via `_DESIRED_TEMP_KEY_TO_TARGET`), not H/L/N. (Same rule that
+    already bit the weekday selector in 0.2.0 - the schedule slot `type`
+    selector uses `value:`/`label:` pairs and is unaffected.)
+  - New `number.py` platform (`Platform.NUMBER`) - three config sliders per
+    room, see the module layout entry above. Entity names in en/de/es/fr
+    under `entity.number.*`.
+  - `services.yaml`/`strings.json`/`translations/{en,de,es,fr}.json`: new
+    action + `selector.desired_temperature_type` + number entity names;
+    verified no stray `{`/`}` or `[%key:` markers.
+  - Tests: `tests/test_api_methods.py` (rounding, change_mode mapping,
+    per-type boundaries, rounding-before-range-check, `set_temperature()`
+    unchanged guard, limits on the step grid). Entities/Action handler
+    have no automated harness (project gap) - verified live on a real HA
+    instance + gateway by the user, incl. sliders and the Action response.
+  - Still unknown: whether writes are ignored under Standby, multi-room
+    (`roomid` scoping only tested on the single-room install), and whether
+    `change_mode=0` also floors off-grid values.
 - When proposing a plan (per the Session Workflow rules above), also
   propose the appropriate version bump and, once beta status applies,
   the branch name to use.

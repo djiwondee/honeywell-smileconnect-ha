@@ -6,6 +6,20 @@ tested against a real SCN-10 gateway; others are ports of the generic
 HeatApp shape and should be re-verified before relying on them.
 """
 # Change log:
+# - 2026-09-18: Added set_desired_temperature() plus DESIRED_TEMP_TARGETS,
+#   DESIRED_TEMP_APP_LIMITS, validate_desired_temperature() and
+#   round_to_gateway_step(). Writes desiredTempDay/desiredTempDay2/
+#   desiredTempNight via /api/room/settemperature with change_mode 2/3/1
+#   (docs/protocol.md §4g, confirmed via mitmproxy capture of the real
+#   Smile App). The gateway floors whatever it receives to a 0.5 degC step,
+#   so we quantize client-side first (half-up, deliberately NOT Python's
+#   banker's round()) and the value sent is exactly the value stored.
+#   Per-type ranges come from the Smile App UI (user-provided) and are
+#   enforced client-side; whether the gateway enforces them is unknown.
+#   set_temperature() (change_mode=0, live setpoint) is deliberately left
+#   byte-for-byte unchanged. DESIRED_TEMP_TARGETS also carries a
+#   "response_key" (comfort_hi/comfort_lo/night) for the HA Action's
+#   response, since a bare "N" key gets quoted by HA's YAML view.
 # - 2026-09-11 (b): Added get_scene_duration_native() - applies the
 #   raw-to-real-world conversion recipe already documented in
 #   get_scene_duration()'s own docstring, so callers (coordinator.py, for
@@ -178,6 +192,8 @@ HeatApp shape and should be re-verified before relying on them.
 #   CLAUDE.md for the full list of touched files.
 from __future__ import annotations
 
+import math
+
 from .api_request import ApiRequest
 from .credentials import Credentials
 from .default_params import DefaultApiParams
@@ -236,6 +252,72 @@ def _validate_target_against_app_limits(scene_name: str, target: float) -> None:
             )
 
 
+# Maps the user-facing type letter (same H/L/N vocabulary as the schedule
+# editor's slot types) to the /api/room/settemperature `change_mode` and the
+# room-list field it lands in. See docs/protocol.md §4g. Deliberately
+# independent of switching_times.VALID_TYPES: that constant excludes "N" for
+# schedule SLOT types (unverifiable without SRC-10 hardware), which has
+# nothing to do with writing the underlying temperatures - "N" IS supported
+# here (live-verified, change_mode=1).
+DESIRED_TEMP_TARGETS: dict[str, dict] = {
+    "H": {"change_mode": 2, "field": "desiredTempDay", "response_key": "comfort_hi"},
+    "L": {"change_mode": 3, "field": "desiredTempDay2", "response_key": "comfort_lo"},
+    "N": {"change_mode": 1, "field": "desiredTempNight", "response_key": "night"},
+}
+# "response_key" is what the HA Action uses for the keys of its response
+# dict. Bare "N" would be rendered as "N" (quoted) by HA's YAML view since
+# YAML 1.1 treats N/Y as booleans, so descriptive keys are used instead.
+
+# Selectable range per type in the Smile App UI (user-provided 2026-09-18),
+# in degC. Enforced client-side; NOT derived from the room's generic
+# scheduleTempMin/Max (12-25), which is too wide for L and N.
+DESIRED_TEMP_APP_LIMITS: dict[str, dict] = {
+    "H": {"min": 15, "max": 25},
+    "L": {"min": 13, "max": 21},
+    "N": {"min": 12, "max": 14.5},
+}
+
+# The gateway floors whatever it receives to this step (docs/protocol.md
+# §4g), so we quantize client-side first: the value we send is then exactly
+# the value that gets stored, and callers are never surprised by a silently
+# lower number.
+DESIRED_TEMP_STEP = 0.5
+
+
+def round_to_gateway_step(temperature: float) -> float:
+    """Round to the nearest 0.5 degC, ties going UP.
+
+    Deliberately not round(x * 2) / 2: Python's round() is banker's
+    rounding, so ties would alternate (21.25 -> 21.0 but 21.75 -> 22.0).
+    Half-up is predictable and matches what users expect.
+    """
+    return math.floor(temperature / DESIRED_TEMP_STEP + 0.5) * DESIRED_TEMP_STEP
+
+
+def validate_desired_temperature(target: str, temperature: float) -> float:
+    """Validate target/temperature and return the rounded value to send.
+
+    Raises ValueError for an unknown target, a non-finite temperature, or a
+    (rounded) temperature outside the app's range for that type. The range
+    is checked on the rounded value, i.e. exactly what would be written.
+    """
+    if target not in DESIRED_TEMP_TARGETS:
+        raise ValueError(
+            f"Unknown desired-temperature target {target!r}; "
+            f"expected one of {sorted(DESIRED_TEMP_TARGETS)}."
+        )
+    if not math.isfinite(temperature):
+        raise ValueError(f"temperature={temperature!r} is not a finite number.")
+    rounded = round_to_gateway_step(temperature)
+    limits = DESIRED_TEMP_APP_LIMITS[target]
+    if rounded < limits["min"] or rounded > limits["max"]:
+        raise ValueError(
+            f"temperature={temperature} (rounded to {rounded}) is outside the "
+            f"allowed range for type '{target}': {limits['min']}-{limits['max']} degC."
+        )
+    return rounded
+
+
 class ApiMethods:
     """Thin wrapper turning gateway endpoints into Python calls."""
 
@@ -272,6 +354,23 @@ class ApiMethods:
         params.roomid = room_id
         params.change_mode = 0
         params.temperature = temperature
+        return self._request.request(
+            self.base_url + "/api/room/settemperature", self.credentials, params
+        )
+
+    # verified (docs/protocol.md §4g): writes one of the three fixed
+    # per-slot-type temperatures via the same endpoint as set_temperature(),
+    # just a different change_mode.
+    def set_desired_temperature(self, temperature: float, room_id, target: str) -> dict:
+        """target is "H" (desiredTempDay), "L" (desiredTempDay2) or "N"
+        (desiredTempNight). The temperature is rounded to the nearest
+        0.5 degC and range-checked per type before anything is sent (see
+        validate_desired_temperature)."""
+        rounded = validate_desired_temperature(target, temperature)
+        params = DefaultApiParams()
+        params.roomid = room_id
+        params.change_mode = DESIRED_TEMP_TARGETS[target]["change_mode"]
+        params.temperature = rounded
         return self._request.request(
             self.base_url + "/api/room/settemperature", self.credentials, params
         )

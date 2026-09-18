@@ -74,6 +74,17 @@
       "thermostat": {
         "name": "Termostato"
       }
+    },
+    "number": {
+      "comfort_hi": {
+        "name": "Temperatura confort alto"
+      },
+      "comfort_lo": {
+        "name": "Temperatura confort bajo"
+      },
+      "night": {
+        "name": "Temperatura noche"
+      }
     }
   },
   "services": {
@@ -164,6 +175,20 @@
           "description": "Comfort Hi o Comfort Lo para el intervalo 3."
         }
       }
+    },
+    "set_desired_temperature": {
+      "name": "Definir la temperatura deseada de la estancia",
+      "description": "Define una de las tres temperaturas fijas del programa de una estancia: Confort alto, Confort bajo o Noche. Son las temperaturas que el programa semanal aplica durante una franja del tipo correspondiente. El valor se redondea a 0,5 °C antes de enviarse, y la respuesta indica lo que la pasarela almacenó realmente tras una nueva lectura. Para cambiar en su lugar la temperatura objetivo actual de la estancia, use el servicio estándar climate.set_temperature.",
+      "fields": {
+        "type": {
+          "name": "Tipo de temperatura",
+          "description": "Cuál de las tres temperaturas cambiar: Confort alto, Confort bajo o Noche."
+        },
+        "temperature": {
+          "name": "Temperatura",
+          "description": "Nuevo valor en °C. El rango permitido depende del tipo: Confort alto de 15 a 25 °C, Confort bajo de 13 a 21 °C, Noche de 12 a 14,5 °C. Se redondea a 0,5 °C."
+        }
+      }
     }
   },
   "selector": {
@@ -176,6 +201,13 @@
         "friday": "Viernes",
         "saturday": "Sábado",
         "sunday": "Domingo"
+      }
+    },
+    "desired_temperature_type": {
+      "options": {
+        "comfort_hi": "Confort alto",
+        "comfort_lo": "Confort bajo",
+        "night": "Noche"
       }
     }
   }
