@@ -74,6 +74,17 @@
       "thermostat": {
         "name": "Thermostat"
       }
+    },
+    "number": {
+      "comfort_hi": {
+        "name": "Comfort Hi temperature"
+      },
+      "comfort_lo": {
+        "name": "Comfort Lo temperature"
+      },
+      "night": {
+        "name": "Night temperature"
+      }
     }
   },
   "services": {
@@ -164,6 +175,20 @@
           "description": "Comfort Hi or Comfort Lo for slot 3."
         }
       }
+    },
+    "set_desired_temperature": {
+      "name": "Set room desired temperature",
+      "description": "Set one of a room's three fixed schedule temperatures: Comfort Hi, Comfort Lo, or Night. These are the temperatures the weekly schedule applies during a slot of the matching type. The value is rounded to the nearest 0.5 °C before sending, and the response reports what the gateway actually stored after a fresh read. To change the room's live target temperature instead, use the standard climate.set_temperature service.",
+      "fields": {
+        "type": {
+          "name": "Temperature type",
+          "description": "Which of the three temperatures to change: Comfort Hi, Comfort Lo, or Night."
+        },
+        "temperature": {
+          "name": "Temperature",
+          "description": "New value in °C. Allowed range depends on the type: Comfort Hi 15 to 25 °C, Comfort Lo 13 to 21 °C, Night 12 to 14.5 °C. Rounded to the nearest 0.5 °C."
+        }
+      }
     }
   },
   "selector": {
@@ -176,6 +201,13 @@
         "friday": "Friday",
         "saturday": "Saturday",
         "sunday": "Sunday"
+      }
+    },
+    "desired_temperature_type": {
+      "options": {
+        "H": "Comfort Hi",
+        "L": "Comfort Lo",
+        "N": "Night"
       }
     }
   }

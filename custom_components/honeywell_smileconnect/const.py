@@ -1,5 +1,9 @@
 """Constants for the Honeywell Smile Connect integration."""
 # Change log:
+# - 2026-09-18: Added NUMBER_TRANSLATION_KEY_COMFORT_HI/COMFORT_LO/NIGHT for
+#   the new per-room desired-temperature sliders (number.py). Keys are
+#   deliberately the same words as the set_desired_temperature Action's
+#   response keys (api_methods.DESIRED_TEMP_TARGETS[...]["response_key"]).
 # - 2026-09-11 (b): Added TIMED_PRESET_SCENE_NAMES and four new
 #   SENSOR_TRANSLATION_KEY_*_DURATION constants for the new per-room,
 #   per-preset "duration remaining" sensors (sensor.py) - see
@@ -117,6 +121,9 @@ SENSOR_TRANSLATION_KEY_PARTY_DURATION = "party_duration_remaining"
 SENSOR_TRANSLATION_KEY_LEAVE_DURATION = "leave_duration_remaining"
 SENSOR_TRANSLATION_KEY_HOLIDAY_DURATION = "holiday_duration_remaining"
 BINARY_SENSOR_TRANSLATION_KEY_CONNECTIVITY = "connectivity"
+NUMBER_TRANSLATION_KEY_COMFORT_HI = "comfort_hi"
+NUMBER_TRANSLATION_KEY_COMFORT_LO = "comfort_lo"
+NUMBER_TRANSLATION_KEY_NIGHT = "night"
 # "thermostat" was chosen over the German-specific "Regler"/"Heizungsregler"
 # for the *entity* display name specifically so it reads naturally in all
 # four supported languages ("Thermostat" is spelled identically or near-

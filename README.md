@@ -1,7 +1,7 @@
 # Honeywell Smile Connect — Home Assistant Integration
 
 [![hacs_badge](https://img.shields.io/badge/HACS-Custom-orange.svg)](https://github.com/hacs/integration)
-[![Version](https://img.shields.io/badge/version-0.2.0-yellow.svg)](https://github.com/djiwondee/honeywell-smileconnect-ha/releases)
+[![Version](https://img.shields.io/badge/version-0.3.0-yellow.svg)](https://github.com/djiwondee/honeywell-smileconnect-ha/releases)
 [![Status](https://img.shields.io/badge/status-beta-yellow.svg)](CLAUDE.md#versioning--branching-strategy)
 [![License](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 [![Validate](https://github.com/djiwondee/honeywell-smileconnect-ha/actions/workflows/validate.yml/badge.svg)](https://github.com/djiwondee/honeywell-smileconnect-ha/actions/workflows/validate.yml)
@@ -30,7 +30,7 @@ real heating behaviour in your home.
 
 ## Status
 
-Beta. Login, room/climate control, scene (preset) activation, and all five
+Beta. Login, room/climate control, scene (preset) activation, and all six
 custom Actions below have all been live-verified against a real SCN-10
 gateway and a real Home Assistant instance. See [`CLAUDE.md`](CLAUDE.md) for
 the full architecture/history and [`docs/protocol.md`](docs/protocol.md) /
@@ -45,11 +45,13 @@ reverse-engineered wire protocol.
 - The gateway's five scenes as presets: **Boost**, **Party**, **Leave**,
   **Holiday** (temporary overrides), plus **Standby** (schedule on/off)
 - Per-room sensors showing how long a preset has left to run
+- Per-room sliders for the three fixed schedule temperatures (Comfort Hi,
+  Comfort Lo, Night)
 - Outside-temperature sensors (from the room's Regler, on single-room
   installations — see [Entities provided](#entities-provided))
 - A lightweight, independent connectivity/response-time diagnostic, so you
   can tell "gateway unreachable" apart from "login broken"
-- Five custom Actions for automations that need more control than the
+- Six custom Actions for automations that need more control than the
   standard `climate.*` services offer, including full read/write access to
   a room's weekly switching-time schedule — see [Actions](#actions) below
 
@@ -69,6 +71,18 @@ reverse-engineered wire protocol.
 | Gateway response time | gateway | diagnostic | From the unauthenticated `/api/ping` endpoint |
 | Boost / Party / Leave / Holiday remaining | **per room** | primary | Time left on that preset, in its own natural unit (minutes/hours/hours/days) — reads "unknown" when that specific preset isn't active for the room. See [Known limitations](#known-limitations) for why there are four independent sensors instead of one. |
 
+**Number** (config entities, one set per room, on the Regler device):
+
+| Entity | Range | Notes |
+|---|---|---|
+| Comfort Hi temperature | 15–25 °C | The temperature a schedule slot of type `H` applies |
+| Comfort Lo temperature | 13–21 °C | The temperature a schedule slot of type `L` applies |
+| Night temperature | 12–14.5 °C | The temperature the room uses outside any schedule slot |
+
+Sliders move in 0.5 °C steps (the gateway itself rounds down to that grid).
+Ranges are the ones the Smile App offers. Changes made in the Smile App show
+up here on the next poll.
+
 **Binary sensor**:
 
 | Entity | Scope | Category | Notes |
@@ -78,7 +92,8 @@ reverse-engineered wire protocol.
 Devices: one **gateway** device (connectivity/diagnostics, plus weather on
 multi-room installs — see [Known limitations](#known-limitations)), plus
 one **SDC Regler** sub-device per room (climate entity + that room's four
-preset sensors, plus weather on single-room installs), linked to the
+preset sensors and three temperature sliders, plus weather on single-room
+installs), linked to the
 gateway via `via_device`.
 
 ## Installation
@@ -161,6 +176,42 @@ data:
 
 `temperature` is optional; it's ignored when `hvac_mode` is `off` (see
 below for why).
+
+### `honeywell_smileconnect.set_desired_temperature`
+
+Set one of a room's three fixed schedule temperatures — the same values the
+sliders above control, but usable from automations and it returns what the
+gateway actually stored.
+
+```yaml
+action: honeywell_smileconnect.set_desired_temperature
+target:
+  entity_id: climate.living_room
+data:
+  type: H
+  temperature: 21.5
+```
+
+`type` is `H` (Comfort Hi, 15–25 °C), `L` (Comfort Lo, 13–21 °C) or `N`
+(Night, 12–14.5 °C). The value is rounded to the nearest 0.5 °C, and a value
+outside the range for its type is rejected before anything is sent. The
+response (enable "Return response" in Developer Tools) is read back from the
+gateway after writing:
+
+```yaml
+type: H
+requested: 21.3
+sent: 21.5
+stored: 21.5
+verified: true
+desired_temperatures:
+  comfort_hi: 21.5
+  comfort_lo: 18.5
+  night: 13
+```
+
+This is not the same as `climate.set_temperature`, which changes the room's
+current target temperature.
 
 ### `honeywell_smileconnect.get_schedule_room`
 
@@ -254,13 +305,14 @@ slot.
 - **A switching-time slot's `type` (Comfort Hi/Lo) selects between two
   fixed, per-room temperatures already configured on the gateway/in the
   Smile App — it does not let you set an arbitrary temperature per slot.**
-  Writing those two underlying temperatures directly from Home Assistant
-  is a planned follow-up (needs its own live protocol verification first —
-  see [`CLAUDE.md`](CLAUDE.md#next-planned-work-agreed-in-project-discussion-not-yet-started)).
-- **The "Night" switching-time type (`N`) is not supported.** It requires
-  the Honeywell Room Connect SRC-10 hardware extension, which isn't
-  available to verify against; only `H` (Comfort Hi) and `L` (Comfort Lo)
-  are accepted.
+  Those underlying temperatures can be changed with the Comfort Hi / Comfort
+  Lo / Night sliders or the `set_desired_temperature` Action above.
+- **The "Night" switching-time type (`N`) is not supported in schedule
+  slots.** It requires the Honeywell Room Connect SRC-10 hardware
+  extension, which isn't available to verify against; only `H` (Comfort Hi)
+  and `L` (Comfort Lo) are accepted for a slot's `type`. Setting the Night
+  *temperature* (slider / `set_desired_temperature` with `type: N`) is
+  supported.
 - **No native visual weekly-schedule editor yet** — the three schedule
   Actions above are the read/write foundation; a proper UI (e.g. a native
   HA "Schedule" helper per room) and automatic gateway↔HA sync are a

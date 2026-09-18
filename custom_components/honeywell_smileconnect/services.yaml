@@ -141,3 +141,29 @@ set_schedule_room_weekday:
                   label: "Comfort Hi"
                 - value: "L"
                   label: "Comfort Lo"
+
+set_desired_temperature:
+  target:
+    entity:
+      domain: climate
+      integration: honeywell_smileconnect
+  fields:
+    type:
+      required: true
+      selector:
+        select:
+          options:
+            - "H"
+            - "L"
+            - "N"
+          translation_key: "desired_temperature_type"
+    temperature:
+      required: true
+      selector:
+        number:
+          # UI hint only - the exact per-type range (H 15-25, L 13-21,
+          # N 12-14.5) is enforced by the handler.
+          min: 12
+          max: 25
+          step: 0.5
+          mode: box

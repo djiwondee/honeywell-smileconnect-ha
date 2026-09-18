@@ -1,5 +1,7 @@
 """The Honeywell Smile Connect integration."""
 # Change log:
+# - 2026-09-18: Added Platform.NUMBER (number.py) - per-room sliders for
+#   the three fixed schedule temperatures (desiredTempDay/Day2/Night).
 # - 2026-08-27 (b): Added a second, independent SmileConnectPingCoordinator
 #   (see ping_coordinator.py) alongside the existing authenticated
 #   coordinator, plus Platform.BINARY_SENSOR for the new connectivity
@@ -30,7 +32,12 @@ from .const import (
 from .coordinator import SmileConnectCoordinator
 from .ping_coordinator import SmileConnectPingCoordinator
 
-PLATFORMS: list[Platform] = [Platform.CLIMATE, Platform.SENSOR, Platform.BINARY_SENSOR]
+PLATFORMS: list[Platform] = [
+    Platform.CLIMATE,
+    Platform.SENSOR,
+    Platform.BINARY_SENSOR,
+    Platform.NUMBER,
+]
 
 
 @dataclass
