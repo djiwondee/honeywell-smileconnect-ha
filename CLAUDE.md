@@ -863,7 +863,22 @@ GET  /admin/login/index            (returns HTML of the config menu)
   even a 32-bit counter on the gateway's own side would take on the
   order of centuries to overflow if it exists at all - genuinely
   untested/unknown whether the gateway enforces any limit, but not
-  considered the practical risk here. **The permanent-stuck-unavailable
+  considered the practical risk here.
+  **PARTIALLY ANSWERED LIVE (2026-09-21), and the answer was a surprise:
+  the gateway does NOT reject a `reqcount` that has jumped far ahead.**
+  `scripts/manual_probe_failure_responses.py` set the counter to
+  `999_999` mid-session and the very next `/api/room/list` returned
+  `success: true` with real room data. What the gateway *does* enforce
+  is the request SIGNATURE: the following call, with a corrupted
+  `authorization_token` (the signature salt) and a now-valid counter,
+  was rejected immediately with `loginRejected: true`. So a forward jump
+  in the counter is tolerated - this refines, without contradicting, the
+  original reqcount finding, which was about a PRE-incremented (i.e.
+  off-by-one-ahead-at-the-wrong-moment) value on the very first
+  authenticated call after login, a different situation from a
+  mid-session jump. A backward jump remains untested. Practical upshot:
+  counter desync is a much smaller risk than assumed, and signature
+  validity is the real gate. **The permanent-stuck-unavailable
   failure mode is the real, already-confirmed problem, independent of
   whether `reqcount` overflow is ever actually involved.** Proposed fix
   (not yet designed in detail): on catching the exception in
@@ -2141,7 +2156,21 @@ must not proceed carelessly.
     `success: true` with all 21 slot entries. `/api/room/list` and
     `/api/scene/status` likewise. **No endpoint exemption is needed** in
     `_raise_for_payload()`.
-    **Step 3 is still outstanding**, and the first version of it tested
+    **Step 3 RESULT, captured live 2026-09-21** (after the first version
+    of it tested nothing - see below). The real payload every
+    authenticated endpoint returns once the session is gone:
+    `{"success": false, "message": "Your session is finished, please log
+    in again.", "loginRejected": true, "product": "honeywell-smile",
+    "language": "en", "performance": 0.09}`. Now committed as the real
+    `tests/fixtures/session_expired_response.json`, replacing the
+    constructed placeholder - so every fixture in that directory is a
+    genuine recording again. The three structural fields the fix depends
+    on (`success`, `loginRejected`, and the message text) matched the
+    constructed version exactly; `product` is new and appears in no
+    success response captured so far.
+    Also learned in the same run: **a `reqcount` jumped far ahead is
+    ACCEPTED** - see the reqcount paragraph above.
+    The first version of step 3 tested
     nothing: it corrupted `credentials.device_token`, but that field is
     ONLY the challenge token used *during* login (`login.py`) and is never
     referenced again afterwards - `api_request.py` signs with

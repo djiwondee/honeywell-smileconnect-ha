@@ -1,4 +1,18 @@
 # Change log:
+# - 2026-09-21 (c): Both remaining steps confirmed live against the real
+#   gateway. Step 2: no endpoint exemption needed (see (b) below).
+#   Step 3: the real session-expiry payload is
+#   {"success": false, "message": "Your session is finished, please log
+#   in again.", "loginRejected": true, "product": "honeywell-smile",
+#   "language": "en", "performance": 0.09}, now committed as
+#   tests/fixtures/session_expired_response.json. Unexpected second
+#   finding in the same run: the FIRST attempt (reqcount jumped to
+#   999_999) was ACCEPTED - the gateway returned success:true with real
+#   room data. It was the SECOND attempt, with a corrupted
+#   authorization_token, that got rejected. The gateway enforces the
+#   request signature, not a strict counter; see CLAUDE.md's reqcount
+#   paragraph for what that does and does not say about the original
+#   reqcount finding.
 # - 2026-09-21 (b): Fixed step 3, which tested nothing. It corrupted
 #   credentials.device_token - but that field is ONLY the challenge token
 #   used during login (login.py:93/107/112) and is never touched again
