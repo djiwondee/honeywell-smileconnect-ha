@@ -1,4 +1,17 @@
 # Change log:
+# - 2026-09-21 (b): Fixed step 3, which tested nothing. It corrupted
+#   credentials.device_token - but that field is ONLY the challenge token
+#   used during login (login.py:93/107/112) and is never touched again
+#   afterwards. api_request.py signs with credentials.authorization_token
+#   (the DECRYPTED devicetoken) instead, so the corrupted call went
+#   through completely normally and returned real room data. Step 3 now
+#   invalidates the fields the signature actually depends on, tries them
+#   in order, and reports which one the gateway rejects.
+#   Step 2 result on the real gateway (2026-09-21): BOTH probed endpoints
+#   answer success:true - /api/scene/duration on an inactive scene
+#   returns {"success": true, "duration": 0}, and switchingtimes/get2
+#   returns success:true. No endpoint exemption is needed in
+#   api_request._raise_for_payload().
 # - 2026-09-21: Initial version. Pre-flight for the 0.3.1 session-recovery
 #   fix: api_request.py now raises on a failed gateway response, which
 #   changes the behaviour of EVERY endpoint at once. Per this project's
@@ -23,13 +36,18 @@ invalidates THIS script's own in-memory session token:
      needs an explicit exemption in api_request._raise_for_payload()
      rather than a hard raise - otherwise the fix would break a path that
      works today.
-  3. Capture the real session-expiry payload by corrupting the device
-     token and issuing one more call. Its output belongs in
+  3. Capture the real session-expiry payload by invalidating the parts
+     of the local session the request signature actually depends on -
+     reqcount, then the authorization token, then the user id - and
+     issuing one more call after each. Its output belongs in
      tests/fixtures/session_expired_response.json, replacing the
      constructed placeholder currently committed there.
 
-Nothing is written to the gateway. Step 3 only breaks the local session
-object; the gateway is untouched and the next login works normally.
+Nothing is written to the gateway. Step 3 only breaks this script's own
+in-memory session; the gateway is untouched and the next login works
+normally. (Note the session IS likely dead for the rest of the run after
+the first attempt, which is the point - later attempts are reported but
+no longer independent.)
 """
 from __future__ import annotations
 
@@ -44,6 +62,9 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO_ROOT / "custom_components"))
 
 from honeywell_smileconnect.api.api_methods import ApiMethods  # noqa: E402
+from honeywell_smileconnect.api.exceptions import (  # noqa: E402
+    SmileConnectApiError,
+)
 from honeywell_smileconnect.api.login import Login  # noqa: E402
 
 SEPARATOR = "=" * 68
@@ -125,21 +146,63 @@ def main() -> None:
 
     # --- Step 3: capture the real session-expiry payload ------------------
     print("STEP 3 - capturing the real session-expiry payload")
-    print("  (corrupting this script's own device token; the gateway is untouched)")
-    credentials.device_token = "invalid-" + credentials.device_token
-    try:
-        expired = api.get_raw_rooms()
-    except Exception as err:  # noqa: BLE001 - diagnostic script
-        print(f"  -> the call raised instead of returning a payload: {err!r}")
-        print("     (expected once the 0.3.1 check is in place - run this on the")
-        print("      pre-fix code, or temporarily disable _raise_for_payload, to")
-        print("      capture the raw body)")
-        return
+    print("  (breaking this script's own session only; the gateway is untouched)")
 
-    _dump("SESSION-EXPIRY RESPONSE (goes into tests/fixtures/)", expired)
-    _verdict("/api/room/list with a broken token", expired)
-    print("Copy the JSON above into tests/fixtures/session_expired_response.json,")
-    print("keeping the existing _comment field and noting today's date in it.")
+    # NOT device_token: that is only the challenge token used during login
+    # (login.py) and is never referenced again afterwards - corrupting it
+    # does nothing at all, which is exactly the mistake the first version
+    # of this script made. api_request.request() depends on reqcount,
+    # authorization_token (the signature salt) and user_id.
+    attempts = (
+        (
+            "reqcount jumped far ahead",
+            # The documented real-world cause of "Your session is finished,
+            # please log in again." - see CLAUDE.md's reqcount section.
+            lambda: setattr(credentials, "reqcount", 999_999),
+        ),
+        (
+            "authorization token corrupted (signature salt)",
+            lambda: setattr(
+                credentials, "authorization_token", "invalid-" + credentials.authorization_token
+            ),
+        ),
+        (
+            "user id corrupted",
+            lambda: setattr(credentials, "user_id", 999_999),
+        ),
+    )
+
+    for label, break_it in attempts:
+        print(f"\n  attempt: {label}")
+        break_it()
+        try:
+            payload = api.get_raw_rooms()
+        except SmileConnectApiError as err:
+            # The 0.3.1 check is in place, so a rejection raises rather than
+            # returning - but the exception carries the raw payload, which
+            # is exactly what we came for.
+            _dump("SESSION-EXPIRY RESPONSE (goes into tests/fixtures/)", err.payload)
+            print(f"  -> rejected via {type(err).__name__}: {err}")
+            print("\nCopy the JSON above into")
+            print("tests/fixtures/session_expired_response.json, keeping the")
+            print("_comment field and recording today's date as the capture date.")
+            return
+        except Exception as err:  # noqa: BLE001 - diagnostic script
+            print(f"  -> unexpected error: {err!r}")
+            return
+
+        _verdict("/api/room/list", payload)
+        if payload.get("loginRejected") or payload.get("success") is False:
+            # Only reachable if run against pre-0.3.1 code.
+            _dump("SESSION-EXPIRY RESPONSE (goes into tests/fixtures/)", payload)
+            return
+        print("  -> still accepted; trying the next attempt")
+
+    print("\n  None of the attempts made the gateway reject the request.")
+    print("  That is itself a finding worth recording: this gateway may not")
+    print("  validate these fields the way the protocol notes assume. Try")
+    print("  rebooting the gateway mid-session instead, and capture what the")
+    print("  next poll receives.")
 
 
 def _duration_params(scene_name: str):

@@ -2133,8 +2133,27 @@ must not proceed carelessly.
     and the code audit could not rule out from source alone whether
     `/api/scene/duration` on an *inactive* scene or `switchingtimes/get2`
     ever answer `success: false` routinely. If either does, it needs an
-    explicit exemption rather than a hard raise. **Run this against the
-    real gateway before merging.**
+    explicit exemption rather than a hard raise.
+    **Step 2 RESULT, confirmed live 2026-09-21: neither does.**
+    `/api/scene/duration` for an inactive scene returns
+    `{"success": true, ..., "duration": 0}` - a successful response
+    carrying a zero, not a failure - and `switchingtimes/get2` returns
+    `success: true` with all 21 slot entries. `/api/room/list` and
+    `/api/scene/status` likewise. **No endpoint exemption is needed** in
+    `_raise_for_payload()`.
+    **Step 3 is still outstanding**, and the first version of it tested
+    nothing: it corrupted `credentials.device_token`, but that field is
+    ONLY the challenge token used *during* login (`login.py`) and is never
+    referenced again afterwards - `api_request.py` signs with
+    `credentials.authorization_token` (the decrypted devicetoken)
+    instead. The corrupted call therefore went through completely
+    normally and returned real room data. Rewritten to invalidate what
+    the signature actually depends on (reqcount, then the authorization
+    token, then the user id) and to dump the payload the new exception
+    carries. **Lesson: when writing a probe that deliberately breaks
+    something, first confirm the thing being broken is actually on the
+    code path under test - a probe that cannot fail proves nothing, and
+    this one looked like it passed.**
 - **`0.3.0`** (2026-09-18, developed on branch
   `feature/desired-temperatures`, per the beta-status rule above — merged
   via pull request, not committed directly to `main`). Adds write support
