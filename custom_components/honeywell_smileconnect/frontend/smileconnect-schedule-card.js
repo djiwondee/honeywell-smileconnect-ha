@@ -25,7 +25,14 @@
  * freshly-re-read response as truth rather than its own optimistic view.
  *
  * Change log:
- *  - 2026-09-21: Initial version (integration 0.4.0).
+ *  - 2026-09-21 (b): setConfig() no longer throws on a missing entity.
+ *    getStubConfig() returns an empty one when no schedule sensor exists
+ *    yet, and Home Assistant's card picker feeds that stub straight back
+ *    into setConfig() to build the tile - so throwing there made the card
+ *    impossible to PICK, not merely unconfigured. It now renders an
+ *    explanatory placeholder instead, which is also what a future visual
+ *    editor needs (an editor's first render always has an empty config).
+ *  - 2026-09-21 (a): Initial version (integration 0.4.0).
  */
 
 const CARD_TAG = "smileconnect-schedule-card";
@@ -303,14 +310,19 @@ class SmileConnectScheduleCard extends HTMLElement {
   /* ---------------- Lovelace card API ---------------- */
 
   setConfig(config) {
-    if (!config || !config.entity) {
-      throw new Error(`${CARD_TAG}: 'entity' is required`);
-    }
-    const step = Number(config.step_minutes ?? DEFAULT_STEP);
+    // Deliberately does NOT throw on a missing entity. getStubConfig()
+    // returns an empty one when no schedule sensor exists yet, and Home
+    // Assistant's card picker feeds that stub straight back into
+    // setConfig() to build the tile - so throwing here makes the card
+    // impossible to pick at all, rather than merely unconfigured. An
+    // empty entity renders an explanatory placeholder instead (see
+    // _adoptFromState), which is also what the visual editor needs.
+    const step = Number(config?.step_minutes ?? DEFAULT_STEP);
     if (!ALLOWED_STEPS.includes(step)) {
       throw new Error(`${CARD_TAG}: step_minutes must be one of ${ALLOWED_STEPS.join(", ")}`);
     }
     this._config = {
+      entity: "",
       title: null,
       night_gaps: false,
       // 24 x 26px = 624px, so a whole day fits on screen without
@@ -345,11 +357,13 @@ class SmileConnectScheduleCard extends HTMLElement {
   }
 
   static getStubConfig(hass) {
-    const entity = Object.keys(hass.states).find(
+    const entity = Object.keys(hass?.states || {}).find(
       (id) =>
         id.startsWith("sensor.") &&
         hass.states[id].attributes.schedule_format === SCHEDULE_FORMAT
     );
+    // An empty entity is a valid stub - setConfig() accepts it and the
+    // card renders a "pick an entity" placeholder. See setConfig().
     return { type: `custom:${CARD_TAG}`, entity: entity || "" };
   }
 
@@ -378,6 +392,7 @@ class SmileConnectScheduleCard extends HTMLElement {
    */
   _resolveEntityId() {
     const configured = this._config.entity;
+    if (!configured) return undefined;
     const states = this._hass.states;
     if (states[configured]?.attributes?.schedule_format === SCHEDULE_FORMAT) {
       return configured;
