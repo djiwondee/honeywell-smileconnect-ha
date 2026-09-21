@@ -1,5 +1,24 @@
 """The Honeywell Smile Connect integration."""
 # Change log:
+# - 2026-09-21 (b): Also register the card as a LOVELACE RESOURCE, not
+#   only via add_extra_js_url(). Live testing found a load-order race:
+#   add_extra_js_url() is a generic "load this script sometime" with no
+#   ordering guarantee relative to Lovelace rendering its cards. On a cold
+#   first page load the dashboard bundle is slow enough that our small
+#   module wins the race and the card appears - on a RELOAD everything is
+#   warm, Lovelace renders immediately, calls customElements.get() before
+#   our module has executed, and shows "Custom element doesn't exist".
+#   Confirmed in a private window (works once, fails after refresh) and by
+#   customElements.get(...) still being undefined on the broken page while
+#   the page itself demonstrably contained the script tag - so this was
+#   never a caching problem, which is what it first looked like.
+#   Lovelace resources are loaded by the Lovelace panel BEFORE it creates
+#   cards, which is exactly the ordering guarantee this needs, and is what
+#   HACS-installed frontend plugins use. add_extra_js_url() is KEPT as a
+#   fallback: the resource collection is read-only in YAML mode, where
+#   only the extra_module_url path works. Loading the same URL twice is
+#   harmless - it is one URL, so the browser's module registry executes it
+#   once.
 # - 2026-09-21: Added the schedule coordinator (schedule_coordinator.py)
 #   and self-registration of the bundled Lovelace card. The card's JS is
 #   served from this component's own frontend/ directory via
@@ -42,6 +61,7 @@ from pathlib import Path
 
 from homeassistant.components.frontend import add_extra_js_url
 from homeassistant.components.http import StaticPathConfig
+from homeassistant.components.lovelace.const import DOMAIN as LOVELACE_DOMAIN
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import Platform
 from homeassistant.core import HomeAssistant
@@ -81,12 +101,65 @@ CARD_FILENAME = "smileconnect-schedule-card.js"
 DATA_FRONTEND_REGISTERED = f"{DOMAIN}_frontend_registered"
 
 
+def _lovelace_resources(hass: HomeAssistant):
+    """The Lovelace resource collection, or None if it cannot be used.
+
+    hass.data["lovelace"] has been both a plain dict and a dataclass
+    across Home Assistant versions, so both are handled. In YAML mode the
+    collection is read-only (no async_create_item), which is why the
+    caller falls back to add_extra_js_url() alone there.
+    """
+    data = hass.data.get(LOVELACE_DOMAIN)
+    if data is None:
+        return None
+    resources = getattr(data, "resources", None)
+    if resources is None and isinstance(data, dict):
+        resources = data.get("resources")
+    if resources is None or not hasattr(resources, "async_create_item"):
+        return None
+    return resources
+
+
+async def _async_register_lovelace_resource(hass: HomeAssistant, url: str) -> bool:
+    """Make sure exactly one Lovelace resource points at our card.
+
+    Idempotent, and version-aware: an existing entry for this card whose
+    URL carries an older ?v= is UPDATED rather than joined by a second
+    one, so upgrades don't accumulate stale resources.
+
+    Returns True when the resource is in place.
+    """
+    resources = _lovelace_resources(hass)
+    if resources is None:
+        return False
+
+    # Loads the collection from storage on first access.
+    await resources.async_get_info()
+
+    base = f"{FRONTEND_URL_BASE}/{CARD_FILENAME}"
+    for item in resources.async_items() or []:
+        if not str(item.get("url", "")).startswith(base):
+            continue
+        if item["url"] != url:
+            await resources.async_update_item(item["id"], {"url": url})
+            _LOGGER.debug("Updated Lovelace resource to %s", url)
+        return True
+
+    await resources.async_create_item({"res_type": "module", "url": url})
+    _LOGGER.debug("Created Lovelace resource %s", url)
+    return True
+
+
 async def _async_register_frontend(hass: HomeAssistant) -> None:
-    """Serve the bundled card and tell the frontend to load it.
+    """Serve the bundled card and make the frontend load it.
 
     Runs at most once per Home Assistant process: registering the same
     static path twice raises on the duplicate aiohttp route, and
     add_extra_js_url would queue the same URL repeatedly.
+
+    Registers BOTH ways on purpose - see this module's change log for the
+    load-order race that made the resource route necessary, and why
+    add_extra_js_url stays as the YAML-mode fallback.
     """
     if hass.data.get(DATA_FRONTEND_REGISTERED):
         return
@@ -100,9 +173,31 @@ async def _async_register_frontend(hass: HomeAssistant) -> None:
             StaticPathConfig(FRONTEND_URL_BASE, str(FRONTEND_DIR), False)
         ]
     )
-    add_extra_js_url(hass, f"{FRONTEND_URL_BASE}/{CARD_FILENAME}?v={integration.version}")
+    url = f"{FRONTEND_URL_BASE}/{CARD_FILENAME}?v={integration.version}"
+
+    try:
+        registered = await _async_register_lovelace_resource(hass, url)
+    except Exception as err:  # noqa: BLE001 - deliberately broad, see below
+        # The resource collection is a semi-public API that has changed
+        # shape between releases. Never let it break setup: the
+        # add_extra_js_url() fallback below still loads the card, just
+        # without the ordering guarantee.
+        _LOGGER.warning(
+            "Could not register the schedule card as a Lovelace resource (%s); "
+            "falling back to extra_module_url. The card may need a second page "
+            "load to appear.",
+            err,
+        )
+        registered = False
+
+    if not registered:
+        _LOGGER.debug(
+            "Lovelace resources unavailable (YAML mode?) - relying on extra_module_url"
+        )
+
+    add_extra_js_url(hass, url)
     hass.data[DATA_FRONTEND_REGISTERED] = True
-    _LOGGER.debug("Registered Lovelace card at %s/%s", FRONTEND_URL_BASE, CARD_FILENAME)
+    _LOGGER.debug("Registered Lovelace card at %s", url)
 
 
 @dataclass

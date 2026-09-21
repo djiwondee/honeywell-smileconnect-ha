@@ -2148,10 +2148,34 @@ must not proceed carelessly.
     state at all, only a response-only Action, so nothing was reactive and
     a Smile-App-side edit was invisible to HA.
   - **New `frontend/smileconnect-schedule-card.js`**, registered by the
-    integration itself (`async_register_static_paths()` +
-    `frontend.add_extra_js_url()` in `__init__.py`; `manifest.json` gained
-    `"dependencies": ["http", "frontend"]`). **No manual "Dashboards →
-    Resources" step** — a HACS install or update just has the card, and it
+    integration itself (`async_register_static_paths()` + BOTH a
+    **Lovelace resource** and `frontend.add_extra_js_url()` in
+    `__init__.py`; `manifest.json` gained
+    `"dependencies": ["http", "frontend", "lovelace"]`).
+    **The Lovelace resource is not optional belt-and-braces — it is the
+    part that actually works.** `add_extra_js_url()` alone produced a
+    live load-order race: it is a generic "load this script sometime"
+    with no ordering guarantee against Lovelace rendering its cards. On a
+    cold first page load our small module won the race and the card
+    appeared; on every RELOAD the dashboard bundle came from cache,
+    Lovelace called `customElements.get()` first, and the card failed with
+    "Custom element doesn't exist". This cost a long debugging session
+    because it looks exactly like a caching problem and was chased as one
+    — the things that actually ruled caching out were (a) the served
+    index demonstrably containing the script tag
+    (`curl -s http://.../ | grep smileconnect`), (b) the file returning
+    200, and (c) the failure reproducing in a private window, but only
+    *after* a refresh. **Lesson: "works once, breaks on reload" is a
+    load-order symptom, not a cache symptom — a cache problem behaves the
+    other way round.** Lovelace resources are loaded by the Lovelace panel
+    BEFORE it creates cards, which is the ordering guarantee needed, and
+    is what HACS frontend plugins use. `add_extra_js_url()` is kept as the
+    YAML-mode fallback, where the resource collection is read-only;
+    loading one URL twice is harmless since the browser's module registry
+    executes it once. Registration is idempotent and version-aware (an
+    existing entry with an older `?v=` is updated, not duplicated), and
+    covered by `scripts/test_frontend_registration_local.py`.
+    **No manual "Dashboards → Resources" step** — a HACS install or update just has the card, and it
     can never drift out of version sync with the integration feeding it.
     Cache busting uses the manifest version via
     `loader.async_get_integration()` rather than a duplicated constant.

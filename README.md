@@ -346,12 +346,20 @@ so several cards or tabs collapse into one gateway read.
 There is no visual (GUI) editor for the card's own options yet; the card
 picker falls back to YAML.
 
-> **After installing or updating via HACS**, reload the browser page once.
-> The card's JavaScript is injected into the page at load time, so an
-> already-open dashboard will not pick it up. If it still does not appear,
-> unregister the Home Assistant service worker once (DevTools → Application
-> → Service Workers → Unregister), which can serve a cached page that
-> predates the card.
+> **After installing or updating via HACS**, reload the browser page once —
+> an already-open dashboard will not pick the card up.
+>
+> The integration registers the card as a Lovelace resource automatically,
+> which is what guarantees Lovelace has it before it renders your cards. If
+> your dashboards are configured in **YAML mode**, that collection is
+> read-only and you need to add the resource yourself:
+>
+> ```yaml
+> lovelace:
+>   resources:
+>     - url: /honeywell_smileconnect/frontend/smileconnect-schedule-card.js
+>       type: module
+> ```
 
 ## Known limitations
 

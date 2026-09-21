@@ -7,7 +7,8 @@
   "config_flow": true,
   "dependencies": [
     "http",
-    "frontend"
+    "frontend",
+    "lovelace"
   ],
   "documentation": "https://github.com/djiwondee/honeywell-smileconnect-ha",
   "integration_type": "hub",
