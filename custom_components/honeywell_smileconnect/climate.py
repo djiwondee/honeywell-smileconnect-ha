@@ -1,5 +1,26 @@
 """Climate platform for Honeywell Smile Connect."""
 # Change log:
+# - 2026-09-21: Look the room up BY ID instead of by list index. This was
+#   the only index-based lookup left in the integration - number.py and
+#   sensor.py both switched to id years-of-bugs ago, and number.py's own
+#   change log states the reason: "a changed room order cannot make a
+#   slider read or write another room's value." climate.py had exactly
+#   that exposure, and worse: with a SHORTENED room list it did not even
+#   raise, it silently read AND WROTE a different room.
+#   It also raised IndexError on an EMPTY room list, which is how a dead
+#   gateway session surfaced in production - a traceback every 30 seconds
+#   for hours, including from unique_id and device_info, which Home
+#   Assistant calls during entity-registry and state-machine work rather
+#   than just for display. That root cause is fixed in api_request.py /
+#   coordinator.py; this is the second line of defence, so a room that
+#   genuinely disappears makes the entity unavailable instead of noisy.
+#   _room_id and _room_name are now stored at construction rather than
+#   derived from the room dict, precisely so entity IDENTITY keeps working
+#   when the lookup does not.
+#   Also added _translate_gateway_errors: the new SmileConnectApiError is
+#   deliberately not a ValueError (see api/exceptions.py), so it would
+#   otherwise reach the UI as a bare traceback. Translated to
+#   HomeAssistantError so the gateway's own message is what the user sees.
 # - 2026-09-18 (b): The set_desired_temperature Action's `type` values are
 #   now comfort_hi/comfort_lo/night instead of H/L/N. hassfest rejects
 #   select-option translation keys that are not [a-z0-9-_]+ (the option
@@ -275,6 +296,7 @@
 #   the same poll cycle. See coordinator.py's own change log.
 from __future__ import annotations
 
+import functools
 import logging
 from typing import ClassVar
 
@@ -296,6 +318,7 @@ from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
 from . import device
 from .api.api_methods import DESIRED_TEMP_TARGETS, validate_desired_temperature
+from .api.exceptions import SmileConnectApiError
 from .api.scene_manager import SceneManager
 from .const import (
     CLIMATE_TRANSLATION_KEY_THERMOSTAT,
@@ -313,6 +336,31 @@ from .switching_times import (
 )
 
 _LOGGER = logging.getLogger(__name__)
+
+
+def _translate_gateway_errors(func):
+    """Surface a gateway failure as a readable error instead of a traceback.
+
+    SmileConnectApiError is deliberately NOT a ValueError (see
+    api/exceptions.py for why), so nothing in this file catches it by
+    accident - which also means an Action would otherwise show the user a
+    raw traceback. The gateway's own message is usually the most useful
+    thing available ("The input format is invalid: 14"), so it is passed
+    through verbatim.
+
+    functools.wraps matters here: entity services are registered by METHOD
+    NAME via async_register_entity_service(), and Home Assistant
+    introspects the bound method.
+    """
+
+    @functools.wraps(func)
+    async def wrapper(self, *args, **kwargs):
+        try:
+            return await func(self, *args, **kwargs)
+        except SmileConnectApiError as err:
+            raise HomeAssistantError(str(err)) from err
+
+    return wrapper
 
 SERVICE_SET_PRESET_MODE_WITH_DURATION = "set_preset_mode_with_duration"
 SERVICE_SET_HVAC_MODE_AND_TEMPERATURE = "set_hvac_mode_and_temperature"
@@ -445,8 +493,14 @@ async def async_setup_entry(
     scene_manager = SceneManager(coordinator.api)
 
     async_add_entities(
-        SmileConnectClimate(coordinator, scene_manager, idx, data.unique_id)
-        for idx in range(len(coordinator.data["rooms"]))
+        SmileConnectClimate(
+            coordinator,
+            scene_manager,
+            room["data"]["id"],
+            room["name"],
+            data.unique_id,
+        )
+        for room in coordinator.data["rooms"]
     )
 
     platform = entity_platform.async_get_current_platform()
@@ -532,22 +586,51 @@ class SmileConnectClimate(CoordinatorEntity, ClimateEntity):
         self,
         coordinator: SmileConnectCoordinator,
         scene_manager: SceneManager,
-        idx: int,
+        room_id,
+        room_name: str,
         gateway_unique_id: str,
     ) -> None:
         super().__init__(coordinator)
-        self.idx = idx
+        # Stored, not derived from the room dict: unique_id and
+        # device_info must keep working even when the room is temporarily
+        # missing from the coordinator's data, because Home Assistant
+        # calls them during entity-registry and state-machine work.
+        self._room_id = room_id
+        self._fallback_room_name = room_name
         self._scene_manager = scene_manager
         self._active_preset: str | None = None
         self._gateway_unique_id = gateway_unique_id
 
     @property
-    def _room(self) -> dict:
-        return self.coordinator.data["rooms"][self.idx]
+    def _room(self) -> dict | None:
+        """This room's entry in the coordinator's data, or None.
+
+        By id, not by list index - see this module's change log.
+        """
+        for room in (self.coordinator.data or {}).get("rooms", []):
+            if room["data"].get("id") == self._room_id:
+                return room
+        return None
 
     @property
-    def _room_id(self):
-        return self._room["data"]["id"]
+    def _room_data(self) -> dict:
+        """The room's raw gateway dict, or an empty one when it is missing.
+
+        Lets the read-only properties below stay simple: every one of them
+        already uses .get() with a sensible fallback, and `available`
+        reports the truth separately.
+        """
+        room = self._room
+        return room["data"] if room is not None else {}
+
+    @property
+    def _room_name(self) -> str:
+        room = self._room
+        return room["name"] if room is not None else self._fallback_room_name
+
+    @property
+    def available(self) -> bool:
+        return super().available and self._room is not None
 
     @property
     def unique_id(self) -> str:
@@ -555,7 +638,9 @@ class SmileConnectClimate(CoordinatorEntity, ClimateEntity):
 
     @property
     def device_info(self):
-        return device.regler_device_info(self._gateway_unique_id, self._room_id, self._room["name"])
+        return device.regler_device_info(
+            self._gateway_unique_id, self._room_id, self._room_name
+        )
 
     @property
     def current_temperature(self):
@@ -563,11 +648,11 @@ class SmileConnectClimate(CoordinatorEntity, ClimateEntity):
         # (observed on a single-zone "Regler MK1" installation with no
         # dedicated room sensor) - fall back to None (HA renders as unknown)
         # rather than crashing entity setup.
-        return self._room["data"].get("actualTemperature")
+        return self._room_data.get("actualTemperature")
 
     @property
     def target_temperature(self):
-        return self._room["data"].get("desiredTemperature")
+        return self._room_data.get("desiredTemperature")
 
     @property
     def min_temp(self):
@@ -578,12 +663,14 @@ class SmileConnectClimate(CoordinatorEntity, ClimateEntity):
         # CLAUDE.md "Still untested / open" (now resolved) for the full
         # story. Falls back to minTemperature, then HA's own default, in
         # case scheduleTempMin is ever absent on some other installation.
-        data = self._room["data"]
+        # Must still return a number when the room is missing: HA reads
+        # min_temp/max_temp while writing state, not only for display.
+        data = self._room_data
         return data.get("scheduleTempMin", data.get("minTemperature", super().min_temp))
 
     @property
     def max_temp(self):
-        data = self._room["data"]
+        data = self._room_data
         return data.get("scheduleTempMax", data.get("maxTemperature", super().max_temp))
 
     @property
@@ -633,6 +720,7 @@ class SmileConnectClimate(CoordinatorEntity, ClimateEntity):
         # entity, so there is nothing meaningful to report.
         self._active_preset = None
 
+    @_translate_gateway_errors
     async def async_set_temperature(self, **kwargs) -> None:
         temperature = kwargs.get(ATTR_TEMPERATURE)
         if temperature is None:
@@ -642,9 +730,11 @@ class SmileConnectClimate(CoordinatorEntity, ClimateEntity):
         )
         await self.coordinator.async_request_refresh()
 
+    @_translate_gateway_errors
     async def async_set_preset_mode(self, preset_mode: str) -> None:
         await self._async_apply_preset(preset_mode)
 
+    @_translate_gateway_errors
     async def async_set_preset_mode_with_duration(
         self,
         preset_mode: str,
@@ -697,9 +787,11 @@ class SmileConnectClimate(CoordinatorEntity, ClimateEntity):
         self._active_preset = None if preset_mode == PRESET_NONE else preset_mode
         await self.coordinator.async_request_refresh()
 
+    @_translate_gateway_errors
     async def async_set_hvac_mode(self, hvac_mode: HVACMode) -> None:
         await self._async_apply_hvac_mode(hvac_mode)
 
+    @_translate_gateway_errors
     async def async_set_hvac_mode_and_temperature(
         self,
         hvac_mode: str,
@@ -782,10 +874,11 @@ class SmileConnectClimate(CoordinatorEntity, ClimateEntity):
 
     async def _async_read_switching_times(self) -> list[dict | None]:
         response = await self.hass.async_add_executor_job(
-            self.coordinator.api.get_switching_times, self._room["name"], self._room_id
+            self.coordinator.api.get_switching_times, self._room_name, self._room_id
         )
         return response["switchingtimes"]
 
+    @_translate_gateway_errors
     async def async_get_schedule_room(self) -> dict:
         """Back the get_schedule_room HA Action.
 
@@ -796,6 +889,7 @@ class SmileConnectClimate(CoordinatorEntity, ClimateEntity):
         switchingtimes = await self._async_read_switching_times()
         return switching_times_to_weekday_dict(switchingtimes)
 
+    @_translate_gateway_errors
     async def async_set_schedule_room(self, schedule: dict) -> dict:
         """Back the set_schedule_room HA Action - writes a full week.
 
@@ -824,12 +918,13 @@ class SmileConnectClimate(CoordinatorEntity, ClimateEntity):
             raise ServiceValidationError(str(err)) from err
         await self.hass.async_add_executor_job(
             self.coordinator.api.set_switching_times,
-            self._room["name"],
+            self._room_name,
             self._room_id,
             switchingtimes,
         )
         return await self.async_get_schedule_room()
 
+    @_translate_gateway_errors
     async def async_set_schedule_room_weekday(
         self,
         weekday: str,
@@ -868,12 +963,13 @@ class SmileConnectClimate(CoordinatorEntity, ClimateEntity):
             raise ServiceValidationError(str(err)) from err
         await self.hass.async_add_executor_job(
             self.coordinator.api.set_switching_times,
-            self._room["name"],
+            self._room_name,
             self._room_id,
             updated,
         )
         return await self.async_get_schedule_room()
 
+    @_translate_gateway_errors
     async def async_set_desired_temperature(self, type: str, temperature: float) -> dict:
         """Back the set_desired_temperature HA Action.
 

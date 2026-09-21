@@ -1,0 +1,9 @@
+{
+  "_comment": "Live-captured from the real gateway on 2026-09-21 via scripts/manual_probe_failure_responses.py (step 3), by corrupting the local authorization_token so the request signature no longer validated. This is what EVERY authenticated endpoint returns once the gateway no longer accepts the session - the exact payload that used to be handed to callers as data before 0.3.1 added the check in api_request.py. Note 'product', which does not appear in any success response captured so far.",
+  "success": false,
+  "message": "Your session is finished, please log in again.",
+  "loginRejected": true,
+  "product": "honeywell-smile",
+  "language": "en",
+  "performance": 0.09
+}

@@ -1,5 +1,14 @@
 """Number platform for Honeywell Smile Connect."""
 # Change log:
+# - 2026-09-21: Look the room up defensively and translate gateway errors.
+#   native_value already looked the room up by id (this file established
+#   that pattern), so nothing changes there - but async_set_native_value's
+#   write can now raise SmileConnectApiError, which is deliberately not a
+#   ValueError (see api/exceptions.py) and would otherwise reach the UI as
+#   a bare traceback. Translated to HomeAssistantError so the gateway's
+#   own message is what the user sees. Also reports the entity as
+#   unavailable when its room is missing from the coordinator's data,
+#   rather than silently showing "unknown" as if that were a real reading.
 # - 2026-09-18: Initial implementation. Three slider entities per room
 #   (Comfort Hi = desiredTempDay, Comfort Lo = desiredTempDay2, Night =
 #   desiredTempNight), EntityCategory.CONFIG, attached to the room's Regler
@@ -32,6 +41,7 @@ from homeassistant.components.number import (
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import EntityCategory, UnitOfTemperature
 from homeassistant.core import HomeAssistant
+from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
@@ -41,6 +51,7 @@ from .api.api_methods import (
     DESIRED_TEMP_STEP,
     DESIRED_TEMP_TARGETS,
 )
+from .api.exceptions import SmileConnectApiError
 from .const import (
     DOMAIN,
     NUMBER_TRANSLATION_KEY_COMFORT_HI,
@@ -105,17 +116,34 @@ class SmileConnectDesiredTemperatureNumber(CoordinatorEntity, NumberEntity):
         return device.regler_device_info(self._gateway_unique_id, self._room_id, self._room_name)
 
     @property
-    def native_value(self) -> float | None:
+    def _room_data(self) -> dict | None:
+        """This room's raw gateway dict, or None when it is not reported."""
         for room in (self.coordinator.data or {}).get("rooms", []):
             if room["data"].get("id") == self._room_id:
-                return room["data"].get(DESIRED_TEMP_TARGETS[self._target]["field"])
+                return room["data"]
         return None
 
+    @property
+    def available(self) -> bool:
+        return super().available and self._room_data is not None
+
+    @property
+    def native_value(self) -> float | None:
+        room_data = self._room_data
+        if room_data is None:
+            return None
+        return room_data.get(DESIRED_TEMP_TARGETS[self._target]["field"])
+
     async def async_set_native_value(self, value: float) -> None:
-        await self.hass.async_add_executor_job(
-            self.coordinator.api.set_desired_temperature,
-            value,
-            self._room_id,
-            self._target,
-        )
+        try:
+            await self.hass.async_add_executor_job(
+                self.coordinator.api.set_desired_temperature,
+                value,
+                self._room_id,
+                self._target,
+            )
+        except SmileConnectApiError as err:
+            # Not a ValueError by design (see api/exceptions.py), so it
+            # would otherwise surface as a raw traceback.
+            raise HomeAssistantError(str(err)) from err
         await self.coordinator.async_refresh()

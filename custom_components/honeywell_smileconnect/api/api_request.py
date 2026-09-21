@@ -23,6 +23,28 @@ CLAUDE.md and docs/protocol.md):
    _render_value) - see change log below for the real bug this fixes.
 """
 # Change log:
+# - 2026-09-21: request() now CHECKS the response before returning it.
+#   Until now it ended with a bare `return json.loads(response.content)`,
+#   and nothing anywhere in the integration read `success` or
+#   `loginRejected` - only login.py (for the login call itself) and
+#   binary_sensor.py (for the unauthenticated ping, a different transport)
+#   ever looked at `success` at all. A gateway error payload was therefore
+#   handed to every caller as though it were data.
+#   This was not theoretical. In production a session died after a network
+#   outage and /api/room/list started answering
+#   {"success": false, "loginRejected": true, "message": "Your session is
+#   finished, please log in again."}. get_rooms_list()'s
+#   `raw.get("groups", [])` turned that into an EMPTY ROOM LIST, so the
+#   coordinator reported a SUCCESSFUL update with zero rooms, every
+#   climate entity raised IndexError every 30 seconds for hours, weather
+#   sensors sat at "unknown" while still reporting themselves available -
+#   and, worst of all, every WRITE (temperature, scene, switching times)
+#   was silently discarded with no error anywhere. UpdateFailed was
+#   unreachable for this whole failure mode, because nothing raised.
+#   One check here covers all 18 ApiMethods methods at once, which is why
+#   it lives at this level rather than being sprinkled per endpoint.
+#   Note `success is False`, not `not success`: a response that simply
+#   omits the field must not be treated as a failure.
 # - 2026-08-30 (d): Fixed a third bug in the same function, found after
 #   the empty-array skip-fix eliminated the timeout but the user reported
 #   Standby still never actually deactivating: /api/scene/set's "active"
@@ -86,6 +108,7 @@ import requests
 
 from . import crypto
 from .credentials import Credentials
+from .exceptions import SmileConnectApiError, SmileConnectSessionExpired
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -127,7 +150,43 @@ class ApiRequest:
         _LOGGER.debug("request sent to: %s", uri)
         _LOGGER.debug("response: %s", response.content)
 
-        return json.loads(response.content)
+        payload = json.loads(response.content)
+        self._raise_for_payload(uri, payload)
+        return payload
+
+    @staticmethod
+    def _raise_for_payload(uri: str, payload) -> None:
+        """Turn a gateway failure response into an exception.
+
+        The single place the whole integration detects that the gateway
+        said no - see this module's change log for what it cost not to
+        have one. Checks loginRejected FIRST, because that is the one
+        failure a caller can recover from by logging in again
+        (coordinator.py catches SmileConnectSessionExpired specifically);
+        everything else is a plain SmileConnectApiError carrying the
+        gateway's own message, which tends to be specific and actionable
+        (e.g. "The input format is invalid: 14").
+        """
+        if not isinstance(payload, dict):
+            # Never observed, but a non-dict body is not ours to interpret -
+            # hand it on rather than guessing at fields it cannot have.
+            return
+
+        message = payload.get("message") or "the gateway reported a failure"
+        if payload.get("loginRejected"):
+            raise SmileConnectSessionExpired(
+                f"Session rejected by the gateway for {uri}: {message}",
+                uri=uri,
+                payload=payload,
+            )
+        # `is False` on purpose: a response that omits "success" entirely
+        # must not be read as a failure.
+        if payload.get("success") is False:
+            raise SmileConnectApiError(
+                f"Gateway rejected the request to {uri}: {message}",
+                uri=uri,
+                payload=payload,
+            )
 
     @staticmethod
     def _render_value(value) -> str:

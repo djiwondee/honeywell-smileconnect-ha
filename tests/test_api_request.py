@@ -1,4 +1,15 @@
 # Change log:
+# - 2026-09-21: Added TestRaiseForPayload / TestRequestRaisesOnFailure for
+#   the 0.3.1 fix. request() used to end with a bare
+#   `return json.loads(...)`, so a gateway failure response was handed to
+#   callers as data - which in production turned a dead session into an
+#   empty room list, a 30-second IndexError loop, and silently discarded
+#   writes. These lock in that both failure shapes now raise, that a
+#   SUCCESSFUL or success-less response still does not, and - importantly -
+#   that neither exception is a ValueError subclass, which is a real
+#   constraint with a real reason (three existing handlers catch
+#   ValueError broadly and would mis-diagnose a dead session; see
+#   api/exceptions.py).
 # - 2026-08-30 (c): Added bool-rendering tests (TestRenderValue) and a
 #   dedicated /api/scene/set body-level regression test - the third bug
 #   found in this function: Python's str(True)/str(False) produces
@@ -38,11 +49,20 @@ None values dropped entirely rather than rendered as "None".
 """
 from __future__ import annotations
 
+import json
 from unittest.mock import MagicMock, patch
+
+import pytest
 
 from custom_components.honeywell_smileconnect.api.api_request import ApiRequest
 from custom_components.honeywell_smileconnect.api.credentials import Credentials
 from custom_components.honeywell_smileconnect.api.default_params import DefaultApiParams
+from custom_components.honeywell_smileconnect.api.exceptions import (
+    SmileConnectApiError,
+    SmileConnectSessionExpired,
+)
+
+from .conftest import load_fixture
 
 
 class TestBuildPipeSignatureString:
@@ -275,3 +295,81 @@ class TestRequestBodyMatchesSignature:
         sent_body = mock_post.call_args.kwargs["data"]
         assert "active=true" in sent_body
         assert "active=True" not in sent_body
+
+
+class TestRaiseForPayload:
+    """The single place the integration notices the gateway said no."""
+
+    def test_login_rejected_raises_session_expired(self):
+        payload = load_fixture("session_expired_response.json")
+        with pytest.raises(SmileConnectSessionExpired) as excinfo:
+            ApiRequest._raise_for_payload("http://x/api/room/list", payload)
+        # The gateway's own message must survive - it is the most useful
+        # thing we can show a user.
+        assert "session is finished" in str(excinfo.value)
+        assert excinfo.value.uri == "http://x/api/room/list"
+        assert excinfo.value.payload["loginRejected"] is True
+
+    def test_success_false_raises_api_error(self):
+        # Real shape: the "input format is invalid" family, which used to
+        # be discarded silently on every switchingtimes write.
+        payload = {"success": False, "message": "The input format is invalid: 14"}
+        with pytest.raises(SmileConnectApiError) as excinfo:
+            ApiRequest._raise_for_payload("http://x/api/room/switchingtimes/set2", payload)
+        assert "The input format is invalid: 14" in str(excinfo.value)
+
+    def test_login_rejected_wins_over_success_false(self):
+        # A session-expiry payload carries BOTH fields; it must surface as
+        # the recoverable one, since that is what coordinator.py retries on.
+        payload = {"success": False, "loginRejected": True, "message": "gone"}
+        with pytest.raises(SmileConnectSessionExpired):
+            ApiRequest._raise_for_payload("http://x", payload)
+
+    def test_successful_payload_does_not_raise(self):
+        ApiRequest._raise_for_payload("http://x", {"success": True, "message": ""})
+
+    def test_payload_without_success_field_does_not_raise(self):
+        # `success is False`, not `not success` - an endpoint that simply
+        # omits the field must keep working.
+        ApiRequest._raise_for_payload("http://x", {"switchingtimes": []})
+
+    def test_non_dict_payload_does_not_raise(self):
+        ApiRequest._raise_for_payload("http://x", ["not", "a", "dict"])
+
+    def test_exceptions_are_not_value_errors(self):
+        """Deliberate, and load-bearing - see api/exceptions.py.
+
+        climate.py's `except (NotImplementedError, ValueError)` and
+        config_flow.py's `except ValueError -> InvalidAuth` would both
+        mis-diagnose a dead session if these were ValueErrors.
+        """
+        assert not issubclass(SmileConnectApiError, ValueError)
+        assert not issubclass(SmileConnectSessionExpired, ValueError)
+        assert issubclass(SmileConnectSessionExpired, SmileConnectApiError)
+
+
+class TestRequestRaisesOnFailure:
+    """The same check, exercised through the real request() code path."""
+
+    @staticmethod
+    def _credentials() -> Credentials:
+        creds = Credentials(username="u", password="p", udid="web")
+        creds.user_id = 1
+        creds.authorization_token = "faketoken"
+        return creds
+
+    def _request_returning(self, payload: dict):
+        fake_response = MagicMock()
+        fake_response.content = json.dumps(payload).encode()
+        with patch("requests.post", return_value=fake_response):
+            return ApiRequest().request(
+                "http://x/api/room/list", self._credentials(), DefaultApiParams()
+            )
+
+    def test_session_expiry_propagates_out_of_request(self):
+        with pytest.raises(SmileConnectSessionExpired):
+            self._request_returning(load_fixture("session_expired_response.json"))
+
+    def test_successful_payload_is_returned_unchanged(self):
+        payload = {"success": True, "message": "", "groups": []}
+        assert self._request_returning(payload) == payload
