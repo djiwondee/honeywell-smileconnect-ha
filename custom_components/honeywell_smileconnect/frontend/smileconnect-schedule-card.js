@@ -25,6 +25,11 @@
  * freshly-re-read response as truth rather than its own optimistic view.
  *
  * Change log:
+ *  - 2026-09-21 (c): Midnight ends are allowed (the real Smile App offers
+ *    0:00 / 24:00, confirmed by the user), and the card now asks the
+ *    schedule sensor for a fresh gateway read whenever it is shown -
+ *    see _requestFreshRead(). Before, what you saw was whatever the
+ *    background poll had last fetched, which is deliberately slow.
  *  - 2026-09-21 (b): setConfig() no longer throws on a missing entity.
  *    getStubConfig() returns an empty one when no schedule sensor exists
  *    yet, and Home Assistant's card picker feeds that stub straight back
@@ -63,14 +68,17 @@ const COMPACT_BLOCK_MINUTES = 45;
 /*
  * Whether a slot may end exactly at midnight.
  *
- * The gateway requires from < to and never wraps, but whether it ACCEPTS
- * "24:00" as a `to` value has not been verified live (our own conversion
- * layer would pass it through). Until a round-trip test against the real
- * gateway confirms it, the last selectable end is one step before
- * midnight - a value that cannot possibly be rejected. Flipping this to
- * true is the only change needed afterwards.
+ * CONFIRMED 2026-09-21: the real Smile App's own schedule editor offers
+ * 0:00 as a start and 24:00 as an end, so the gateway accepts both - the
+ * app is the reference implementation for this API. The gateway still
+ * requires from < to and never wraps, which is enforced separately.
+ *
+ * Note 24:00 cannot be shown in an <input type="time"> (those stop at
+ * 23:59), so the edit dialog displays an end of 24:00 as 00:00 and reads
+ * a 00:00 end back as midnight - see _openDialog(). An end of 00:00 is
+ * unambiguous because from < to forbids a zero-length or wrapping slot.
  */
-const ALLOW_MIDNIGHT_END = false;
+const ALLOW_MIDNIGHT_END = true;
 
 const TYPE_H = "H";
 const TYPE_L = "L";
@@ -370,11 +378,46 @@ class SmileConnectScheduleCard extends HTMLElement {
   connectedCallback() {
     // Keep the "now" line honest without re-rendering the whole grid.
     this._nowTimer = window.setInterval(() => this._positionNowLine(), 60000);
+    // Re-read when the tab comes back after being hidden.
+    this._onVisible = () => {
+      if (document.visibilityState === "visible") this._requestFreshRead();
+    };
+    document.addEventListener("visibilitychange", this._onVisible);
+    this._requestFreshRead();
   }
 
   disconnectedCallback() {
     if (this._nowTimer) window.clearInterval(this._nowTimer);
     this._nowTimer = null;
+    if (this._onVisible) document.removeEventListener("visibilitychange", this._onVisible);
+    this._onVisible = null;
+  }
+
+  /*
+   * Ask the schedule sensor to poll the gateway now, rather than waiting
+   * for its own (deliberately slow) interval. What is on screen should be
+   * what the gateway actually holds, without making the background poll
+   * fast for everyone.
+   *
+   * homeassistant.update_entity reaches CoordinatorEntity.async_update(),
+   * which forwards to coordinator.async_request_refresh(). That path is
+   * debounced by Home Assistant, which is exactly what we want here:
+   * several cards, several tabs, or a quick back-and-forth collapse into
+   * one gateway read instead of a burst.
+   */
+  _requestFreshRead() {
+    if (!this._hass || !this._stateObj) return;
+    // Wrapped defensively: a refresh is a nicety, never worth breaking the
+    // card over if callService is missing or rejects.
+    try {
+      Promise.resolve(
+        this._hass.callService("homeassistant", "update_entity", {
+          entity_id: this._stateObj.entity_id,
+        })
+      ).catch((err) => console.debug(`${CARD_TAG}: refresh request failed`, err));
+    } catch (err) {
+      console.debug(`${CARD_TAG}: refresh request not possible`, err);
+    }
   }
 
   /* ---------------- state adoption ---------------- */
@@ -411,8 +454,12 @@ class SmileConnectScheduleCard extends HTMLElement {
     if (!this._hass || !this._config) return;
     const entityId = this._resolveEntityId();
     const stateObj = entityId ? this._hass.states[entityId] : undefined;
+    const firstResolve = stateObj && !this._stateObj;
     if (!force && stateObj === this._stateObj) return;
     this._stateObj = stateObj;
+    // First time this card has both a config and a matching entity: pull
+    // a fresh read rather than showing whatever the last poll left behind.
+    if (firstResolve && this.isConnected) this._requestFreshRead();
 
     // Never yank the grid out from under an in-progress gesture or write;
     // re-adopt once things settle instead.
@@ -1080,7 +1127,9 @@ class SmileConnectScheduleCard extends HTMLElement {
     const btnSave = root.querySelector(".btn-save");
 
     startInput.value = minutesToHHMM(start);
-    endInput.value = minutesToHHMM(end);
+    // <input type="time"> cannot hold 24:00; show midnight as 00:00 and
+    // read it back as 1440 below. See ALLOW_MIDNIGHT_END.
+    endInput.value = end >= MINUTES_PER_DAY ? "00:00" : minutesToHHMM(end);
     const typeLabels = { H: t.typeH, L: t.typeL, N: t.typeN };
     const options = existing && !this._meta.validTypes.includes(existing.type)
       ? [existing.type]
@@ -1111,7 +1160,10 @@ class SmileConnectScheduleCard extends HTMLElement {
 
     const onSave = () => {
       const newStart = clamp(snapTo(hhmmToMinutes(startInput.value), step), 0, dayEnd(step) - step);
-      const newEnd = clamp(snapTo(hhmmToMinutes(endInput.value), step), step, dayEnd(step));
+      const rawEnd = snapTo(hhmmToMinutes(endInput.value), step);
+      // 00:00 as an END can only mean midnight: from < to rules out both a
+      // zero-length and a wrapping slot.
+      const newEnd = clamp(rawEnd === 0 ? MINUTES_PER_DAY : rawEnd, step, dayEnd(step));
       if (newEnd <= newStart) {
         errorEl.hidden = false;
         errorEl.textContent = t.errEndAfterStart;

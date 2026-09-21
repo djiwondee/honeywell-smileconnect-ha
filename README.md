@@ -331,12 +331,27 @@ Things the card deliberately will not do:
 - **It will not add a fourth block to a day.** The gateway's array width is
   fixed per room (three slots per day on this hardware) and a write of the
   wrong width is rejected outright.
-- **No block crosses midnight**, and the latest end time is 23:45 — the
-  gateway requires `from` < `to`, and whether it accepts `24:00` has not
-  been verified.
+- **No block crosses midnight.** A block may start at `00:00` and end at
+  `24:00` (the Smile App's own editor offers exactly that range), but the
+  gateway requires `from` < `to`, so nothing wraps around midnight. The
+  edit dialog shows a `24:00` end as `00:00`, because an HTML time field
+  cannot hold `24:00`; an end of `00:00` is unambiguous since a slot
+  cannot be zero-length.
+
+The card asks the gateway for a fresh schedule whenever it is shown (and
+when you return to the tab), so what is on screen is current regardless of
+the background polling interval. Home Assistant debounces those requests,
+so several cards or tabs collapse into one gateway read.
 
 There is no visual (GUI) editor for the card's own options yet; the card
 picker falls back to YAML.
+
+> **After installing or updating via HACS**, reload the browser page once.
+> The card's JavaScript is injected into the page at load time, so an
+> already-open dashboard will not pick it up. If it still does not appear,
+> unregister the Home Assistant service worker once (DevTools → Application
+> → Service Workers → Unregister), which can serve a cached page that
+> predates the card.
 
 ## Known limitations
 
