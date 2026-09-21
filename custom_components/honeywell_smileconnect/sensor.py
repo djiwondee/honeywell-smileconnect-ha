@@ -1,5 +1,23 @@
 """Sensor platform for Honeywell Smile Connect (weather + ping diagnostics)."""
 # Change log:
+# - 2026-09-21: Added SmileConnectRoomScheduleSensor - one per room, fed by
+#   the new schedule_coordinator.py, carrying that room's whole weekly
+#   switching-time plan in its attributes. This is the data contract the
+#   bundled Lovelace schedule card reads; it exists so the card has
+#   something reactive to bind to (previously schedules were reachable only
+#   through a response-only Action call, so an edit made in the Smile App
+#   was invisible to Home Assistant).
+#   The STATE is deliberately just the slot count: a state is capped at 255
+#   characters and is written to the recorder on every change, so the
+#   schedule itself belongs in attributes, behind a value that only moves
+#   when the schedule really does. `fingerprint` covers the case where a
+#   change leaves the count identical (a slot merely moved).
+#   `editable` is computed HERE, not in JavaScript: an "N" (Night) slot
+#   survives a read but makes a full-week write fail
+#   (switching_times.collect_unsupported_types() has the full explanation),
+#   so the card must fail closed rather than offer an edit it cannot
+#   commit. Keeping the H/L-only policy in one place means JS never
+#   duplicates it.
 # - 2026-09-15: Moved the 3 weather sensors (outside temperature/min/max)
 #   from the gateway device to the sole Regler's device, ON SINGLE-ROOM
 #   INSTALLATIONS ONLY. The physical outside-temperature sensor is wired
@@ -66,12 +84,14 @@ from homeassistant.components.sensor import (
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import EntityCategory, UnitOfTemperature, UnitOfTime
 from homeassistant.core import HomeAssistant
+from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
 from . import device
 from .const import (
     DOMAIN,
+    SCHEDULE_FORMAT_VERSION,
     SENSOR_TRANSLATION_KEY_BOOST_DURATION,
     SENSOR_TRANSLATION_KEY_HOLIDAY_DURATION,
     SENSOR_TRANSLATION_KEY_LEAVE_DURATION,
@@ -80,11 +100,19 @@ from .const import (
     SENSOR_TRANSLATION_KEY_OUTSIDE_TEMPERATURE_MIN,
     SENSOR_TRANSLATION_KEY_PARTY_DURATION,
     SENSOR_TRANSLATION_KEY_RESPONSE_TIME,
+    SENSOR_TRANSLATION_KEY_ROOM_SCHEDULE,
     TIMED_PRESET_SCENE_NAMES,
     SceneName,
 )
 from .coordinator import SmileConnectCoordinator
 from .ping_coordinator import SmileConnectPingCoordinator
+from .schedule_coordinator import SmileConnectScheduleCoordinator
+from .switching_times import (
+    VALID_TYPES,
+    collect_unsupported_types,
+    count_defined_slots,
+    schedule_fingerprint,
+)
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -163,6 +191,11 @@ async def async_setup_entry(
                     data.coordinator, data.unique_id, room_id, room_name, scene
                 )
             )
+        entities.append(
+            SmileConnectRoomScheduleSensor(
+                data.schedule_coordinator, data.unique_id, room_id, room_name
+            )
+        )
 
     async_add_entities(entities)
 
@@ -301,3 +334,106 @@ class SmileConnectPresetDurationSensor(CoordinatorEntity, SensorEntity):
         if self._room_id not in active_rooms:
             return None
         return self.coordinator.data.get("scene_duration_native", {}).get(self._scene.value)
+
+
+class SmileConnectRoomScheduleSensor(CoordinatorEntity, SensorEntity):
+    """One room's weekly switching-time plan, exposed for the schedule card.
+
+    State is the number of defined slots in the week; the plan itself and
+    everything an editor needs to know about it live in the attributes -
+    see this module's change log for why round that way.
+
+    Looks its room up BY ID rather than by list index (the pattern number.py
+    established), so a room disappearing from /api/room/list cannot make
+    this entity silently start reporting a different room's schedule.
+    """
+
+    _attr_has_entity_name = True
+    _attr_translation_key = SENSOR_TRANSLATION_KEY_ROOM_SCHEDULE
+    _attr_entity_category = EntityCategory.DIAGNOSTIC
+    _attr_icon = "mdi:calendar-clock"
+    # No state_class: this is a configuration count, not a measurement -
+    # feeding it into long-term statistics would be noise.
+
+    def __init__(
+        self,
+        coordinator: SmileConnectScheduleCoordinator,
+        gateway_unique_id: str,
+        room_id,
+        room_name: str,
+    ) -> None:
+        super().__init__(coordinator)
+        self._gateway_unique_id = gateway_unique_id
+        self._room_id = room_id
+        self._room_name = room_name
+        self._attr_unique_id = f"{DOMAIN}_room_{room_id}_schedule"
+
+    @property
+    def device_info(self):
+        # The room's own Regler, same device as its climate entity and its
+        # temperature sliders - a schedule is a property of the room, not
+        # of the gateway.
+        return device.regler_device_info(self._gateway_unique_id, self._room_id, self._room_name)
+
+    @property
+    def _room_data(self) -> dict | None:
+        """This room's entry in the schedule coordinator's data, or None."""
+        return (self.coordinator.data or {}).get(str(self._room_id))
+
+    @property
+    def available(self) -> bool:
+        return super().available and self._room_data is not None
+
+    @property
+    def native_value(self):
+        room_data = self._room_data
+        if room_data is None:
+            return None
+        return count_defined_slots(room_data["schedule"])
+
+    @property
+    def _climate_entity_id(self) -> str | None:
+        """entity_id of this room's climate entity, resolved via the registry.
+
+        The card has to target the climate entity for the write Action, and
+        the frontend has no way to turn a unique_id into an entity_id on
+        its own. The unique_id format is climate.py's
+        f"{DOMAIN}_room_{room_id}" - if that ever changes, this breaks
+        quietly, which is why it is asserted in tests/test_device.py's
+        spirit and called out here.
+
+        Returns None if the climate entity is disabled or not registered
+        (yet); the card then goes read-only rather than guessing.
+        """
+        registry = er.async_get(self.hass)
+        return registry.async_get_entity_id("climate", DOMAIN, f"{DOMAIN}_room_{self._room_id}")
+
+    @property
+    def extra_state_attributes(self) -> dict:
+        room_data = self._room_data
+        if room_data is None:
+            return {}
+
+        schedule = room_data["schedule"]
+        unsupported_types = collect_unsupported_types(schedule)
+        climate_entity_id = self._climate_entity_id
+        return {
+            # Schema marker - the card refuses to render an unknown one
+            # rather than risk misreading a plan and writing that back.
+            "schedule_format": SCHEDULE_FORMAT_VERSION,
+            "schedule": schedule,
+            # This room's real gateway-side array width. A write whose
+            # width differs is rejected outright (docs/switching-times-api.md
+            # point 5), so this - never MAX_SLOTS_PER_DAY - is the ceiling
+            # an editor must enforce.
+            "slots_per_day": room_data["slots_per_day"],
+            "valid_types": list(VALID_TYPES),
+            "unsupported_types": unsupported_types,
+            # Fail closed: a type we cannot write, or no climate entity to
+            # write through, means no editing at all.
+            "editable": not unsupported_types and climate_entity_id is not None,
+            "climate_entity_id": climate_entity_id,
+            "room_id": self._room_id,
+            "room_name": self._room_name,
+            "fingerprint": schedule_fingerprint(schedule),
+        }

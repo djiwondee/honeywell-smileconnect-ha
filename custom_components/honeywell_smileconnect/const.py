@@ -1,5 +1,14 @@
 """Constants for the Honeywell Smile Connect integration."""
 # Change log:
+# - 2026-09-21: Added CONF_SCHEDULE_INTERVAL/DEFAULT_SCHEDULE_INTERVAL for
+#   the new switching-times poller (schedule_coordinator.py) and
+#   SENSOR_TRANSLATION_KEY_ROOM_SCHEDULE for the per-room schedule sensor
+#   that backs the Lovelace schedule card. Also added
+#   SCHEDULE_FORMAT_VERSION, the marker the card checks before trusting the
+#   sensor's attribute payload - a deliberate contract between two halves
+#   that are versioned and updated independently (HACS can leave a stale
+#   .js cached, and a user can run an older card against a newer
+#   integration or vice versa).
 # - 2026-09-18: Added NUMBER_TRANSLATION_KEY_COMFORT_HI/COMFORT_LO/NIGHT for
 #   the new per-room desired-temperature sliders (number.py). Keys are
 #   deliberately the same words as the set_desired_temperature Action's
@@ -93,6 +102,7 @@ CONF_USER = "username"
 CONF_PASSWORD = "password"
 CONF_INTERVAL = "interval"
 CONF_PING_INTERVAL = "ping_interval"
+CONF_SCHEDULE_INTERVAL = "schedule_interval"
 
 DEFAULT_INTERVAL = 30  # seconds - main room/weather poll cycle
 # The gateway's own internet-facing ping cadence is documented as ~90s;
@@ -101,6 +111,13 @@ DEFAULT_INTERVAL = 30  # seconds - main room/weather poll cycle
 # the same use case as the gateway's own outbound heartbeat. Configurable
 # via the options flow (config_flow.py) regardless.
 DEFAULT_PING_INTERVAL = 15  # seconds
+# Switching times change on the order of weeks, not seconds - this poll
+# exists so an edit made in the Smile App shows up in HA on its own, not to
+# be responsive. Each cycle costs one authenticated /get2 call PER ROOM, so
+# the default is deliberately far slower than the main cycle. A write made
+# through HA does not wait for it: the write Action refreshes this
+# coordinator directly (see climate.py).
+DEFAULT_SCHEDULE_INTERVAL = 300  # seconds
 
 # Fixed protocol constants observed on the Honeywell Smile Connect gateway.
 # These differ from the standard HeatApp protocol - see docs/protocol.md.
@@ -124,6 +141,14 @@ BINARY_SENSOR_TRANSLATION_KEY_CONNECTIVITY = "connectivity"
 NUMBER_TRANSLATION_KEY_COMFORT_HI = "comfort_hi"
 NUMBER_TRANSLATION_KEY_COMFORT_LO = "comfort_lo"
 NUMBER_TRANSLATION_KEY_NIGHT = "night"
+SENSOR_TRANSLATION_KEY_ROOM_SCHEDULE = "room_schedule"
+
+# Schema marker for the schedule sensor's attribute payload, checked by
+# smileconnect-schedule-card.js before it renders anything. Bump this ONLY
+# on a breaking change to the attribute shape - an older card seeing an
+# unknown marker refuses to render and says so, which is far better than
+# silently misreading a schedule and writing the misreading back.
+SCHEDULE_FORMAT_VERSION = "honeywell_smileconnect_week_v1"
 # "thermostat" was chosen over the German-specific "Regler"/"Heizungsregler"
 # for the *entity* display name specifically so it reads naturally in all
 # four supported languages ("Thermostat" is spelled identically or near-

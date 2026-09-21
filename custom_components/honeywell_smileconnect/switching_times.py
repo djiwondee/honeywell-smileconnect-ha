@@ -12,6 +12,18 @@ tests/test_switching_times.py). Consumed by climate.py's
 get_schedule_room/set_schedule_room/set_schedule_room_weekday HA Actions.
 """
 # Change log:
+# - 2026-09-21: Added three pure helpers backing the new per-room schedule
+#   sensor (sensor.py) and the Lovelace schedule card:
+#   count_defined_slots(), collect_unsupported_types() and
+#   schedule_fingerprint(). Deliberately here rather than inline in
+#   sensor.py, so the only real logic behind those entity attributes stays
+#   in this HA-independent, unit-tested module.
+#   collect_unsupported_types() is what lets the card fail CLOSED: a week
+#   containing a type this integration cannot write (today only "N" - see
+#   VALID_TYPES) makes the sensor report editable=false, so the card never
+#   offers an edit that weekday_dict_to_switching_times() would reject
+#   halfway through. The H/L-only policy therefore stays expressed exactly
+#   once, here, instead of being duplicated in JavaScript.
 # - 2026-09-17: Initial implementation, backing the new get_schedule_room/
 #   set_schedule_room/set_schedule_room_weekday HA Actions (see climate.py's
 #   own change log). Encodes two product decisions made during planning
@@ -35,6 +47,8 @@ get_schedule_room/set_schedule_room/set_schedule_room_weekday HA Actions.
 #      not change the slot-count shape of every other day.
 from __future__ import annotations
 
+import hashlib
+import json
 from itertools import pairwise
 
 WEEKDAYS: tuple[str, ...] = (
@@ -256,3 +270,49 @@ def replace_weekday_slots(
     result = list(switchingtimes)
     result[day_idx * slots_per_day : (day_idx + 1) * slots_per_day] = padded
     return result
+
+
+def count_defined_slots(schedule: dict[str, list[dict]]) -> int:
+    """Total number of defined slots across the whole week.
+
+    Backs the schedule sensor's STATE (sensor.py). Chosen over putting the
+    schedule itself in the state because a state is capped at 255
+    characters and is written to the recorder on every change - a plain
+    count is small, stable, and only ever changes when the schedule really
+    does.
+    """
+    return sum(len(slots) for slots in schedule.values())
+
+
+def collect_unsupported_types(schedule: dict[str, list[dict]]) -> list[str]:
+    """Sorted, de-duplicated slot types present that we cannot write back.
+
+    Today that can only ever be "N" (Night), which the gateway may in
+    principle report but which this integration refuses to send - see
+    VALID_TYPES and _validate_slot_shape().
+
+    This exists because of an asymmetry that is easy to trip over:
+    switching_times_to_weekday_dict() passes `type` through unchanged, so
+    an "N" survives a READ, while weekday_dict_to_switching_times()
+    rejects it - meaning a full-week write fails if an "N" sits anywhere in
+    the week, even on a day the user never touched. Consumers use a
+    non-empty result here to go read-only rather than offering an edit that
+    cannot be committed.
+    """
+    return sorted({slot["type"] for slots in schedule.values() for slot in slots} - set(VALID_TYPES))
+
+
+def schedule_fingerprint(schedule: dict[str, list[dict]]) -> str:
+    """Short, stable hash of a week schedule's content.
+
+    Exposed as a sensor attribute so an automation can trigger on "the
+    schedule changed" without diffing a nested dict itself, and so a change
+    that leaves count_defined_slots() identical (e.g. a slot moved by an
+    hour) is still visible as an attribute change. Key insertion order is
+    normalised away via sort_keys, so two structurally identical weeks
+    always fingerprint the same.
+
+    Not a security primitive - sha1 is used purely as a content digest.
+    """
+    canonical = json.dumps(schedule, sort_keys=True, separators=(",", ":"))
+    return hashlib.sha1(canonical.encode("utf-8"), usedforsecurity=False).hexdigest()[:12]

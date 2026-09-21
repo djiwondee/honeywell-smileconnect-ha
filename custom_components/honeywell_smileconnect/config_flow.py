@@ -1,5 +1,13 @@
 """Config flow for Honeywell Smile Connect."""
 # Change log:
+# - 2026-09-21: Added CONF_SCHEDULE_INTERVAL to the shared schema (poll
+#   cadence for the new switching-times coordinator). Also fixed the
+#   long-documented latent bug in OptionsFlowHandler.async_step_init: it
+#   called async_create_entry(data=user_input), which REPLACES the whole
+#   options dict instead of merging into it. That was harmless only as
+#   long as a single schema carried every option key; the first time a
+#   second options step or category is added, it would silently wipe out
+#   everything not in the submitted form. Now merges.
 # - 2026-08-27: Added CONF_PING_INTERVAL to the setup schema; capture the
 #   gateway's own uniqueid via /api/ping during validation and register it
 #   as this entry's native HA unique_id (via async_set_unique_id +
@@ -24,9 +32,11 @@ from .const import (
     CONF_INTERVAL,
     CONF_PASSWORD,
     CONF_PING_INTERVAL,
+    CONF_SCHEDULE_INTERVAL,
     CONF_USER,
     DEFAULT_INTERVAL,
     DEFAULT_PING_INTERVAL,
+    DEFAULT_SCHEDULE_INTERVAL,
     DOMAIN,
 )
 
@@ -54,6 +64,10 @@ def _build_schema(defaults: dict | None = None) -> vol.Schema:
             vol.Optional(
                 CONF_PING_INTERVAL,
                 default=defaults.get(CONF_PING_INTERVAL, DEFAULT_PING_INTERVAL),
+            ): int,
+            vol.Optional(
+                CONF_SCHEDULE_INTERVAL,
+                default=defaults.get(CONF_SCHEDULE_INTERVAL, DEFAULT_SCHEDULE_INTERVAL),
             ): int,
         }
     )
@@ -158,7 +172,14 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
                 _LOGGER.exception("Unexpected exception during options flow")
                 errors["base"] = "unknown"
             else:
-                return self.async_create_entry(title="", data=user_input)
+                # Merge, never replace: async_create_entry(data=...)
+                # overwrites the entire options dict, so anything not in
+                # this form would be dropped. Harmless while one schema
+                # covers every option, wrong the moment that stops being
+                # true - see this module's change log.
+                return self.async_create_entry(
+                    title="", data={**dict(self.config_entry.options), **user_input}
+                )
             current = user_input
 
         return self.async_show_form(

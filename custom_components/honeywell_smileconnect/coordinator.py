@@ -1,5 +1,26 @@
 # Change log:
-# - 2026-09-21: Added automatic re-login on session expiry. Until now
+# - 2026-09-21 (b): Added a shared asyncio.Lock (async_api_call() /
+#   async_api_session()) serialising EVERY authenticated gateway call in
+#   the integration. api/credentials.py's next_reqcount() is a plain
+#   post-incremented int, and the PBKDF2 request signature is computed over
+#   that counter - two callers running concurrently in different executor
+#   threads can therefore sign with the same value, or arrive at the
+#   gateway out of order. Getting that counter wrong is exactly what
+#   produced "Your session is finished, please log in again" during the
+#   original protocol work (see credentials.py's own docstring).
+#   The race is not new: every climate.py/number.py entity service already
+#   shares this coordinator's ApiMethods with the poll cycle. It became
+#   worth fixing now because 0.4.0 adds a THIRD caller
+#   (schedule_coordinator.py) that polls once per room, turning a rare
+#   interleave into a routine one.
+#   Note ping_coordinator.py deliberately does NOT take this lock: it is
+#   unauthenticated, holds no Credentials, and must keep working when the
+#   authenticated session is broken - which is its entire reason to exist.
+#   Note also that a preset change can hold the lock for up to ~10s
+#   (SceneManager's activation verify loop), so a poll cycle can run that
+#   much late; DataUpdateCoordinator simply reschedules, but it is visible
+#   as a gap in history.
+# - 2026-09-21 (a): Added automatic re-login on session expiry. Until now
 #   async_login() was only called when `self.api is None`, which is true
 #   exactly once per Home Assistant start - so a session that died later
 #   (gateway reboot, network outage, anything the gateway treats as
@@ -49,8 +70,12 @@
 """DataUpdateCoordinator for Honeywell Smile Connect."""
 from __future__ import annotations
 
+import asyncio
 import logging
+from collections.abc import Callable
+from contextlib import asynccontextmanager
 from datetime import timedelta
+from typing import Any
 
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
@@ -100,14 +125,55 @@ class SmileConnectCoordinator(DataUpdateCoordinator):
         self.username = username
         self.password = password
         self.api: ApiMethods | None = None
+        # Guards ALL authenticated gateway access - see this module's
+        # change log. Created here rather than lazily so there is exactly
+        # one lock object for the lifetime of the coordinator.
+        self._api_lock = asyncio.Lock()
+
+    async def async_api_call(self, func: Callable[..., Any], *args: Any) -> Any:
+        """Run one blocking ApiMethods call in the executor, serialised.
+
+        Every authenticated call in the integration goes through here
+        (coordinators, entity services, schedule writes) so that no two
+        requests can ever be signed with the same reqcount or reach the
+        gateway out of order - see this module's change log.
+
+        NOT re-entrant: asyncio.Lock deadlocks on a second acquire from the
+        same task. Never call this from inside an async_api_session()
+        block; use the `api` handle that block yields instead.
+        """
+        async with self._api_lock:
+            return await self.hass.async_add_executor_job(func, *args)
+
+    @asynccontextmanager
+    async def async_api_session(self):
+        """Hold the gateway lock across SEVERAL calls, as one unit.
+
+        For read-modify-write sequences (the switching-times Actions read
+        the current schedule, edit it, and write it straight back). Without
+        this, two concurrent writes can both read the same base and the
+        second silently discards the first's change - the gateway has no
+        partial-update endpoint, so every write is a full-week replacement
+        (docs/switching-times-api.md).
+
+        Yields the ApiMethods handle; inside the block, call it via
+        hass.async_add_executor_job() directly, NOT via async_api_call()
+        (which would try to take the same non-re-entrant lock again).
+        """
+        async with self._api_lock:
+            yield self.api
 
     async def async_login(self) -> None:
         """Perform the initial (or a re-)login and build the API client."""
         login_manager = Login("http://" + self.host)
-        credentials = await self.hass.async_add_executor_job(
-            login_manager.authorize, self.username, self.password
-        )
-        self.api = ApiMethods(credentials, "http://" + self.host)
+        # Takes the lock directly rather than via async_api_call(): self.api
+        # does not exist yet, and a re-login must not race an in-flight
+        # request that is still using the old credentials object.
+        async with self._api_lock:
+            credentials = await self.hass.async_add_executor_job(
+                login_manager.authorize, self.username, self.password
+            )
+            self.api = ApiMethods(credentials, "http://" + self.host)
 
     async def _async_update_data(self) -> dict:
         if self.api is None:
@@ -134,12 +200,26 @@ class SmileConnectCoordinator(DataUpdateCoordinator):
             raise UpdateFailed(f"Error communicating with gateway: {err}") from err
 
     async def _async_fetch_all(self) -> dict:
-        """One full poll cycle. Raises; the caller decides what that means."""
-        rooms = await self.hass.async_add_executor_job(self.api.get_rooms_list)
-        weather = await self.hass.async_add_executor_job(self.api.get_weather)
-        scene_active_rooms, scene_duration_native = await self.hass.async_add_executor_job(
-            self._get_scene_active_rooms_and_durations
-        )
+        """One full poll cycle, under ONE lock acquisition.
+
+        Raises; the caller decides what that means (see
+        _async_update_data, which retries this once after a re-login when
+        the gateway reports the session gone).
+
+        Holding the lock across all three calls keeps a poll internally
+        consistent - rooms and scenes seen at the same moment - and stops
+        a user action landing between them. Uses async_add_executor_job
+        directly inside the session rather than async_api_call(), which
+        would deadlock on the same non-re-entrant lock.
+        """
+        async with self.async_api_session() as api:
+            rooms = await self.hass.async_add_executor_job(api.get_rooms_list)
+            weather = await self.hass.async_add_executor_job(api.get_weather)
+            scene_active_rooms, scene_duration_native = (
+                await self.hass.async_add_executor_job(
+                    self._get_scene_active_rooms_and_durations
+                )
+            )
         return {
             "rooms": rooms,
             "weather": weather,

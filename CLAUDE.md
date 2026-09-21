@@ -760,11 +760,23 @@ GET  /admin/login/index            (returns HTML of the config menu)
   (2026-09-18, shipped in `0.3.0`)** — see the `0.3.0` entry in
   "Versioning & Branching Strategy" below for the design decisions taken
   (dedicated method, new Action with explicit `type`, per-room sliders).
-- **Switching-times phase 2: native `schedule.*` helper UI + automatic
-  Gateway↔HA sync** (deferred during planning for `0.2.0`, 2026-09-17 —
-  see that version's changelog entry above for what phase 1 shipped
-  instead). Phase 1 covers the raw read/write Action layer only; this
-  phase would add:
+- ~~**Switching-times phase 2: native `schedule.*` helper UI + automatic
+  Gateway↔HA sync**~~ **SUPERSEDED (2026-09-21, shipped in `0.4.0` as a
+  different design).** The native-`schedule.*`-helper route was abandoned,
+  not implemented: the dead end recorded below (HA's `schedule` component
+  has no public write API at all, so true Gateway→HA sync into a native
+  helper is impossible) is exactly what made it unworkable, and the
+  colour requirement could not be met either — a native helper renders
+  every block identically. `0.4.0` instead ships a **bundled custom
+  Lovelace card** (`frontend/smileconnect-schedule-card.js`) plus a
+  per-room schedule sensor to bind it to, which sidesteps the whole
+  problem: there is no HA-side storage to sync INTO, so "sync" reduces to
+  polling the gateway and writing back through the existing
+  `set_schedule_room` Action. The `OptionsFlowHandler` merge bug flagged
+  below **is fixed** as of `0.4.0` (it had to be, to add the new schedule
+  poll interval). The `"N"` (Night) item below still stands unchanged —
+  still rejected as a settable type, still waiting on real SRC-10
+  hardware. Original text kept for the reasoning:
   - A native HA "Schedule" helper per room as the visual weekly-plan
     input surface, with the H/L type tagged via each block's `data` field
     (a real HA core feature since 2024.10 — `CONF_DATA` in
@@ -1410,6 +1422,30 @@ construct a `device_info` dict inline.
   truth read by `climate.py`'s `hvac_mode`/`preset_mode` instead of
   `roomstatus` (see `climate.py`'s own bullet below and `docs/
   protocol.md` §4e/§4f).
+  As of `0.4.0` it also owns `async_api_call()` / `async_api_session()`
+  and the shared `asyncio.Lock` behind them: **every** authenticated
+  gateway call in the integration now goes through one of the two, so no
+  two requests can be signed with the same `reqcount` or arrive out of
+  order (`api/credentials.py`'s `next_reqcount()` is a plain
+  post-incremented int). The race predates `0.4.0` — entity services
+  already shared this coordinator's `ApiMethods` with the poll cycle —
+  but adding a third caller made it routine rather than rare. The lock is
+  **not re-entrant**: multi-call read-modify-write sequences must use
+  `async_api_session()` and call the yielded handle directly, never
+  `async_api_call()` from inside it.
+- `schedule_coordinator.py` — `SmileConnectScheduleCoordinator` (added
+  `0.4.0`), a **third** `DataUpdateCoordinator` polling every room's
+  `switchingtimes` on its own slow cadence (`CONF_SCHEDULE_INTERVAL`,
+  default 300s). Unlike `ping_coordinator.py` this endpoint IS
+  authenticated, so it **shares** the main coordinator's logged-in
+  `ApiMethods` and its lock (a second login would mean a second gateway
+  session with its own `reqcount`) — it is separate for *cadence* and
+  *failure isolation*, not for session independence. Wired up with
+  `async_refresh()`, deliberately NOT
+  `async_config_entry_first_refresh()`: the latter raises
+  `ConfigEntryNotReady`, which would take the whole integration down
+  because one secondary endpoint had a bad moment — precisely the
+  coupling this split exists to avoid.
 - `ping_coordinator.py` — `SmileConnectPingCoordinator`, a **second,
   fully independent** `DataUpdateCoordinator` that only polls `/api/ping`.
   Deliberately does not share any state, session, or failure mode with
@@ -1473,6 +1509,30 @@ construct a `device_info` dict inline.
     `climate.py`'s single-value `preset_mode` cannot represent — see the
     `0.1.0` addendum #4 entry (Versioning section below) for the full
     rationale and why `climate.py` itself needed no change for this.
+  - Room schedule (added 2026-09-21, `0.4.0`):
+    `SmileConnectRoomScheduleSensor`, **one per room**, fed by
+    `schedule_coordinator.py`, on the **regler** device. State is just the
+    number of defined slots in the week — a state is capped at 255
+    characters and hits the recorder on every change, so the plan itself
+    lives in the attributes behind a value that only moves when the
+    schedule really does (`fingerprint` covers a change that leaves the
+    count identical). Attributes are the data contract the Lovelace card
+    reads: `schedule_format` (= `const.SCHEDULE_FORMAT_VERSION`, bumped
+    only on a breaking attribute-shape change — an older card seeing an
+    unknown marker refuses to render rather than misreading a plan and
+    writing the misreading back), `schedule`, `slots_per_day`,
+    `valid_types`, `unsupported_types`, `editable`, `climate_entity_id`,
+    `room_id`, `room_name`, `fingerprint`.
+    **`editable` is computed here, in Python, not in JavaScript** — an
+    `"N"` slot survives a READ but makes a full-week write fail
+    (`switching_times.collect_unsupported_types()` has the full
+    asymmetry), so the card must fail closed. Keeping the H/L-only policy
+    in one place means JS never duplicates it.
+    `climate_entity_id` is resolved through the entity registry from
+    `climate.py`'s known `unique_id` format
+    (`f"{DOMAIN}_room_{room_id}"`) — the frontend cannot turn a
+    `unique_id` into an `entity_id` itself, and the card needs the
+    climate entity to target the write Action at.
 - `number.py` — `SmileConnectDesiredTemperatureNumber` (added 2026-09-18,
   `0.3.0`): three sliders per room (Comfort Hi/Lo/Night =
   `desiredTempDay`/`desiredTempDay2`/`desiredTempNight`,
@@ -2072,7 +2132,106 @@ must not proceed carelessly.
     session's focus is the `desiredTempDay`/`desiredTempDay2`/
     `desiredTempNight` write investigation (see the "TOP PRIORITY" entry
     under "Next planned work" above), NOT phase 2's native helper UI.
-- **Current version: `0.3.1`** (2026-09-21, developed on branch
+- **Current version: `0.4.0`** (2026-09-21, developed on branch
+  `feature/schedule-card`, per the beta-status rule above — merged via
+  pull request, not committed directly to `main`; rebased onto `0.3.1`
+  after that bugfix merged first, which is why `coordinator.py` and
+  `climate.py` below carry both sets of changes). Ships the weekly
+  schedule GUI: a bundled Lovelace card reproducing Home Assistant's own
+  Schedule-helper editor, plus the backend plumbing it needs. Replaces
+  the previously-planned "switching-times phase 2" native-`schedule.*`
+  approach entirely (see that entry under "Next planned work" for why).
+  Contents:
+  - **New `schedule_coordinator.py`** and a **per-room schedule sensor**
+    in `sensor.py` — see "Module layout" above for both. This closes the
+    structural gap that made a GUI impossible before: schedules had no HA
+    state at all, only a response-only Action, so nothing was reactive and
+    a Smile-App-side edit was invisible to HA.
+  - **New `frontend/smileconnect-schedule-card.js`**, registered by the
+    integration itself (`async_register_static_paths()` +
+    `frontend.add_extra_js_url()` in `__init__.py`; `manifest.json` gained
+    `"dependencies": ["http", "frontend"]`). **No manual "Dashboards →
+    Resources" step** — a HACS install or update just has the card, and it
+    can never drift out of version sync with the integration feeding it.
+    Cache busting uses the manifest version via
+    `loader.async_get_integration()` rather than a duplicated constant.
+    The registration guard flag lives at a **top-level `hass.data` key**,
+    NOT inside `hass.data[DOMAIN]` — `async_unload_entry` pops that one,
+    so a reload would clear the flag and the second
+    `async_register_static_paths()` call would raise on the duplicate
+    aiohttp route. Nothing is unregistered on unload (neither API has a
+    public removal path).
+  - Card design constraints, all deliberate: hand-written ES module, **no
+    build step, no npm, no CDN, no `lit`**, and **no reliance on lazily
+    registered HA internals** (`ha-card`, `ha-dialog`, `ha-time-input`,
+    `ha-full-calendar` are all code-split and may not be defined when this
+    module loads on an arbitrary dashboard — and it loads on EVERY
+    dashboard via `add_extra_js_url`, so a throw at module scope would
+    degrade the whole frontend). Plain DOM + HA theme CSS custom
+    properties (`--error-color`/`--success-color`/`--info-color` for H/L/N,
+    `--ha-card-*`, `--divider-color`, …), so light/dark and custom themes
+    follow with no extra code. The edit dialog is a native `<dialog>`
+    (backdrop, focus trap, Esc for free).
+  - **Write path: `honeywell_smileconnect.set_schedule_room`** (full week,
+    one call), not `set_schedule_room_weekday`. A cross-day drag mutates
+    two days; with the per-weekday Action that would be two writes with a
+    non-atomic window between them. The Action already re-reads the
+    gateway and returns the result, and the card **adopts that response as
+    truth** rather than its own optimistic view — the standing defence
+    against this gateway's documented silent-corruption modes. The card
+    uses `hass.callWS({type: "call_service", …, return_response: true})`
+    directly rather than `hass.callService(...)`: `return_response`
+    support in the latter varies by frontend version, and a fallback retry
+    would risk writing the whole week twice.
+  - **Colour decision (user's, 2026-09-21): `N` is render-only.** Red `H`,
+    green `L`, blue `N` — but only H/L are placeable, and an `N` block is
+    drawn blue and locked. Consequence stated plainly: on current hardware
+    the gateway never reports `N`, so blue never appears and gaps render
+    neutral; the opt-in card option `night_gaps: true` paints uncovered
+    time in the night colour for the Smile-App look, default off (strictly
+    what the gateway reports). No protocol guessing in either direction.
+  - **Concurrency:** the shared `asyncio.Lock` in `coordinator.py` (see
+    "Module layout"), and all 11 `climate.py` + 1 `number.py` executor
+    call sites converted to it. The two switching-times write Actions
+    additionally hold it across their whole read-modify-write via
+    `async_api_session()` — every write is a full-week replacement, so
+    two concurrent writers could otherwise both read the same base and
+    the second would silently discard the first's change. Both write
+    Actions now also `async_refresh()` the schedule coordinator (NOT
+    `async_request_refresh()` — the Debouncer would skip a second write
+    inside its cooldown and leave the card stale).
+  - `config_flow.py`: new `CONF_SCHEDULE_INTERVAL` field, **and the
+    long-documented `OptionsFlowHandler` replace-instead-of-merge bug is
+    fixed** (it had to be, to add a second option meaningfully).
+    `__init__.py` reads both `CONF_SCHEDULE_INTERVAL` and
+    `CONF_PING_INTERVAL` with `.get(<default>)` rather than `[...]` —
+    entries created before a key existed would otherwise `KeyError` on
+    upgrade.
+  - `switching_times.py`: three new pure helpers (`count_defined_slots()`,
+    `collect_unsupported_types()`, `schedule_fingerprint()`) so the
+    sensor's only real logic stays in the HA-independent, unit-tested
+    module. New tests in `tests/test_switching_times.py` cover them plus
+    the `"N"` read/write asymmetry (locked in from both sides, so a future
+    refactor cannot quietly remove either half) and the fixed-array-width
+    round trip for several widths — nothing may hardcode 3 or 21.
+  - `hacs.json` `"homeassistant"` floor raised `2024.1.0` → `2024.7.0`,
+    the release that introduced `async_register_static_paths` /
+    `StaticPathConfig` (verified against the HA developer blog post of
+    2024-06-18, not from memory).
+  - `.github/workflows/lint.yml` gained a `node --check` job for the card
+    — `ruff` cannot see JavaScript, and a syntax error in an unbuilt
+    bundled card would otherwise only surface as a silently missing card
+    in someone's browser.
+  - **Open / needs live verification:** whether the gateway accepts
+    `"24:00"` as a slot `to` value is still unknown, so the card's last
+    selectable end time is one step before midnight
+    (`ALLOW_MIDNIGHT_END = false`, a single named constant to flip once a
+    round-trip test confirms it). Also unverified live: the exact shape an
+    entity-service response arrives in over the websocket (the card
+    tolerates both the bare week dict and an entity-keyed one), and
+    whether `?v=` cache busting is honoured by the frontend after a
+    version bump.
+- **`0.3.1`** (2026-09-21, developed on branch
   `bugfix/session-recovery`, per the beta-status rule above — merged via
   pull request). Bugfix only, no new user-facing capability. Prompted by
   finding the user's production instance broken while looking at its logs

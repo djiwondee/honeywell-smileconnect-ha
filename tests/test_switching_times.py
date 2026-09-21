@@ -1,4 +1,13 @@
 # Change log:
+# - 2026-09-21: Added TestNightPassthrough, TestSchedulePayloadHelpers and
+#   TestRoundTripPreservesWidth for the 0.4.0 schedule-card work. The first
+#   locks in a subtle asymmetry the card's read-only-"N" behaviour depends
+#   on (an "N" survives a READ and survives an untouched day in a
+#   per-weekday write, but makes a FULL-week write fail), so a future
+#   refactor cannot quietly remove either half. The third turns
+#   docs/switching-times-api.md's fixed-array-width rule into an executable
+#   assertion, for both a 3-slot and a 2-slot gateway shape - nothing may
+#   hardcode 3 or 21.
 # - 2026-09-17: Initial version. Locks in the conversion/validation rules
 #   for the new get_schedule_room/set_schedule_room/
 #   set_schedule_room_weekday HA Actions (climate.py) - in particular, that
@@ -19,7 +28,10 @@ from custom_components.honeywell_smileconnect.switching_times import (
     MAX_SLOTS_PER_DAY,
     WEEKDAYS,
     ScheduleValidationError,
+    collect_unsupported_types,
+    count_defined_slots,
     replace_weekday_slots,
+    schedule_fingerprint,
     switching_times_to_weekday_dict,
     weekday_dict_to_switching_times,
 )
@@ -250,3 +262,129 @@ class TestReplaceWeekdaySlots:
         ]
         with pytest.raises(ScheduleValidationError, match="overlapping"):
             replace_weekday_slots(flat, "monday", overlapping)
+
+
+def _empty_week() -> dict[str, list[dict]]:
+    return {day: [] for day in WEEKDAYS}
+
+
+class TestNightPassthrough:
+    """The read/write asymmetry the schedule card's "N is read-only" rule rests on.
+
+    A gateway-supplied "N" must survive a read (so the card can render it
+    blue), must survive a per-weekday write to a DIFFERENT day (so the
+    granular Action stays a usable fallback), but must make a full-week
+    write fail loudly rather than being silently rewritten to H or L.
+    """
+
+    def test_read_preserves_night_verbatim(self):
+        flat = _flat_all_none()
+        flat[0] = {"from": "22:00", "to": "23:00", "type": "N"}
+        result = switching_times_to_weekday_dict(flat)
+        assert result["monday"] == [{"from": "22:00", "to": "23:00", "type": "N"}]
+
+    def test_full_week_write_rejects_night_on_an_untouched_day(self):
+        # The caller only cares about monday here - tuesday's "N" was read
+        # back from the gateway untouched - but a full-week write still has
+        # to send every day, so it fails. This is exactly why the sensor
+        # reports editable=false when any unsupported type is present.
+        schedule = _empty_week()
+        schedule["monday"] = [{"from": "06:00", "to": "08:00", "type": "H"}]
+        schedule["tuesday"] = [{"from": "22:00", "to": "23:00", "type": "N"}]
+        with pytest.raises(ScheduleValidationError, match="SRC-10"):
+            weekday_dict_to_switching_times(schedule, slots_per_day=3)
+
+    def test_per_weekday_write_leaves_night_on_other_days_untouched(self):
+        flat = _flat_all_none()
+        flat[3] = {"from": "22:00", "to": "23:00", "type": "N"}  # tuesday, slot 0
+        updated = replace_weekday_slots(
+            flat, "monday", [{"from": "06:00", "to": "08:00", "type": "H"}]
+        )
+        assert updated[3] == {"from": "22:00", "to": "23:00", "type": "N"}
+
+
+class TestSchedulePayloadHelpers:
+    def test_count_defined_slots(self):
+        assert count_defined_slots(_empty_week()) == 0
+        schedule = _empty_week()
+        schedule["monday"] = [
+            {"from": "06:00", "to": "08:00", "type": "H"},
+            {"from": "17:00", "to": "22:00", "type": "H"},
+        ]
+        schedule["sunday"] = [{"from": "08:00", "to": "22:00", "type": "L"}]
+        assert count_defined_slots(schedule) == 3
+
+    def test_collect_unsupported_types_empty_for_h_and_l(self):
+        schedule = _empty_week()
+        schedule["monday"] = [{"from": "06:00", "to": "08:00", "type": "H"}]
+        schedule["friday"] = [{"from": "06:00", "to": "08:00", "type": "L"}]
+        assert collect_unsupported_types(schedule) == []
+
+    def test_collect_unsupported_types_reports_night(self):
+        schedule = _empty_week()
+        schedule["monday"] = [{"from": "22:00", "to": "23:00", "type": "N"}]
+        assert collect_unsupported_types(schedule) == ["N"]
+
+    def test_collect_unsupported_types_is_sorted_and_deduplicated(self):
+        schedule = _empty_week()
+        schedule["monday"] = [{"from": "22:00", "to": "23:00", "type": "N"}]
+        schedule["tuesday"] = [
+            {"from": "01:00", "to": "02:00", "type": "X"},
+            {"from": "03:00", "to": "04:00", "type": "N"},
+        ]
+        assert collect_unsupported_types(schedule) == ["N", "X"]
+
+    def test_fingerprint_is_insertion_order_independent(self):
+        schedule = _empty_week()
+        schedule["monday"] = [{"from": "06:00", "to": "08:00", "type": "H"}]
+        reordered = {day: schedule[day] for day in reversed(WEEKDAYS)}
+        assert schedule_fingerprint(reordered) == schedule_fingerprint(schedule)
+
+    def test_fingerprint_changes_when_any_field_changes(self):
+        base = _empty_week()
+        base["monday"] = [{"from": "06:00", "to": "08:00", "type": "H"}]
+        original = schedule_fingerprint(base)
+        for field, value in (("from", "06:15"), ("to", "08:15"), ("type", "L")):
+            changed = _empty_week()
+            changed["monday"] = [dict(base["monday"][0], **{field: value})]
+            assert schedule_fingerprint(changed) != original
+
+    def test_fingerprint_is_short_and_hex(self):
+        fingerprint = schedule_fingerprint(_empty_week())
+        assert len(fingerprint) == 12
+        assert all(char in "0123456789abcdef" for char in fingerprint)
+
+
+class TestRoundTripPreservesWidth:
+    """docs/switching-times-api.md point 5, as an executable assertion.
+
+    The gateway rejects a switchingtimes array whose length does not match
+    the room's OWN slots-per-day width, so a read -> edit -> write round
+    trip must preserve that width exactly, for any width - never a
+    hardcoded 3/21.
+    """
+
+    @pytest.mark.parametrize("slots_per_day", [1, 2, 3, 4])
+    def test_round_trip_is_identity_and_preserves_width(self, slots_per_day):
+        flat = _flat_all_none(slots_per_day)
+        # One slot on monday, a full day on sunday, everything else empty.
+        flat[0] = {"from": "06:00", "to": "08:00", "type": "H"}
+        for slot in range(slots_per_day):
+            flat[6 * slots_per_day + slot] = {
+                "from": f"{slot * 2 + 1:02d}:00",
+                "to": f"{slot * 2 + 2:02d}:00",
+                "type": "L",
+            }
+        schedule = switching_times_to_weekday_dict(flat)
+        back = weekday_dict_to_switching_times(schedule, slots_per_day=len(flat) // 7)
+        assert len(back) == len(flat)
+        assert back == flat
+
+    def test_slots_per_day_is_derived_not_capped_by_max_slots_per_day(self):
+        # A hypothetical gateway with more slots per day than this
+        # hardware's confirmed ceiling must still round-trip, since
+        # slots_per_day is always derived from the live array.
+        wide = MAX_SLOTS_PER_DAY + 2
+        flat = _flat_all_none(wide)
+        schedule = switching_times_to_weekday_dict(flat)
+        assert len(weekday_dict_to_switching_times(schedule, slots_per_day=wide)) == 7 * wide
