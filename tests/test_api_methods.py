@@ -1,4 +1,11 @@
 # Change log:
+# - 2026-09-21: Added TestFailedResponsePropagates - the direct regression
+#   test for the production incident that prompted 0.3.1. get_rooms_list()
+#   does `raw.get("groups", [])`, so before api_request.py started raising,
+#   a session-expiry payload became an EMPTY ROOM LIST: the coordinator
+#   reported a successful update with zero rooms and every climate entity
+#   raised IndexError every 30 seconds. The point of this test is that a
+#   failure must never again be able to look like "no rooms".
 # - 2026-09-18 (b): Added a guard test that every DESIRED_TEMP_APP_LIMITS
 #   min/max is a multiple of DESIRED_TEMP_STEP (number.py's sliders use
 #   these directly as native_min/max_value + native_step).
@@ -28,6 +35,10 @@ from unittest.mock import MagicMock
 import pytest
 
 from .conftest import load_fixture
+from custom_components.honeywell_smileconnect.api.api_request import ApiRequest
+from custom_components.honeywell_smileconnect.api.exceptions import (
+    SmileConnectSessionExpired,
+)
 from custom_components.honeywell_smileconnect.api.api_methods import (
     DESIRED_TEMP_APP_LIMITS,
     DESIRED_TEMP_STEP,
@@ -261,3 +272,44 @@ class TestSetTemperatureUnchanged:
         params = api._request.request.call_args.args[2]
         assert params.change_mode == 0
         assert params.temperature == 21.3
+
+
+class TestFailedResponsePropagates:
+    """A gateway failure must never be able to look like "no rooms".
+
+    Regression test for the 2026-09-21 production incident: with the real
+    ApiRequest in place, a session-expiry payload now raises inside
+    request() instead of reaching get_rooms_list(), whose
+    `raw.get("groups", [])` would otherwise turn it into an empty list -
+    and an empty list made the coordinator report SUCCESS with zero rooms.
+    """
+
+    @staticmethod
+    def _api_with_real_check(payload: dict) -> ApiMethods:
+        """ApiMethods whose transport is mocked but whose response CHECK is real."""
+        api = ApiMethods(credentials=MagicMock(), base_url="http://192.168.1.132")
+        api._request = MagicMock()
+
+        def _request(uri, _credentials, _params):
+            ApiRequest._raise_for_payload(uri, payload)
+            return payload
+
+        api._request.request.side_effect = _request
+        return api
+
+    def test_get_rooms_list_raises_instead_of_returning_empty(self):
+        api = self._api_with_real_check(load_fixture("session_expired_response.json"))
+        with pytest.raises(SmileConnectSessionExpired):
+            api.get_rooms_list()
+
+    def test_get_specific_room_raises_instead_of_returning_none(self):
+        # Just as bad in its own way: a None here made a desired-temperature
+        # write report "Room X was not found after writing" - a real error,
+        # but with a completely misleading diagnosis.
+        api = self._api_with_real_check(load_fixture("session_expired_response.json"))
+        with pytest.raises(SmileConnectSessionExpired):
+            api.get_specific_room(1)
+
+    def test_healthy_payload_still_parses(self):
+        api = self._api_with_real_check(load_fixture("room_list_response.json"))
+        assert len(api.get_rooms_list()) >= 1

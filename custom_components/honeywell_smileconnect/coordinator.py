@@ -1,4 +1,20 @@
 # Change log:
+# - 2026-09-21: Added automatic re-login on session expiry. Until now
+#   async_login() was only called when `self.api is None`, which is true
+#   exactly once per Home Assistant start - so a session that died later
+#   (gateway reboot, network outage, anything the gateway treats as
+#   session loss) was NEVER recovered from without a manual integration
+#   reload. reqcount is reset only in Credentials.__init__, and only
+#   Login.authorize() constructs one, so a fresh login is the only way
+#   back.
+#   That gap was invisible until now for a second reason, fixed in
+#   api_request.py in the same release: a failed response was not detected
+#   at all, so this coordinator reported a SUCCESSFUL update carrying
+#   empty data instead of failing. UpdateFailed was unreachable for the
+#   entire failure mode. With api_request.py now raising
+#   SmileConnectSessionExpired, "the session is gone" is distinguishable
+#   from every other error, which is what makes a targeted retry possible
+#   rather than blindly re-logging-in on any hiccup.
 # - 2026-09-11: Added "scene_duration_native" to coordinator.data - remaining
 #   duration for each TIMED_PRESET_SCENE_NAMES scene, already converted to
 #   its own real-world unit via the new ApiMethods.get_scene_duration_native()
@@ -40,6 +56,7 @@ from homeassistant.core import HomeAssistant
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 
 from .api.api_methods import ApiMethods
+from .api.exceptions import SmileConnectSessionExpired
 from .api.login import Login
 from .const import TIMED_PRESET_SCENE_NAMES, TRACKED_SCENE_NAMES
 
@@ -97,14 +114,32 @@ class SmileConnectCoordinator(DataUpdateCoordinator):
             await self.async_login()
 
         try:
-            rooms = await self.hass.async_add_executor_job(self.api.get_rooms_list)
-            weather = await self.hass.async_add_executor_job(self.api.get_weather)
-            scene_active_rooms, scene_duration_native = await self.hass.async_add_executor_job(
-                self._get_scene_active_rooms_and_durations
+            return await self._async_fetch_all()
+        except SmileConnectSessionExpired as expired:
+            _LOGGER.info(
+                "Gateway session expired (%s) - logging in again and retrying", expired
             )
+            try:
+                await self.async_login()
+                return await self._async_fetch_all()
+            except Exception as err:
+                # Deliberately no second retry: if a cycle fails straight
+                # after a fresh login, another login will not help, and
+                # looping here would hammer the gateway. A later cycle
+                # tries again on its own schedule.
+                raise UpdateFailed(
+                    f"Error communicating with gateway after re-login: {err}"
+                ) from err
         except Exception as err:
             raise UpdateFailed(f"Error communicating with gateway: {err}") from err
 
+    async def _async_fetch_all(self) -> dict:
+        """One full poll cycle. Raises; the caller decides what that means."""
+        rooms = await self.hass.async_add_executor_job(self.api.get_rooms_list)
+        weather = await self.hass.async_add_executor_job(self.api.get_weather)
+        scene_active_rooms, scene_duration_native = await self.hass.async_add_executor_job(
+            self._get_scene_active_rooms_and_durations
+        )
         return {
             "rooms": rooms,
             "weather": weather,

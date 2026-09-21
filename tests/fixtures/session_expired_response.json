@@ -1,0 +1,6 @@
+{
+  "_comment": "PROVENANCE: constructed, NOT yet live-captured. Models the response the gateway is documented to return once a session dies (the 'Your session is finished, please log in again.' message is quoted from the original protocol reverse-engineering, see CLAUDE.md). Every other fixture in this directory is a genuine recording; this one is the exception. Replace it with real output from scripts/manual_probe_failure_responses.py (step 3) once that has been run against the gateway, and update this comment with the capture date. The tests that use it assert on the loginRejected/success fields only, which are structural and unlikely to differ - but the exact message text and any extra fields are unverified.",
+  "success": false,
+  "message": "Your session is finished, please log in again.",
+  "loginRejected": true
+}

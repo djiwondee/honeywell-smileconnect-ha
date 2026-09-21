@@ -1,7 +1,7 @@
 # Honeywell Smile Connect — Home Assistant Integration
 
 [![hacs_badge](https://img.shields.io/badge/HACS-Custom-orange.svg)](https://github.com/hacs/integration)
-[![Version](https://img.shields.io/badge/version-0.3.0-yellow.svg)](https://github.com/djiwondee/honeywell-smileconnect-ha/releases)
+[![Version](https://img.shields.io/badge/version-0.3.1-yellow.svg)](https://github.com/djiwondee/honeywell-smileconnect-ha/releases)
 [![Status](https://img.shields.io/badge/status-beta-yellow.svg)](CLAUDE.md#versioning--branching-strategy)
 [![License](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 [![Validate](https://github.com/djiwondee/honeywell-smileconnect-ha/actions/workflows/validate.yml/badge.svg)](https://github.com/djiwondee/honeywell-smileconnect-ha/actions/workflows/validate.yml)

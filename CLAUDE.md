@@ -810,7 +810,39 @@ GET  /admin/login/index            (returns HTML of the config menu)
     Honeywell Room Connect SRC-10 hardware becomes available to verify
     against — `switching_times.py` deliberately rejects `"N"` today (see
     `VALID_TYPES`) rather than guessing at unverified behavior.
-- **No automatic re-login on session failure — coordinator gets
+- ~~**No automatic re-login on session failure — coordinator gets
+  permanently stuck "unavailable" until HA restart/integration reload**~~
+  **RESOLVED (2026-09-21, shipped in `0.3.1`, branch
+  `bugfix/session-recovery`) — and the entry below turned out to describe
+  only HALF the problem.** The predicted symptom ("entities go
+  unavailable permanently") never actually happened, because a second,
+  undocumented defect masked it: **`ApiRequest.request()` never checked
+  `success` or `loginRejected` at all.** Outside `login.py` (the login
+  call itself) and `binary_sensor.py` (the unauthenticated ping, a
+  different transport), nothing in the entire integration read either
+  field. A dead session's error payload was therefore handed to every
+  caller as data — `get_rooms_list()`'s `raw.get("groups", [])` turned it
+  into an EMPTY ROOM LIST, so `_async_update_data()` reported a
+  **successful** update with zero rooms and `UpdateFailed` was
+  unreachable for the whole failure mode. Found live on the user's
+  production instance (2026-09-21), which had been in that state for
+  hours: `climate.py` raising `IndexError` every 30 s (including from
+  `unique_id`/`device_info`, which HA calls during entity-registry work),
+  weather sensors sitting at `"unknown"` while still reporting themselves
+  *available* — and, worst of all, **every write silently discarded**
+  (`set_temperature`, `set_scene`, `set_switching_times`,
+  `set_desired_temperature` all ignore their response). Same failure
+  class this project has repeatedly been burned by (`success:true` lying
+  about scenes and switching times), only inverted: `success:false` being
+  ignored. Fixed in three layers — see the `0.3.1` entry under
+  "Versioning & Branching Strategy" for the full design. **Lesson worth
+  keeping: the earlier analysis of this item was derived purely by
+  reading the code, and it got the symptom wrong. Reading the code
+  established that no re-login existed, which was true — but not what
+  the user would actually experience, because a second defect changed
+  the outcome entirely. Predicting a failure mode is not the same as
+  observing one.**
+- **(original entry, kept for its analysis)** No automatic re-login on session failure — coordinator gets
   permanently stuck "unavailable" until HA restart/integration reload**
   (found 2026-09-11, while investigating a user question about
   `reqcount` overflow behavior - see `api/credentials.py`'s
@@ -2025,7 +2057,85 @@ must not proceed carelessly.
     session's focus is the `desiredTempDay`/`desiredTempDay2`/
     `desiredTempNight` write investigation (see the "TOP PRIORITY" entry
     under "Next planned work" above), NOT phase 2's native helper UI.
-- **Current version: `0.3.0`** (2026-09-18, developed on branch
+- **Current version: `0.3.1`** (2026-09-21, developed on branch
+  `bugfix/session-recovery`, per the beta-status rule above — merged via
+  pull request). Bugfix only, no new user-facing capability. Prompted by
+  finding the user's production instance broken while looking at its logs
+  for an unrelated question — see the resolved "No automatic re-login"
+  entry under "Next planned work" for the full incident. Three layers,
+  because the single root cause had three separate places where it could
+  have been caught and wasn't:
+  - **`api/exceptions.py` (new) + `api/api_request.py`:** `request()` now
+    checks the response before returning it — `loginRejected` →
+    `SmileConnectSessionExpired`, `success is False` →
+    `SmileConnectApiError` carrying the gateway's own `message`. One
+    check covers all 18 `ApiMethods` methods, which is why it lives at
+    this level rather than per endpoint. Note **`is False`, not
+    `not ...`**: a response that simply omits `success` must not be read
+    as a failure. `api/ping.py` is untouched and must stay that way — it
+    does not go through `ApiRequest`, and `binary_sensor.py` reads its
+    `success` itself.
+    **The two new exceptions deliberately do NOT subclass `ValueError`**,
+    which is the opposite call from
+    `switching_times.ScheduleValidationError`. Three existing handlers
+    catch `ValueError` broadly and would each mis-diagnose a dead
+    session: `climate.py`'s
+    `except (NotImplementedError, ValueError)` (would show it as a user
+    *input* error), `config_flow.py`'s `except ValueError → InvalidAuth`
+    (would show it as wrong credentials), and the hazard
+    `async_set_desired_temperature`'s own comment already warns about.
+    Locked in by a test asserting they are not `ValueError` subclasses.
+  - **`coordinator.py`:** `_async_update_data()` catches
+    `SmileConnectSessionExpired` specifically, logs in again, and retries
+    the cycle **exactly once**; anything else (and any failure of the
+    retry) becomes `UpdateFailed`. The three fetches moved into
+    `_async_fetch_all()`. Deliberately targeted rather than "re-login on
+    any error" — which only became possible *because* the check above
+    makes session loss distinguishable from every other failure. This was
+    the open design question recorded in the original "Next planned work"
+    entry.
+  - **`climate.py`:** room lookup switched from list index to **room id**,
+    the pattern `number.py`/`sensor.py` already use. This was the last
+    index-based lookup in the integration, and `number.py`'s change log
+    already stated the reason ("a changed room order cannot make a slider
+    read or write another room's value") — `climate.py` had exactly that
+    exposure, and with a *shortened* list it did not even raise, it
+    silently read **and wrote** a different room. `_room_id`/
+    `_fallback_room_name` are now stored at construction rather than
+    derived, specifically so `unique_id` and `device_info` keep working
+    when the room is missing; `available` reports the truth instead, and
+    `min_temp`/`max_temp` still return numbers (HA reads them while
+    writing state, not only for display). `number.py` gained the same
+    `available` guard.
+    Also new: a `functools.wraps` decorator `_translate_gateway_errors`
+    on the 9 service handlers, turning `SmileConnectApiError` into
+    `HomeAssistantError` so the gateway's own message reaches the UI
+    instead of a bare traceback (`wraps` matters — entity services are
+    registered by method name and HA introspects the bound method).
+  - **Tests:** `tests/test_api_request.py` gains `TestRaiseForPayload` /
+    `TestRequestRaisesOnFailure`; `tests/test_api_methods.py` gains
+    `TestFailedResponsePropagates`, the direct regression test for the
+    incident (a failure must never again be able to look like "no
+    rooms"). New fixture `tests/fixtures/session_expired_response.json` —
+    **the only constructed fixture in the directory**, flagged as such in
+    its own `_comment`; replace it with real output from
+    `scripts/manual_probe_failure_responses.py` step 3.
+  - **`scripts/test_session_recovery_local.py` (new):** pins down the
+    retry control flow itself, which would otherwise have no automated
+    test at all (no HA harness in this repo; `tests/` covers only the
+    HA-independent `api/` layer). Needs no gateway, no credentials and no
+    network - same niche as `scripts/test_scene_guards_local.py`. Ten
+    checks, the important one being that a second expiry straight after a
+    successful login does **not** loop.
+  - **`scripts/manual_probe_failure_responses.py` (new):** the pre-flight
+    this change needs before it can honestly be called verified. Raising
+    on `success: false` changes the behaviour of every endpoint at once,
+    and the code audit could not rule out from source alone whether
+    `/api/scene/duration` on an *inactive* scene or `switchingtimes/get2`
+    ever answer `success: false` routinely. If either does, it needs an
+    explicit exemption rather than a hard raise. **Run this against the
+    real gateway before merging.**
+- **`0.3.0`** (2026-09-18, developed on branch
   `feature/desired-temperatures`, per the beta-status rule above — merged
   via pull request, not committed directly to `main`). Adds write support
   for the three fixed per-room schedule temperatures (`desiredTempDay` =
