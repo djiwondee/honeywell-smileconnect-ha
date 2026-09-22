@@ -1,5 +1,19 @@
 """The Honeywell Smile Connect integration."""
 # Change log:
+# - 2026-09-22: Only the static path and add_extra_js_url() stay behind
+#   the once-per-process guard; the Lovelace resource is now (re)checked
+#   on EVERY setup. The resource lives in persistent storage rather than
+#   hass.data, so it outlives the process and has to be re-checked after
+#   an upgrade to pick up the new ?v=. Guarding it behind the same flag
+#   meant upgrading the integration in a RUNNING Home Assistant and
+#   reloading the entry never created the resource at all - the flag was
+#   already set by the previous version's setup, so the whole function
+#   returned immediately. Anyone who upgraded without a full restart got
+#   none of (b)'s fix. The resource registration is idempotent by design,
+#   so running it every setup costs nothing.
+#   Also raised the "no Lovelace resource" message from debug to warning:
+#   it means the card is running without its ordering guarantee, which is
+#   exactly the failure that is hard to diagnose from the browser.
 # - 2026-09-21 (b): Also register the card as a LOVELACE RESOURCE, not
 #   only via add_extra_js_url(). Live testing found a load-order race:
 #   add_extra_js_url() is a generic "load this script sometime" with no
@@ -153,35 +167,50 @@ async def _async_register_lovelace_resource(hass: HomeAssistant, url: str) -> bo
 async def _async_register_frontend(hass: HomeAssistant) -> None:
     """Serve the bundled card and make the frontend load it.
 
-    Runs at most once per Home Assistant process: registering the same
-    static path twice raises on the duplicate aiohttp route, and
-    add_extra_js_url would queue the same URL repeatedly.
+    Two halves with DIFFERENT lifetimes, which is why the guard below
+    covers only one of them:
 
-    Registers BOTH ways on purpose - see this module's change log for the
-    load-order race that made the resource route necessary, and why
-    add_extra_js_url stays as the YAML-mode fallback.
+    * The static path and add_extra_js_url() may only ever run once per
+      Home Assistant process - registering the same aiohttp route twice
+      raises, and the URL set would just collect duplicates.
+    * The Lovelace resource must be checked on EVERY setup. It lives in
+      persistent storage, not in hass.data, so it outlives the process,
+      and it has to be re-checked after an upgrade to pick up the new
+      ?v= version. Guarding it behind the once-per-process flag meant
+      that upgrading the integration in a RUNNING Home Assistant and
+      reloading the entry never created or updated the resource at all -
+      the flag was already set by the previous version's setup. It is
+      idempotent by design (see _async_register_lovelace_resource), so
+      running it every time costs nothing.
+
+    See this module's change log for the load-order race that made the
+    resource route necessary, and why add_extra_js_url stays as the
+    YAML-mode fallback.
     """
-    if hass.data.get(DATA_FRONTEND_REGISTERED):
-        return
-
     integration = await async_get_integration(hass, DOMAIN)
-    await hass.http.async_register_static_paths(
-        [
-            # cache_headers=False so an edited card shows up on a reload
-            # during development; the ?v= query below is what actually
-            # busts a released user's browser cache between versions.
-            StaticPathConfig(FRONTEND_URL_BASE, str(FRONTEND_DIR), False)
-        ]
-    )
     url = f"{FRONTEND_URL_BASE}/{CARD_FILENAME}?v={integration.version}"
+
+    if not hass.data.get(DATA_FRONTEND_REGISTERED):
+        await hass.http.async_register_static_paths(
+            [
+                # cache_headers=False so an edited card shows up on a
+                # reload during development; the ?v= query is what
+                # actually busts a released user's browser cache between
+                # versions.
+                StaticPathConfig(FRONTEND_URL_BASE, str(FRONTEND_DIR), False)
+            ]
+        )
+        add_extra_js_url(hass, url)
+        hass.data[DATA_FRONTEND_REGISTERED] = True
+        _LOGGER.debug("Serving the schedule card at %s", url)
 
     try:
         registered = await _async_register_lovelace_resource(hass, url)
     except Exception as err:  # noqa: BLE001 - deliberately broad, see below
         # The resource collection is a semi-public API that has changed
         # shape between releases. Never let it break setup: the
-        # add_extra_js_url() fallback below still loads the card, just
-        # without the ordering guarantee.
+        # add_extra_js_url() path still loads the card, just without the
+        # ordering guarantee.
         _LOGGER.warning(
             "Could not register the schedule card as a Lovelace resource (%s); "
             "falling back to extra_module_url. The card may need a second page "
@@ -191,13 +220,12 @@ async def _async_register_frontend(hass: HomeAssistant) -> None:
         registered = False
 
     if not registered:
-        _LOGGER.debug(
-            "Lovelace resources unavailable (YAML mode?) - relying on extra_module_url"
+        _LOGGER.warning(
+            "The schedule card is not registered as a Lovelace resource "
+            "(YAML-mode dashboards?). It will still load, but may not be ready "
+            "before the dashboard renders. See the README for the manual "
+            "resource entry."
         )
-
-    add_extra_js_url(hass, url)
-    hass.data[DATA_FRONTEND_REGISTERED] = True
-    _LOGGER.debug("Registered Lovelace card at %s", url)
 
 
 @dataclass
