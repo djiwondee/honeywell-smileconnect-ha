@@ -5,6 +5,11 @@
     "@djiwondee"
   ],
   "config_flow": true,
+  "dependencies": [
+    "http",
+    "frontend",
+    "lovelace"
+  ],
   "documentation": "https://github.com/djiwondee/honeywell-smileconnect-ha",
   "integration_type": "hub",
   "iot_class": "local_polling",
@@ -14,6 +19,6 @@
     "requests>=2.31.0"
   ],
   "ssdp": [],
-  "version": "0.3.1",
+  "version": "0.4.0",
   "zeroconf": []
 }

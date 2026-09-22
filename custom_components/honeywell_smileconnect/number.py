@@ -1,6 +1,13 @@
 """Number platform for Honeywell Smile Connect."""
 # Change log:
-# - 2026-09-21: Look the room up defensively and translate gateway errors.
+# - 2026-09-21 (b): Route the write through
+#   SmileConnectCoordinator.async_api_call() instead of
+#   hass.async_add_executor_job() directly, so it is serialised against the
+#   poll cycles and the other entity services - see coordinator.py's change
+#   log for the reqcount race this closes. Behaviour is otherwise
+#   unchanged, including the deliberate async_refresh() (not
+#   async_request_refresh()) below.
+# - 2026-09-21 (a): Look the room up defensively and translate gateway errors.
 #   native_value already looked the room up by id (this file established
 #   that pattern), so nothing changes there - but async_set_native_value's
 #   write can now raise SmileConnectApiError, which is deliberately not a
@@ -136,7 +143,7 @@ class SmileConnectDesiredTemperatureNumber(CoordinatorEntity, NumberEntity):
 
     async def async_set_native_value(self, value: float) -> None:
         try:
-            await self.hass.async_add_executor_job(
+            await self.coordinator.async_api_call(
                 self.coordinator.api.set_desired_temperature,
                 value,
                 self._room_id,

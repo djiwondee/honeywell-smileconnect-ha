@@ -17,3 +17,16 @@ jobs:
         run: pip install ruff
       - name: Run ruff check
         run: ruff check custom_components/
+
+  # ruff cannot see JavaScript, and the bundled Lovelace card is shipped
+  # unbuilt - a syntax error in it would otherwise only surface as a
+  # silently missing card in someone's browser.
+  javascript:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+      - name: Syntax-check the bundled Lovelace card
+        run: node --check custom_components/honeywell_smileconnect/frontend/smileconnect-schedule-card.js

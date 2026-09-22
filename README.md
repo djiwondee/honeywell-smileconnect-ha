@@ -1,7 +1,7 @@
 # Honeywell Smile Connect — Home Assistant Integration
 
 [![hacs_badge](https://img.shields.io/badge/HACS-Custom-orange.svg)](https://github.com/hacs/integration)
-[![Version](https://img.shields.io/badge/version-0.3.1-yellow.svg)](https://github.com/djiwondee/honeywell-smileconnect-ha/releases)
+[![Version](https://img.shields.io/badge/version-0.4.0-yellow.svg)](https://github.com/djiwondee/honeywell-smileconnect-ha/releases)
 [![Status](https://img.shields.io/badge/status-beta-yellow.svg)](CLAUDE.md#versioning--branching-strategy)
 [![License](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 [![Validate](https://github.com/djiwondee/honeywell-smileconnect-ha/actions/workflows/validate.yml/badge.svg)](https://github.com/djiwondee/honeywell-smileconnect-ha/actions/workflows/validate.yml)
@@ -70,6 +70,7 @@ reverse-engineered wire protocol.
 | Outside temperature / min / max | Regler (single-room installs); gateway otherwise | primary | Value comes from the gateway's `/api/weather` relay, but the physical sensor is wired to the Regler for its own weather-compensated control — see [Known limitations](#known-limitations) for the multi-room caveat |
 | Gateway response time | gateway | diagnostic | From the unauthenticated `/api/ping` endpoint |
 | Boost / Party / Leave / Holiday remaining | **per room** | primary | Time left on that preset, in its own natural unit (minutes/hours/hours/days) — reads "unknown" when that specific preset isn't active for the room. See [Known limitations](#known-limitations) for why there are four independent sensors instead of one. |
+| Schedule | **per room** | diagnostic | Number of switching-time slots in the week; the whole weekly plan sits in its attributes. This is what the [schedule card](#schedule-card) reads — you normally look at the card, not at this entity. |
 
 **Number** (config entities, one set per room, on the Regler device):
 
@@ -121,6 +122,7 @@ Set up via the UI (Settings → Devices & Services → Add Integration):
 | Username / Password | — | Your Smile App login |
 | Polling interval | 30s | Room/climate/scene poll cycle |
 | Ping interval | 15s | Independent connectivity check — deliberately more responsive, and kept separate so a broken login never makes the connectivity sensor look wrong |
+| Schedule polling interval | 300s | How often the weekly switching times are re-read. Deliberately slow — schedules change rarely, and each cycle costs one request per room. A schedule changed from Home Assistant does not wait for it. |
 
 All of the above, including credentials, can be changed later via the
 integration's **Configure** (Options) button without losing entity/device
@@ -287,6 +289,100 @@ Up to 3 slots (`slot_1`/`slot_2`/`slot_3`), each with its own `_from`/`_to`/
 together — the HA UI shows this as three checkboxes per slot that must all
 be checked at once; leaving all three of a slot's fields empty clears that
 slot.
+
+## Schedule card
+
+The integration ships a Lovelace card that edits a room's weekly switching
+times the same way Home Assistant's built-in Schedule helper does: drag on
+an empty area to create a block, drag a block to move it (including to
+another day), drag its edges to resize, click it to edit or delete it.
+
+It is registered automatically — **no manual entry under Settings →
+Dashboards → Resources** — so after installing or updating the integration
+the card is simply available. Add it via the dashboard's card picker
+("Honeywell Smile Connect Schedule"), or in YAML:
+
+```yaml
+type: custom:smileconnect-schedule-card
+entity: sensor.living_room_schedule
+```
+
+| Option | Default | Notes |
+|---|---|---|
+| `entity` | — | The room's schedule sensor. Its `climate.<room>` entity is accepted too and resolved automatically. |
+| `title` | Room name | Card heading |
+| `step_minutes` | `15` | Snap grid. One of 5, 10, 15, 20, 30, 60 |
+| `night_gaps` | `false` | Paint the time not covered by any block in the night colour instead of leaving it neutral |
+| `hour_height` | `26` | Pixel height of one hour row. The default makes a whole day fit without scrolling; raise it for a more detailed grid |
+| `colors` | theme colours | Per-type overrides, e.g. `{H: "#db4437", L: "#43a047", N: "#039be5"}` |
+
+Colours follow your theme by default: **red** for Comfort Hi (`H`), **green**
+for Comfort Lo (`L`), **blue** for Night (`N`).
+
+Things the card deliberately will not do:
+
+- **It never creates a Night (`N`) block.** The gateway may in principle
+  report one, and the card renders it blue and read-only if it ever does,
+  but this integration will not write a type it has never been able to
+  verify against real hardware. On an SCN-10 without the Room Connect
+  SRC-10 extension this never comes up — the time outside any block simply
+  uses the night temperature. If a schedule does contain such a block, the
+  card switches to read-only and says so, rather than risk dropping it.
+- **It will not add a fourth block to a day.** The gateway's array width is
+  fixed per room (three slots per day on this hardware) and a write of the
+  wrong width is rejected outright.
+- **No block crosses midnight.** A block may start at `00:00` and end at
+  `24:00` (the Smile App's own editor offers exactly that range), but the
+  gateway requires `from` < `to`, so nothing wraps around midnight. The
+  edit dialog shows a `24:00` end as `00:00`, because an HTML time field
+  cannot hold `24:00`; an end of `00:00` is unambiguous since a slot
+  cannot be zero-length.
+
+The card asks the gateway for a fresh schedule whenever it is shown (and
+when you return to the tab), so what is on screen is current regardless of
+the background polling interval. Home Assistant debounces those requests,
+so several cards or tabs collapse into one gateway read.
+
+There is no visual (GUI) editor for the card's own options yet; the card
+picker falls back to YAML.
+
+### How the card gets loaded
+
+You do not have to register anything. On setup — and on every Home
+Assistant start — the integration adds itself to **Settings → Dashboards →
+⋮ → Resources**, as a `module` entry pointing at a URL that contains a hash
+of the card file, for example:
+
+```
+/honeywell_smileconnect/card/smileconnect-schedule-card.3ef4beca.js
+```
+
+**Leave that entry alone.** It is managed: when the card file changes, the
+integration rewrites the existing entry to the new URL rather than adding a
+second one. Editing or deleting it by hand only causes confusion — it is
+restored on the next restart.
+
+After installing or updating, **reload the browser page once**. An
+already-open dashboard will not pick up a new card.
+
+Two caveats worth knowing:
+
+- **YAML-mode dashboards.** There the resource collection is read-only, so
+  the integration logs a warning and falls back to Home Assistant's
+  `extra_module_url` mechanism. That works, but without the ordering
+  guarantee, so the card may need a second page load to appear. To get the
+  guarantee, add the resource yourself — this URL is stable and unhashed:
+
+  ```yaml
+  lovelace:
+    resources:
+      - url: /honeywell_smileconnect/frontend/smileconnect-schedule-card.js
+        type: module
+  ```
+
+- **Removing the integration cleans the entry up again**, once the last
+  Smile Connect entry is gone. Should that ever fail, a warning names it in
+  the log and the leftover entry can be deleted by hand under Resources.
 
 ## Known limitations
 

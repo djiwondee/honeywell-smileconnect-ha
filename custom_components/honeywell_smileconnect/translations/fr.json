@@ -7,7 +7,8 @@
           "username": "Nom d'utilisateur",
           "password": "Mot de passe",
           "interval": "Intervalle d'interrogation (secondes)",
-          "ping_interval": "Intervalle de ping (secondes)"
+          "ping_interval": "Intervalle de ping (secondes)",
+          "schedule_interval": "Intervalle d'interrogation de la programmation (secondes)"
         }
       }
     },
@@ -28,7 +29,8 @@
           "username": "Nom d'utilisateur",
           "password": "Mot de passe",
           "interval": "Intervalle d'interrogation (secondes)",
-          "ping_interval": "Intervalle de ping (secondes)"
+          "ping_interval": "Intervalle de ping (secondes)",
+          "schedule_interval": "Intervalle d'interrogation de la programmation (secondes)"
         }
       }
     },
@@ -63,6 +65,9 @@
       },
       "holiday_duration_remaining": {
         "name": "Holiday restant"
+      },
+      "room_schedule": {
+        "name": "Programmation"
       }
     },
     "binary_sensor": {

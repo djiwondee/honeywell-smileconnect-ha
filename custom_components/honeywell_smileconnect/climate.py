@@ -1,6 +1,21 @@
 """Climate platform for Honeywell Smile Connect."""
 # Change log:
-# - 2026-09-21: Look the room up BY ID instead of by list index. This was
+# - 2026-09-21 (b): Every gateway call in this file now goes through
+#   SmileConnectCoordinator.async_api_call() / async_api_session() instead
+#   of hass.async_add_executor_job() directly, so it is serialised against
+#   the poll cycles and against other entity services - see coordinator.py's
+#   change log for the reqcount race this closes.
+#   The two switching-times write Actions additionally hold the lock across
+#   their whole read-modify-write via async_api_session(): both read the
+#   current schedule, edit it, and write the result back, and the gateway
+#   has no partial-update endpoint, so without this two concurrent writes
+#   could both read the same base and the second would silently discard the
+#   first's change.
+#   Both write Actions now also refresh the schedule coordinator
+#   (async_refresh(), NOT async_request_refresh(): the Debouncer would skip
+#   a second write inside its cooldown and leave the schedule sensor - and
+#   therefore the Lovelace card - showing stale data).
+# - 2026-09-21 (a): Look the room up BY ID instead of by list index. This was
 #   the only index-based lookup left in the integration - number.py and
 #   sensor.py both switched to id years-of-bugs ago, and number.py's own
 #   change log states the reason: "a changed room order cannot make a
@@ -326,6 +341,7 @@ from .const import (
     SceneName,
 )
 from .coordinator import SmileConnectCoordinator
+from .schedule_coordinator import SmileConnectScheduleCoordinator
 from .switching_times import (
     VALID_TYPES,
     WEEKDAYS,
@@ -495,6 +511,7 @@ async def async_setup_entry(
     async_add_entities(
         SmileConnectClimate(
             coordinator,
+            data.schedule_coordinator,
             scene_manager,
             room["data"]["id"],
             room["name"],
@@ -585,6 +602,7 @@ class SmileConnectClimate(CoordinatorEntity, ClimateEntity):
     def __init__(
         self,
         coordinator: SmileConnectCoordinator,
+        schedule_coordinator: SmileConnectScheduleCoordinator,
         scene_manager: SceneManager,
         room_id,
         room_name: str,
@@ -597,6 +615,11 @@ class SmileConnectClimate(CoordinatorEntity, ClimateEntity):
         # calls them during entity-registry and state-machine work.
         self._room_id = room_id
         self._fallback_room_name = room_name
+        # Not a CoordinatorEntity relationship - this entity does not read
+        # from the schedule coordinator, it only pokes it after a write so
+        # the schedule sensor (and the Lovelace card reading it) converges
+        # immediately instead of up to one poll interval later.
+        self._schedule_coordinator = schedule_coordinator
         self._scene_manager = scene_manager
         self._active_preset: str | None = None
         self._gateway_unique_id = gateway_unique_id
@@ -725,7 +748,7 @@ class SmileConnectClimate(CoordinatorEntity, ClimateEntity):
         temperature = kwargs.get(ATTR_TEMPERATURE)
         if temperature is None:
             return
-        await self.hass.async_add_executor_job(
+        await self.coordinator.async_api_call(
             self.coordinator.api.set_temperature, temperature, self._room_id
         )
         await self.coordinator.async_request_refresh()
@@ -771,14 +794,14 @@ class SmileConnectClimate(CoordinatorEntity, ClimateEntity):
     ) -> None:
         previous = self._active_preset
         if previous is not None and previous != preset_mode:
-            await self.hass.async_add_executor_job(
+            await self.coordinator.async_api_call(
                 self._scene_manager.remove_member_from_scene, self._room_id, previous
             )
         if preset_mode != PRESET_NONE:
             # PRESET_NONE isn't a real gateway scene - selecting it only
             # clears whatever preset was active (handled above); there is
             # nothing to activate.
-            await self.hass.async_add_executor_job(
+            await self.coordinator.async_api_call(
                 self._scene_manager.add_member_to_scene,
                 self._room_id,
                 preset_mode,
@@ -820,11 +843,11 @@ class SmileConnectClimate(CoordinatorEntity, ClimateEntity):
         # it's toggled directly here, independent of Boost/Party/Leave/
         # Holiday, matching how it actually behaves on this hardware.
         if hvac_mode == HVACMode.OFF:
-            await self.hass.async_add_executor_job(
+            await self.coordinator.async_api_call(
                 self._scene_manager.add_member_to_scene, self._room_id, SceneName.STANDBY.value
             )
         else:  # HVACMode.AUTO
-            await self.hass.async_add_executor_job(
+            await self.coordinator.async_api_call(
                 self._scene_manager.remove_member_from_scene, self._room_id, SceneName.STANDBY.value
             )
             if temperature is not None:
@@ -834,7 +857,7 @@ class SmileConnectClimate(CoordinatorEntity, ClimateEntity):
                 # (see its own docstring) - go straight to the real
                 # target instead of jumping to max_temp first and then
                 # immediately overwriting it with a second write.
-                await self.hass.async_add_executor_job(
+                await self.coordinator.async_api_call(
                     self.coordinator.api.set_temperature, temperature, self._room_id
                 )
             else:
@@ -862,7 +885,7 @@ class SmileConnectClimate(CoordinatorEntity, ClimateEntity):
         exactly like before this fix.
         """
         try:
-            await self.hass.async_add_executor_job(
+            await self.coordinator.async_api_call(
                 self.coordinator.api.set_temperature, self.max_temp, self._room_id
             )
         except Exception:  # noqa: BLE001 - deliberate, see method docstring
@@ -873,8 +896,21 @@ class SmileConnectClimate(CoordinatorEntity, ClimateEntity):
             )
 
     async def _async_read_switching_times(self) -> list[dict | None]:
-        response = await self.hass.async_add_executor_job(
+        """Read this room's raw switchingtimes array (takes the lock)."""
+        response = await self.coordinator.async_api_call(
             self.coordinator.api.get_switching_times, self._room_name, self._room_id
+        )
+        return response["switchingtimes"]
+
+    async def _read_switching_times_locked(self, api) -> list[dict | None]:
+        """Same read, for use INSIDE an async_api_session() block.
+
+        The lock is not re-entrant, so a read-modify-write sequence cannot
+        call _async_read_switching_times() - it would deadlock on the
+        second acquire. See coordinator.async_api_call()'s docstring.
+        """
+        response = await self.hass.async_add_executor_job(
+            api.get_switching_times, self._room_name, self._room_id
         )
         return response["switchingtimes"]
 
@@ -908,21 +944,25 @@ class SmileConnectClimate(CoordinatorEntity, ClimateEntity):
         schedule needing fewer slots/day than the room's actual shape
         silently produced a too-short array and the write was rejected.
         """
-        current = await self._async_read_switching_times()
-        current_slots_per_day = len(current) // 7
-        try:
-            switchingtimes = weekday_dict_to_switching_times(
-                schedule, slots_per_day=current_slots_per_day
+        # Read and write under ONE lock acquisition: every write is a
+        # full-week replacement, so another writer slipping in between
+        # would be silently overwritten - see module change log.
+        async with self.coordinator.async_api_session() as api:
+            current = await self._read_switching_times_locked(api)
+            current_slots_per_day = len(current) // 7
+            try:
+                switchingtimes = weekday_dict_to_switching_times(
+                    schedule, slots_per_day=current_slots_per_day
+                )
+            except ScheduleValidationError as err:
+                raise ServiceValidationError(str(err)) from err
+            await self.hass.async_add_executor_job(
+                api.set_switching_times,
+                self._room_name,
+                self._room_id,
+                switchingtimes,
             )
-        except ScheduleValidationError as err:
-            raise ServiceValidationError(str(err)) from err
-        await self.hass.async_add_executor_job(
-            self.coordinator.api.set_switching_times,
-            self._room_name,
-            self._room_id,
-            switchingtimes,
-        )
-        return await self.async_get_schedule_room()
+        return await self._async_schedule_written()
 
     @_translate_gateway_errors
     async def async_set_schedule_room_weekday(
@@ -956,17 +996,47 @@ class SmileConnectClimate(CoordinatorEntity, ClimateEntity):
             )
             if slot_from is not None
         ]
-        try:
-            current = await self._async_read_switching_times()
-            updated = replace_weekday_slots(current, weekday, slots)
-        except ScheduleValidationError as err:
-            raise ServiceValidationError(str(err)) from err
-        await self.hass.async_add_executor_job(
-            self.coordinator.api.set_switching_times,
-            self._room_name,
-            self._room_id,
-            updated,
-        )
+        async with self.coordinator.async_api_session() as api:
+            try:
+                current = await self._read_switching_times_locked(api)
+                updated = replace_weekday_slots(current, weekday, slots)
+            except ScheduleValidationError as err:
+                raise ServiceValidationError(str(err)) from err
+            await self.hass.async_add_executor_job(
+                api.set_switching_times,
+                self._room_name,
+                self._room_id,
+                updated,
+            )
+        return await self._async_schedule_written()
+
+    async def _async_schedule_written(self) -> dict:
+        """Re-read the schedule after a write and publish it everywhere.
+
+        Returns the gateway's actual post-write state rather than the bare
+        success:true it reports, which has repeatedly been shown to lie
+        (docs/switching-times-api.md). The same re-read also feeds the
+        schedule coordinator, so the per-room schedule sensor - and the
+        Lovelace card bound to it - updates immediately instead of at the
+        next poll.
+
+        async_refresh(), not async_request_refresh(): the latter goes
+        through HA's Debouncer and would skip the refresh entirely for a
+        second write inside its cooldown, leaving the sensor stale.
+
+        The coordinator's own re-read IS the verification read - taking
+        its result rather than issuing a separate get_switching_times()
+        saves a gateway round trip per write, and guarantees the caller
+        and the sensor cannot disagree about what was just written. Falls
+        back to a direct read only if that refresh failed, in which case
+        the coordinator still holds pre-write data that must not be
+        reported as verified.
+        """
+        await self._schedule_coordinator.async_refresh()
+        if self._schedule_coordinator.last_update_success:
+            room_data = (self._schedule_coordinator.data or {}).get(str(self._room_id))
+            if room_data is not None:
+                return room_data["schedule"]
         return await self.async_get_schedule_room()
 
     @_translate_gateway_errors
@@ -991,13 +1061,13 @@ class SmileConnectClimate(CoordinatorEntity, ClimateEntity):
         # Deliberately not wrapped in `except ValueError`: json decode errors
         # are ValueErrors too and would be mis-reported as user input errors.
         # Range/type were already validated above; the api layer re-checks.
-        await self.hass.async_add_executor_job(
+        await self.coordinator.async_api_call(
             self.coordinator.api.set_desired_temperature,
             temperature,
             self._room_id,
             target,
         )
-        room = await self.hass.async_add_executor_job(
+        room = await self.coordinator.async_api_call(
             self.coordinator.api.get_specific_room, self._room_id
         )
         if room is None:
