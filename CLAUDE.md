@@ -2152,6 +2152,30 @@ must not proceed carelessly.
     **Lovelace resource** and `frontend.add_extra_js_url()` in
     `__init__.py`; `manifest.json` gained
     `"dependencies": ["http", "frontend", "lovelace"]`).
+    **A second, independent defect made this take far longer than it
+    should have (found 2026-09-22):** the card ended with
+    `if (!customElements.get(CARD_TAG)) customElements.define(...)`. That
+    guard uses a READ to decide whether to perform the WRITE, so anything
+    that makes `customElements.get()` answer truthily without a real
+    registration skips the define **permanently**. The symptom is
+    exceptionally misleading: the module is fetched (HTTP 200), evaluates
+    without error, runs to its very last line and registers itself in
+    `window.customCards` — while the element is never defined and Home
+    Assistant keeps reporting "Custom element doesn't exist". The
+    contradiction that finally pinned it down was
+    `cards: ['smileconnect-schedule-card'] | defined: false` from one
+    console line: the `push` sits directly AFTER the `define`, so the
+    define line was demonstrably reached, yet nothing was registered.
+    Fixed by calling `define()` unconditionally inside a `try` and only
+    complaining if the element is genuinely absent afterwards —
+    `define()` is the authoritative operation, and its only failure mode
+    on a repeat call is a throw, which is the harmless case. Reproduced
+    and verified both ways in a browser with a deliberately lying
+    `customElements.get()`: old pattern → element NOT defined, new
+    pattern → defined correctly.
+    **Lesson: never gate an idempotent registration behind a query for
+    whether it is already registered. Attempt the write and treat the
+    duplicate error as success.**
     **The Lovelace resource is not optional belt-and-braces — it is the
     part that actually works.** `add_extra_js_url()` alone produced a
     live load-order race: it is a generic "load this script sometime"

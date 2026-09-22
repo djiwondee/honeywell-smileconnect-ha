@@ -25,6 +25,12 @@
  * freshly-re-read response as truth rather than its own optimistic view.
  *
  * Change log:
+ *  - 2026-09-22: Register the element unconditionally instead of gating
+ *    the define() behind customElements.get() - see the comment at the
+ *    bottom of this file. The guard was using a read to decide whether to
+ *    do the write, which made the card silently never register while
+ *    every other sign (module fetched, evaluated, listed in
+ *    window.customCards) looked healthy.
  *  - 2026-09-21 (c): Midnight ends are allowed (the real Smile App offers
  *    0:00 / 24:00, confirmed by the user), and the card now asks the
  *    schedule sensor for a fresh gateway read whenever it is shown -
@@ -1275,8 +1281,30 @@ class SmileConnectScheduleCard extends HTMLElement {
   }
 }
 
-if (!customElements.get(CARD_TAG)) {
+/*
+ * Register unconditionally and let a duplicate registration throw, rather
+ * than asking customElements.get() for permission first.
+ *
+ * The get()-then-define guard looked safer and was the bug: it uses a READ
+ * to decide whether to perform the WRITE, so anything that makes get()
+ * return a truthy value without a real registration - a patched or scoped
+ * CustomElementRegistry, a polyfill, another script - skips the define
+ * permanently. The symptom is brutal to diagnose, because the module loads
+ * cleanly, runs to its last line, and registers itself in
+ * window.customCards, while the element is simply never defined and Home
+ * Assistant keeps reporting "Custom element doesn't exist".
+ *
+ * define() is the authoritative operation and is idempotent enough: the
+ * only thing it does on a second call is throw, which is exactly the
+ * harmless case. So we attempt it, and only complain if the element is
+ * genuinely not registered afterwards.
+ */
+try {
   customElements.define(CARD_TAG, SmileConnectScheduleCard);
+} catch (err) {
+  if (!customElements.get(CARD_TAG)) {
+    console.error(`${CARD_TAG}: could not register the custom element`, err);
+  }
 }
 
 window.customCards = window.customCards || [];
