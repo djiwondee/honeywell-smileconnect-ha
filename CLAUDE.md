@@ -905,6 +905,34 @@ GET  /admin/login/index            (returns HTML of the config menu)
   from the gateway's own error responses - would need live testing,
   e.g. forcing a gateway reboot mid-session and inspecting exactly what
   error comes back).
+- **`via_device` points at a device that does not exist yet — Home
+  Assistant says this will stop working** (found 2026-09-22 in the dev
+  container's log, while verifying something unrelated; **pre-existing,
+  not introduced by `0.4.0`**):
+  ```
+  Detected that custom integration 'honeywell_smileconnect' calls
+  device_registry.async_get_or_create referencing a non existing
+  via_device ('honeywell_smileconnect', '[0134f0]')
+  ... This will stop working in Home Assistant 2025.12.0
+  ```
+  Raised twice per setup, from `climate.py` and `sensor.py`. Cause: the
+  platforms are set up in the order CLIMATE → SENSOR → BINARY_SENSOR →
+  NUMBER, and `climate.py` creates the **Regler** device first, with
+  `via_device` pointing at the **gateway** device - which nothing has
+  created yet. The gateway device only comes into being later, via the
+  ping-based diagnostic entities (and, since `0.1.1`, not via the weather
+  sensors on a single-room install, which moved to the Regler - so that
+  change may have made this more likely to surface).
+  **This has a deadline and the others in this list do not**: the
+  user's instance already runs 2026.2.3, well past the version named in
+  the warning, so this is living on borrowed time.
+  Proposed fix (needs a plan session per the workflow rules): create the
+  gateway device explicitly in `__init__.py` via
+  `device_registry.async_get_or_create(**device.gateway_device_info())`
+  **before** `async_forward_entry_setups()`, so the `via_device` target
+  always exists. Touches the hub/sub-device hierarchy that `device.py`
+  was extracted to own in the first place (see "Known Fixes"), so it
+  belongs there rather than being patched per platform.
 - **HACS-appropriate `README.md` rewrite, documenting the integration and
   its features properly** (agreed 2026-09-11, explicitly deferred to a
   separate session/PR - not part of the `set_hvac_mode_and_temperature`
@@ -1197,6 +1225,34 @@ pytest tests/ -v
   `gateway_device_info()`'s own identifier — this is precisely the kind of
   mismatch that caused the original "two unrelated devices" bug, so it's
   asserted explicitly rather than just implicitly.
+- `test_switching_times.py` — the conversion/validation rules, plus (as of
+  `0.4.0`) the `"N"` read/write asymmetry locked in from BOTH sides (an
+  `"N"` survives a read and survives a per-weekday write to another day,
+  but makes a full-week write fail) and the fixed-array-width round trip
+  for several widths, so nothing may hardcode 3 or 21.
+- `tests/fixtures/session_expired_response.json` — live-captured
+  2026-09-21 via `scripts/manual_probe_failure_responses.py`. What EVERY
+  authenticated endpoint returns once the gateway drops the session.
+  Used by `test_api_request.py`'s `TestRaiseForPayload` /
+  `TestRequestRaisesOnFailure` and `test_api_methods.py`'s
+  `TestFailedResponsePropagates` - the direct regression test for the
+  2026-09-21 production incident (a failure must never again be able to
+  look like "no rooms").
+- **Three gateway-free regression scripts under `scripts/`**, all
+  deliberately outside `tests/` (so they stay out of `lint.yml`'s scope)
+  and needing **no gateway, no credentials, no network and no Home
+  Assistant test harness**. Run any of them directly with `python3`:
+  - `test_scene_guards_local.py` — see below.
+  - `test_session_recovery_local.py` (added `0.3.1`, 10 checks) — the
+    coordinator's re-login control flow, which would otherwise have no
+    automated test at all. The important case is that a second session
+    expiry straight after a successful login does NOT loop.
+  - `test_frontend_registration_local.py` (added `0.4.0`, 12 checks) —
+    the Lovelace resource registration and its removal: idempotent,
+    rewrites an existing entry on a hash change instead of duplicating
+    it, recognises the legacy `?v=` URLs, never touches another
+    integration's resources, handles `hass.data["lovelace"]` as dict and
+    as dataclass, and declines cleanly in YAML mode.
 - **`scripts/test_scene_guards_local.py` (2026-09-09, extended to v3)** —
   NOT under `tests/`, deliberately: it lives alongside the other manual/
   diagnostic scripts in `scripts/` (so it's exempt from the `lint.yml`
@@ -1409,6 +1465,14 @@ construct a `device_info` dict inline.
     resolution entries above for both).
   - `credentials.py` — session state, including `reqcount` with correct
     post-increment semantics (see reqcount section above).
+  - `exceptions.py` — `SmileConnectApiError` and
+    `SmileConnectSessionExpired` (added `0.3.1`), raised by
+    `api_request.py`'s single response check. **Deliberately NOT
+    `ValueError` subclasses** - the opposite call from
+    `switching_times.ScheduleValidationError` - because `climate.py` and
+    `config_flow.py` both catch `ValueError` broadly and would
+    mis-diagnose a dead session as bad user input or wrong credentials.
+    A test asserts this.
   - `ping.py` — **deliberately separate** from everything above: a plain,
     unauthenticated `GET /api/ping`, no Login/Credentials/signing
     involved at all. The entire point of this endpoint is to work when
@@ -1455,6 +1519,20 @@ construct a `device_info` dict inline.
   gateway's own internet-facing heartbeat is documented at ~90s, but this
   local, unauthenticated, lightweight call is a different use case and
   intentionally more responsive by default).
+- `switching_times.py` — HA-independent conversion/validation between the
+  gateway's flat, day-major `switchingtimes` wire format and a per-weekday
+  dict. No `homeassistant.*` import, fully unit-tested. Owns `VALID_TYPES`
+  (`H`/`L` only - `"N"` is a real protocol type but is refused as a
+  settable value, see its own change log), `MAX_SLOTS_PER_DAY`, and the
+  pure helpers backing the schedule sensor's attributes
+  (`count_defined_slots()`, `collect_unsupported_types()`,
+  `schedule_fingerprint()`).
+- `frontend/smileconnect-schedule-card.js` — the bundled Lovelace card
+  (added `0.4.0`). Hand-written ES module: no build step, no npm, no CDN,
+  no `lit`, and no reliance on lazily registered HA internals. Registered
+  by `__init__.py` as a Lovelace resource; see that file's change log for
+  the four separate loading defects this cost to get right, and read them
+  before changing anything about how it is served.
 - `device.py` — shared `device_info` builders (`gateway_device_info()`,
   `regler_device_info()`). Single source of truth for the hub/sub-device
   hierarchy described above — see "Known Fixes".
