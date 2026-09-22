@@ -313,7 +313,7 @@ entity: sensor.living_room_schedule
 | `title` | Room name | Card heading |
 | `step_minutes` | `15` | Snap grid. One of 5, 10, 15, 20, 30, 60 |
 | `night_gaps` | `false` | Paint the time not covered by any block in the night colour instead of leaving it neutral |
-| `hour_height` | `42` | Pixel height of one hour row |
+| `hour_height` | `26` | Pixel height of one hour row. The default makes a whole day fit without scrolling; raise it for a more detailed grid |
 | `colors` | theme colours | Per-type overrides, e.g. `{H: "#db4437", L: "#43a047", N: "#039be5"}` |
 
 Colours follow your theme by default: **red** for Comfort Hi (`H`), **green**
@@ -346,20 +346,44 @@ so several cards or tabs collapse into one gateway read.
 There is no visual (GUI) editor for the card's own options yet; the card
 picker falls back to YAML.
 
-> **After installing or updating via HACS**, reload the browser page once —
-> an already-open dashboard will not pick the card up.
->
-> The integration registers the card as a Lovelace resource automatically,
-> which is what guarantees Lovelace has it before it renders your cards. If
-> your dashboards are configured in **YAML mode**, that collection is
-> read-only and you need to add the resource yourself:
->
-> ```yaml
-> lovelace:
->   resources:
->     - url: /honeywell_smileconnect/frontend/smileconnect-schedule-card.js
->       type: module
-> ```
+### How the card gets loaded
+
+You do not have to register anything. On setup — and on every Home
+Assistant start — the integration adds itself to **Settings → Dashboards →
+⋮ → Resources**, as a `module` entry pointing at a URL that contains a hash
+of the card file, for example:
+
+```
+/honeywell_smileconnect/card/smileconnect-schedule-card.3ef4beca.js
+```
+
+**Leave that entry alone.** It is managed: when the card file changes, the
+integration rewrites the existing entry to the new URL rather than adding a
+second one. Editing or deleting it by hand only causes confusion — it is
+restored on the next restart.
+
+After installing or updating, **reload the browser page once**. An
+already-open dashboard will not pick up a new card.
+
+Two caveats worth knowing:
+
+- **YAML-mode dashboards.** There the resource collection is read-only, so
+  the integration logs a warning and falls back to Home Assistant's
+  `extra_module_url` mechanism. That works, but without the ordering
+  guarantee, so the card may need a second page load to appear. To get the
+  guarantee, add the resource yourself — this URL is stable and unhashed:
+
+  ```yaml
+  lovelace:
+    resources:
+      - url: /honeywell_smileconnect/frontend/smileconnect-schedule-card.js
+        type: module
+  ```
+
+- **Removing the integration leaves the resource entry behind.** It is not
+  cleaned up automatically yet, so delete it manually under Resources after
+  uninstalling; otherwise Home Assistant keeps trying to load a URL that no
+  longer exists.
 
 ## Known limitations
 
