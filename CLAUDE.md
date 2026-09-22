@@ -1463,6 +1463,12 @@ construct a `device_info` dict inline.
     is now correct for all five tracked scenes (Holiday fixed in `0.1.0`
     on 2026-09-10, Leave fixed in `0.1.0` on 2026-09-11 — see the
     resolution entries above for both).
+  - `default_params.py` — the plain parameter object every endpoint
+    method fills in and hands to `api_request.py`. Deliberately an empty
+    attribute bag rather than a schema: `ApiRequest.request()` reads it
+    via `vars()` and drops `None` values, which is also how
+    `set_switching_times()` can set the reserved word `from` via
+    `setattr()`.
   - `credentials.py` — session state, including `reqcount` with correct
     post-increment semantics (see reqcount section above).
   - `exceptions.py` — `SmileConnectApiError` and
@@ -1816,6 +1822,33 @@ must not proceed carelessly.
      confirmed the hard way during development (`ModuleNotFoundError: No
      module named 'script'` when attempted inside the dev container).
    - Propose an English-language commit message summarizing the change.
+7. **Before any release (and before opening the PR for it), reconcile
+   `CLAUDE.md`'s two CROSS-SECTIONAL sections against the actual file
+   tree** — "Module layout" and "Test Suite".
+   The version entries under "Versioning & Branching Strategy" and the
+   per-file change logs take care of themselves: they are written while
+   the code is being written, because they describe a *change*. These two
+   sections describe the *current state* instead, so nothing about making
+   a change prompts anyone to update them — and they silently rot.
+   Established 2026-09-22, after an audit at the end of the `0.4.0`
+   release found four gaps at once: `api/exceptions.py` and
+   `switching_times.py` had no "Module layout" entry at all (the latter
+   despite being referenced throughout the document), neither did
+   `frontend/smileconnect-schedule-card.js`, and "Test Suite" knew only
+   one of the three gateway-free regression scripts under `scripts/`,
+   plus neither the session-expiry fixture nor the test classes built on
+   it. Every one of those had been introduced in that same release cycle.
+   Concretely, check that:
+   - every `.py` under `custom_components/honeywell_smileconnect/`
+     (including `api/`) has a "Module layout" bullet, and any
+     non-Python asset that ships with the integration does too;
+   - every file under `tests/` and every `tests/fixtures/*.json` is
+     described in "Test Suite", with its provenance for fixtures;
+   - every gateway-free regression script under `scripts/` is listed
+     there as well — those are real tests that simply cannot live in
+     `tests/`, and are easy to forget precisely because they are not.
+   A quick way to spot a gap: list the files, then grep `CLAUDE.md` for
+   each name. That is how this rule's own four gaps were found.
 
 ## Versioning & Branching Strategy
 
