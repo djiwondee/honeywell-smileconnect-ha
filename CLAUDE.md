@@ -2190,6 +2190,25 @@ must not proceed carelessly.
     **Lesson: cache-bust a bundled asset on its CONTENT, not on a version
     number that only moves at release time - otherwise every development
     edit is invisible to the browser, intermittently.**
+    **And a fourth, which was the last one (2026-09-22): put that hash in
+    the FILENAME, not in a `?v=` query string.** Home Assistant's service
+    worker intercepts requests, and with a query-string URL the dynamic
+    import HA writes into its index page rejected on roughly every second
+    page load - the element was then never defined and the dashboard
+    showed "Custom element doesn't exist". User-confirmed decisively:
+    with the service worker's "Bypass for network" enabled, 20+ reloads
+    were clean; without it, every second one broke. HA's own bundles are
+    named `core.<hash>.js` for exactly this reason, so the card now
+    follows that convention (`_hashed_card_url()`), served from its own
+    `/{DOMAIN}/card/` route so it cannot collide with the stable,
+    unhashed directory that YAML-mode dashboards still need. The failure
+    is invisible in the console because that dynamic import is written
+    without a `.catch()`, so the rejection only ever surfaces as HA's
+    "Cannot parse given Error object".
+    **Lesson: a bundled frontend asset behind HA's service worker must be
+    content-addressed by PATH. Query strings are handled unreliably
+    there, and the resulting breakage is intermittent, silent, and looks
+    exactly like a race condition.**
     Worth recording about the whole episode: `add_extra_js_url()` renders
     as `<script>import("...")</script>` in HA's index - a bare dynamic
     import, not awaited and with no `.catch()`. That is why a failure

@@ -29,13 +29,17 @@ from custom_components.honeywell_smileconnect import (  # noqa: E402
     CARD_FILENAME,
     FRONTEND_URL_BASE,
     _async_register_lovelace_resource,
+    _hashed_card_url,
     _lovelace_resources,
 )
 from homeassistant.components.lovelace.const import DOMAIN as LOVELACE_DOMAIN  # noqa: E402
 
 RESULTS: list[str] = []
-URL_V1 = f"{FRONTEND_URL_BASE}/{CARD_FILENAME}?v=0.4.0"
-URL_V2 = f"{FRONTEND_URL_BASE}/{CARD_FILENAME}?v=0.5.0"
+URL_V1 = _hashed_card_url("aaaaaaaa")
+URL_V2 = _hashed_card_url("bbbbbbbb")
+# The pre-0.4.0 shape, which an upgrade has to rewrite rather than leave
+# behind as a second, dead entry.
+URL_LEGACY = f"{FRONTEND_URL_BASE}/{CARD_FILENAME}?v=0.4.0"
 
 
 def check(name: str, condition: bool) -> None:
@@ -126,6 +130,19 @@ def test_updates_on_version_bump() -> None:
     )
 
 
+def test_rewrites_the_legacy_query_string_url() -> None:
+    collection = StorageCollection([{"id": "a", "url": URL_LEGACY}])
+    hass = FakeHass({LOVELACE_DOMAIN: {"resources": collection}})
+    ok = run(_async_register_lovelace_resource(hass, URL_V1))
+    check(
+        "legacy ?v= URL: rewritten in place, not duplicated",
+        ok
+        and collection.updated == [("a", {"url": URL_V1})]
+        and not collection.created
+        and len(collection.items) == 1,
+    )
+
+
 def test_leaves_foreign_resources_alone() -> None:
     other = {"id": "x", "url": "/local/some-other-card.js"}
     collection = StorageCollection([other])
@@ -169,6 +186,7 @@ def main() -> int:
         test_creates_when_absent,
         test_is_idempotent,
         test_updates_on_version_bump,
+        test_rewrites_the_legacy_query_string_url,
         test_leaves_foreign_resources_alone,
         test_dataclass_shaped_lovelace_data,
         test_yaml_mode_declines,

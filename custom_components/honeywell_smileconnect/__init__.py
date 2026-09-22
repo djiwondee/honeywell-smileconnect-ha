@@ -1,5 +1,16 @@
 """The Honeywell Smile Connect integration."""
 # Change log:
+# - 2026-09-22 (c): Put the content hash in the FILENAME instead of a
+#   `?v=` query string, and serve it from its own route. Home Assistant's
+#   service worker intercepts requests, and with a query-string URL the
+#   dynamic import HA writes into its index page rejected on roughly
+#   every other page load - the element was then never defined and the
+#   dashboard showed "Custom element doesn't exist". User-confirmed: with
+#   the service worker's "Bypass for network" enabled, 20+ reloads were
+#   clean; without it, every second one broke. HA's own bundles put the
+#   hash in the filename (core.<hash>.js) for the same reason. The
+#   unhashed directory stays registered so YAML-mode dashboards keep a
+#   stable URL to reference.
 # - 2026-09-22 (b): Cache-bust the card URL with a CONTENT HASH, not just
 #   the integration version. The version alone does not change when the
 #   card file is edited without a release, so the browser keeps its cached
@@ -89,7 +100,6 @@ from homeassistant.components.lovelace.const import DOMAIN as LOVELACE_DOMAIN
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import Platform
 from homeassistant.core import HomeAssistant
-from homeassistant.loader import async_get_integration
 
 from .const import (
     CONF_HOST,
@@ -121,8 +131,44 @@ PLATFORMS: list[Platform] = [
 FRONTEND_URL_BASE = f"/{DOMAIN}/frontend"
 FRONTEND_DIR = Path(__file__).parent / "frontend"
 CARD_FILENAME = "smileconnect-schedule-card.js"
+CARD_STEM = CARD_FILENAME.removesuffix(".js")
+# Separate base for the content-addressed URL, so its route cannot collide
+# with the directory served at FRONTEND_URL_BASE (which stays as the
+# stable, unhashed URL that YAML-mode dashboards have to reference by
+# hand - see README).
+CARD_URL_BASE = f"/{DOMAIN}/card"
 # Top-level key on purpose - see this module's change log.
 DATA_FRONTEND_REGISTERED = f"{DOMAIN}_frontend_registered"
+
+
+def _hashed_card_url(fingerprint: str) -> str:
+    """Content-addressed URL for the card, hash in the FILENAME.
+
+    Not a `?v=` query string, which is what this used to be. Home
+    Assistant's service worker intercepts requests, and a query-string
+    URL turned out to be served unreliably through it: the dynamic
+    import in HA's index page rejected on roughly every other page load,
+    the element was therefore never defined, and the dashboard showed
+    "Custom element doesn't exist". Confirmed by the user: with the
+    service worker's "Bypass for network" enabled, 20+ reloads were
+    clean; without it, every second one failed.
+
+    Home Assistant's own bundles put the hash in the filename for the
+    same reason (core.9c169bb8cc5569b5.js), so this simply follows the
+    convention that is known to work with that service worker.
+    """
+    return f"{CARD_URL_BASE}/{CARD_STEM}.{fingerprint}.js"
+
+
+def _is_our_card_resource(url: object) -> bool:
+    """Whether a Lovelace resource entry points at our card, any version.
+
+    Deliberately loose about the shape: it has to recognise the older
+    `?v=`-style URLs so an upgrade rewrites them instead of leaving a
+    second, dead entry behind.
+    """
+    path = str(url).split("?", 1)[0]
+    return path.startswith(f"/{DOMAIN}/") and CARD_STEM in path and path.endswith(".js")
 
 
 def _card_fingerprint() -> str:
@@ -186,9 +232,8 @@ async def _async_register_lovelace_resource(hass: HomeAssistant, url: str) -> bo
     # Loads the collection from storage on first access.
     await resources.async_get_info()
 
-    base = f"{FRONTEND_URL_BASE}/{CARD_FILENAME}"
     for item in resources.async_items() or []:
-        if not str(item.get("url", "")).startswith(base):
+        if not _is_our_card_resource(item.get("url", "")):
             continue
         if item["url"] != url:
             await resources.async_update_item(item["id"], {"url": url})
@@ -223,18 +268,20 @@ async def _async_register_frontend(hass: HomeAssistant) -> None:
     resource route necessary, and why add_extra_js_url stays as the
     YAML-mode fallback.
     """
-    integration = await async_get_integration(hass, DOMAIN)
     fingerprint = await hass.async_add_executor_job(_card_fingerprint)
-    url = f"{FRONTEND_URL_BASE}/{CARD_FILENAME}?v={integration.version}.{fingerprint}"
+    url = _hashed_card_url(fingerprint)
 
     if not hass.data.get(DATA_FRONTEND_REGISTERED):
         await hass.http.async_register_static_paths(
             [
-                # cache_headers=False so an edited card shows up on a
-                # reload during development; the ?v= query is what
-                # actually busts a released user's browser cache between
-                # versions.
-                StaticPathConfig(FRONTEND_URL_BASE, str(FRONTEND_DIR), False)
+                # The stable, unhashed directory. Not what the frontend is
+                # pointed at, but it keeps a predictable URL available for
+                # YAML-mode dashboards, which cannot reference a hash.
+                StaticPathConfig(FRONTEND_URL_BASE, str(FRONTEND_DIR), False),
+                # The content-addressed URL the frontend actually loads.
+                # cache_headers=True is safe and correct here precisely
+                # because the URL changes whenever the file does.
+                StaticPathConfig(url, str(FRONTEND_DIR / CARD_FILENAME), True),
             ]
         )
         add_extra_js_url(hass, url)
