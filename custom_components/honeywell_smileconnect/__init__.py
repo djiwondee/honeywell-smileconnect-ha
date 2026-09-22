@@ -1,6 +1,15 @@
 """The Honeywell Smile Connect integration."""
 # Change log:
-# - 2026-09-22: Only the static path and add_extra_js_url() stay behind
+# - 2026-09-22 (b): Cache-bust the card URL with a CONTENT HASH, not just
+#   the integration version. The version alone does not change when the
+#   card file is edited without a release, so the browser keeps its cached
+#   copy - and whether it revalidates at all is heuristic, so the same
+#   page works on one load and fails on the next. That cost a long,
+#   confusing debugging session where a fixed file was live on the server
+#   while the browser kept running the old one. The hash also makes
+#   _async_register_lovelace_resource() update the stored resource URL by
+#   itself, since it compares URLs.
+# - 2026-09-22 (a): Only the static path and add_extra_js_url() stay behind
 #   the once-per-process guard; the Lovelace resource is now (re)checked
 #   on EVERY setup. The resource lives in persistent storage rather than
 #   hass.data, so it outlives the process and has to be re-checked after
@@ -69,6 +78,7 @@
 # - 2026-08-27 (a): Added Platform.SENSOR (outside temperature/min/max).
 from __future__ import annotations
 
+import hashlib
 import logging
 from dataclasses import dataclass
 from pathlib import Path
@@ -113,6 +123,32 @@ FRONTEND_DIR = Path(__file__).parent / "frontend"
 CARD_FILENAME = "smileconnect-schedule-card.js"
 # Top-level key on purpose - see this module's change log.
 DATA_FRONTEND_REGISTERED = f"{DOMAIN}_frontend_registered"
+
+
+def _card_fingerprint() -> str:
+    """Short content hash of the card file, for cache busting.
+
+    The integration version alone is not enough: editing the card without
+    releasing a new version leaves the URL unchanged, so browsers keep
+    serving the previous file from their heuristic cache - intermittently,
+    since whether they revalidate is up to them. That produced a genuinely
+    baffling "works sometimes, broken other times" during development.
+
+    A content hash changes exactly when the file does, which also makes
+    _async_register_lovelace_resource() update the stored resource URL on
+    its own (it compares URLs). Not a security primitive - sha256 is used
+    purely as a content digest, and only the first 8 characters are kept
+    because this only has to distinguish one build from the next.
+
+    Blocking file I/O, so callers run it in the executor.
+    """
+    try:
+        return hashlib.sha256(FRONTEND_DIR.joinpath(CARD_FILENAME).read_bytes()).hexdigest()[:8]
+    except OSError:
+        # Missing or unreadable file is the static path's problem to
+        # report, not ours; fall back to a constant so the URL is still
+        # well-formed.
+        return "0"
 
 
 def _lovelace_resources(hass: HomeAssistant):
@@ -188,7 +224,8 @@ async def _async_register_frontend(hass: HomeAssistant) -> None:
     YAML-mode fallback.
     """
     integration = await async_get_integration(hass, DOMAIN)
-    url = f"{FRONTEND_URL_BASE}/{CARD_FILENAME}?v={integration.version}"
+    fingerprint = await hass.async_add_executor_job(_card_fingerprint)
+    url = f"{FRONTEND_URL_BASE}/{CARD_FILENAME}?v={integration.version}.{fingerprint}"
 
     if not hass.data.get(DATA_FRONTEND_REGISTERED):
         await hass.http.async_register_static_paths(

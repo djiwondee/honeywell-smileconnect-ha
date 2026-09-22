@@ -2176,6 +2176,29 @@ must not proceed carelessly.
     **Lesson: never gate an idempotent registration behind a query for
     whether it is already registered. Attempt the write and treat the
     duplicate error as success.**
+    **A third defect prolonged the same hunt (2026-09-22): the cache-
+    busting query was `?v={integration version}`.** That does not change
+    when the card file is edited without a release, so the browser kept
+    running a stale copy while the fixed file sat on the server - and
+    because heuristic revalidation is up to the browser, it failed on one
+    load and worked on the next, which reads exactly like a race. The
+    give-away was that disabling the DevTools cache made it reliable.
+    The URL now carries a **content hash** of the card file
+    (`_card_fingerprint()` in `__init__.py`), so it changes exactly when
+    the file does - which also makes the stored Lovelace resource update
+    itself, since that comparison is by URL.
+    **Lesson: cache-bust a bundled asset on its CONTENT, not on a version
+    number that only moves at release time - otherwise every development
+    edit is invisible to the browser, intermittently.**
+    Worth recording about the whole episode: `add_extra_js_url()` renders
+    as `<script>import("...")</script>` in HA's index - a bare dynamic
+    import, not awaited and with no `.catch()`. That is why a failure
+    there surfaces only as "Failure writing unhandled promise rejection
+    to system log: Cannot parse given Error object" from HA's logging
+    mixin, with the real error swallowed. Reading the actual rendered
+    index (`curl -s http://<ha>/ | tr -d '\n' | grep -o '.\{300\}<asset>.\{150\}'`)
+    is what finally showed this, after several wrong theories built on
+    assumptions about how HA injects the script.
     **The Lovelace resource is not optional belt-and-braces — it is the
     part that actually works.** `add_extra_js_url()` alone produced a
     live load-order race: it is a generic "load this script sometime"
