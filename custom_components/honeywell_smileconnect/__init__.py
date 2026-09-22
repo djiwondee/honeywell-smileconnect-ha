@@ -1,5 +1,13 @@
 """The Honeywell Smile Connect integration."""
 # Change log:
+# - 2026-09-22 (e): Added async_remove_entry() to delete the Lovelace
+#   resource when the integration is removed. Without it, uninstalling
+#   left an entry pointing at a URL that no longer exists, which Home
+#   Assistant then tried to load on every page. Deliberately NOT in
+#   async_unload_entry, which also runs on every reload and on shutdown -
+#   deleting the resource there would fight the registration. Only runs
+#   when the LAST config entry goes away, since one resource serves them
+#   all.
 # - 2026-09-22 (d): Load the card through exactly ONE mechanism. Both the
 #   Lovelace resource and add_extra_js_url() were active, so the same URL
 #   was requested twice CONCURRENTLY on every page load. Home Assistant's
@@ -401,6 +409,61 @@ async def async_setup_entry(hass: HomeAssistant, config_entry: ConfigEntry) -> b
 
     await hass.config_entries.async_forward_entry_setups(config_entry, PLATFORMS)
     return True
+
+
+async def _async_remove_lovelace_resource(hass: HomeAssistant) -> bool:
+    """Delete our Lovelace resource entry. Returns True if one was removed.
+
+    Counterpart to _async_register_lovelace_resource(). Without this, a
+    removed integration leaves an entry pointing at a URL that no longer
+    exists, which Home Assistant then tries to load on every page.
+    """
+    resources = _lovelace_resources(hass)
+    if resources is None:
+        return False
+
+    await resources.async_get_info()
+    for item in list(resources.async_items() or []):
+        if _is_our_card_resource(item.get("url", "")):
+            await resources.async_delete_item(item["id"])
+            _LOGGER.debug("Removed Lovelace resource %s", item.get("url"))
+            return True
+    return False
+
+
+async def async_remove_entry(hass: HomeAssistant, config_entry: ConfigEntry) -> None:
+    """Clean up the Lovelace resource when the integration is removed.
+
+    Deliberately here and NOT in async_unload_entry: unload also runs on
+    every reload and on shutdown, where deleting the resource would be
+    wrong. async_remove_entry runs only when the entry is deleted for
+    good.
+
+    The static path and any extra_module_url stay registered - neither has
+    a public removal API - but they are harmless: nothing references them
+    once the resource is gone, and they disappear with the next restart.
+    """
+    # One resource serves every entry, so only clean up once the last one
+    # is going away.
+    remaining = [
+        entry
+        for entry in hass.config_entries.async_entries(DOMAIN)
+        if entry.entry_id != config_entry.entry_id
+    ]
+    if remaining:
+        return
+
+    try:
+        await _async_remove_lovelace_resource(hass)
+    except Exception as err:  # noqa: BLE001 - deliberately broad
+        # Removal must never fail: the entry is going away regardless, and
+        # a leftover resource is a cosmetic problem the user can delete by
+        # hand (see README).
+        _LOGGER.warning(
+            "Could not remove the schedule card's Lovelace resource (%s); "
+            "delete it manually under Settings > Dashboards > Resources.",
+            err,
+        )
 
 
 async def async_unload_entry(hass: HomeAssistant, config_entry: ConfigEntry) -> bool:

@@ -2225,6 +2225,12 @@ must not proceed carelessly.
     (YAML mode).
     **Lesson: two loaders for one asset is not redundancy behind a
     service worker - it is a race. Fetch it once.**
+    `async_remove_entry()` deletes the Lovelace resource again when the
+    LAST config entry is removed - deliberately not in
+    `async_unload_entry()`, which also runs on every reload and on
+    shutdown, where deleting it would fight the registration. The static
+    path and any `extra_module_url` stay registered (neither has a public
+    removal API) but are harmless once nothing references them.
     Practical note for any future frontend debugging here: HA's service
     worker is readable at `/service_worker.js`, and its last
     `registerRoute` plus its `setCatchHandler` explain most otherwise

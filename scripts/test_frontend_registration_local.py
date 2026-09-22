@@ -1,4 +1,8 @@
 # Change log:
+# - 2026-09-22 (b): Added coverage for _async_remove_lovelace_resource()
+#   (uninstall cleanup): deletes ours and only ours, recognises a legacy
+#   ?v= entry, is a no-op when nothing of ours is present, and declines
+#   in YAML mode rather than raising.
 # - 2026-09-21: Initial version. Locks in the Lovelace-resource
 #   registration added in 0.4.0 after a live load-order race made the card
 #   fail on every page RELOAD (see __init__.py's change log). That logic
@@ -29,6 +33,7 @@ from custom_components.honeywell_smileconnect import (  # noqa: E402
     CARD_FILENAME,
     FRONTEND_URL_BASE,
     _async_register_lovelace_resource,
+    _async_remove_lovelace_resource,
     _hashed_card_url,
     _lovelace_resources,
 )
@@ -53,6 +58,7 @@ class StorageCollection:
         self.items = list(items or [])
         self.created = []
         self.updated = []
+        self.deleted = []
         self.info_calls = 0
 
     async def async_get_info(self):
@@ -71,6 +77,10 @@ class StorageCollection:
         for item in self.items:
             if item["id"] == item_id:
                 item.update(data)
+
+    async def async_delete_item(self, item_id):
+        self.deleted.append(item_id)
+        self.items = [item for item in self.items if item["id"] != item_id]
 
 
 class YamlCollection:
@@ -174,6 +184,46 @@ def test_yaml_mode_declines() -> None:
     )
 
 
+def test_removal_deletes_our_entry() -> None:
+    other = {"id": "x", "url": "/local/some-other-card.js"}
+    collection = StorageCollection([other, {"id": "a", "url": URL_V1}])
+    hass = FakeHass({LOVELACE_DOMAIN: {"resources": collection}})
+    removed = run(_async_remove_lovelace_resource(hass))
+    check(
+        "removal: deletes our entry and only ours",
+        removed and collection.deleted == ["a"] and collection.items == [other],
+    )
+
+
+def test_removal_also_finds_the_legacy_url() -> None:
+    collection = StorageCollection([{"id": "a", "url": URL_LEGACY}])
+    hass = FakeHass({LOVELACE_DOMAIN: {"resources": collection}})
+    removed = run(_async_remove_lovelace_resource(hass))
+    check(
+        "removal: recognises a legacy ?v= entry too",
+        removed and collection.items == [],
+    )
+
+
+def test_removal_without_our_entry_is_a_noop() -> None:
+    other = {"id": "x", "url": "/local/some-other-card.js"}
+    collection = StorageCollection([other])
+    hass = FakeHass({LOVELACE_DOMAIN: {"resources": collection}})
+    removed = run(_async_remove_lovelace_resource(hass))
+    check(
+        "removal: nothing of ours present -> no-op, foreign entry untouched",
+        removed is False and not collection.deleted and collection.items == [other],
+    )
+
+
+def test_removal_in_yaml_mode_declines() -> None:
+    hass = FakeHass({LOVELACE_DOMAIN: {"resources": YamlCollection()}})
+    check(
+        "removal: YAML mode declines instead of raising",
+        run(_async_remove_lovelace_resource(hass)) is False,
+    )
+
+
 def test_missing_lovelace_declines() -> None:
     check(
         "lovelace not set up: declines instead of raising",
@@ -190,6 +240,10 @@ def main() -> int:
         test_leaves_foreign_resources_alone,
         test_dataclass_shaped_lovelace_data,
         test_yaml_mode_declines,
+        test_removal_deletes_our_entry,
+        test_removal_also_finds_the_legacy_url,
+        test_removal_without_our_entry_is_a_noop,
+        test_removal_in_yaml_mode_declines,
         test_missing_lovelace_declines,
     ):
         test()

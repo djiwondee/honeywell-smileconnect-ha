@@ -380,10 +380,9 @@ Two caveats worth knowing:
         type: module
   ```
 
-- **Removing the integration leaves the resource entry behind.** It is not
-  cleaned up automatically yet, so delete it manually under Resources after
-  uninstalling; otherwise Home Assistant keeps trying to load a URL that no
-  longer exists.
+- **Removing the integration cleans the entry up again**, once the last
+  Smile Connect entry is gone. Should that ever fail, a warning names it in
+  the log and the leftover entry can be deleted by hand under Resources.
 
 ## Known limitations
 
