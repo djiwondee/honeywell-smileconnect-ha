@@ -2209,6 +2209,27 @@ must not proceed carelessly.
     content-addressed by PATH. Query strings are handled unreliably
     there, and the resulting breakage is intermittent, silent, and looks
     exactly like a race condition.**
+    **And the actual last one (2026-09-22), found by reading HA's service
+    worker source rather than guessing: load the card through EXACTLY ONE
+    mechanism.** Registering both the Lovelace resource and
+    `add_extra_js_url()` meant the same URL was requested **twice
+    concurrently** on every page load. HA's service worker ends with a
+    catch-all route `registerRoute(/\/.*/ , CacheFirst({cacheName:
+    "file-cache"}))` for everything it does not recognise, and a
+    `setCatchHandler` that answers `Response.error()` for any
+    non-document request whose handler throws. Two concurrent CacheFirst
+    requests for one cache key make one of them lose; that error reaches
+    HA's index-page dynamic import, the import rejects, and the element
+    is never defined - on roughly every second load. `add_extra_js_url()`
+    is now used ONLY when the Lovelace resource cannot be registered
+    (YAML mode).
+    **Lesson: two loaders for one asset is not redundancy behind a
+    service worker - it is a race. Fetch it once.**
+    Practical note for any future frontend debugging here: HA's service
+    worker is readable at `/service_worker.js`, and its last
+    `registerRoute` plus its `setCatchHandler` explain most otherwise
+    inexplicable intermittent asset failures. Reading it directly took
+    minutes; guessing at it took most of two days.
     Worth recording about the whole episode: `add_extra_js_url()` renders
     as `<script>import("...")</script>` in HA's index - a bare dynamic
     import, not awaited and with no `.catch()`. That is why a failure

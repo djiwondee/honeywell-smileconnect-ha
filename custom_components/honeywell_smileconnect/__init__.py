@@ -1,5 +1,17 @@
 """The Honeywell Smile Connect integration."""
 # Change log:
+# - 2026-09-22 (d): Load the card through exactly ONE mechanism. Both the
+#   Lovelace resource and add_extra_js_url() were active, so the same URL
+#   was requested twice CONCURRENTLY on every page load. Home Assistant's
+#   service worker routes anything it does not recognise through a
+#   catch-all CacheFirst strategy (see its last registerRoute) whose catch
+#   handler answers Response.error() for non-document requests. Two
+#   concurrent CacheFirst requests for one cache key make one lose; that
+#   error reaches the dynamic import HA writes into its index page, the
+#   import rejects, and the element is never defined - on roughly every
+#   second load. Invisible in the console, because that import carries no
+#   .catch(). add_extra_js_url() is now used ONLY when the Lovelace
+#   resource could not be registered (YAML mode).
 # - 2026-09-22 (c): Put the content hash in the FILENAME instead of a
 #   `?v=` query string, and serve it from its own route. Home Assistant's
 #   service worker intercepts requests, and with a query-string URL the
@@ -139,6 +151,7 @@ CARD_STEM = CARD_FILENAME.removesuffix(".js")
 CARD_URL_BASE = f"/{DOMAIN}/card"
 # Top-level key on purpose - see this module's change log.
 DATA_FRONTEND_REGISTERED = f"{DOMAIN}_frontend_registered"
+DATA_EXTRA_JS_ADDED = f"{DOMAIN}_extra_js_added"
 
 
 def _hashed_card_url(fingerprint: str) -> str:
@@ -284,7 +297,6 @@ async def _async_register_frontend(hass: HomeAssistant) -> None:
                 StaticPathConfig(url, str(FRONTEND_DIR / CARD_FILENAME), True),
             ]
         )
-        add_extra_js_url(hass, url)
         hass.data[DATA_FRONTEND_REGISTERED] = True
         _LOGGER.debug("Serving the schedule card at %s", url)
 
@@ -303,13 +315,28 @@ async def _async_register_frontend(hass: HomeAssistant) -> None:
         )
         registered = False
 
-    if not registered:
-        _LOGGER.warning(
-            "The schedule card is not registered as a Lovelace resource "
-            "(YAML-mode dashboards?). It will still load, but may not be ready "
-            "before the dashboard renders. See the README for the manual "
-            "resource entry."
-        )
+    if registered:
+        return
+
+    # Fallback ONLY. Never alongside the Lovelace resource: both would load
+    # the same URL at the same time, and Home Assistant's service worker
+    # routes anything it does not know through a catch-all CacheFirst
+    # strategy whose catch handler answers Response.error() for
+    # non-document requests. Two concurrent CacheFirst requests for one
+    # cache key make one of them lose, that error reaches the dynamic
+    # import HA writes into its index page, the import rejects, and the
+    # element is never defined - on roughly every second page load. The
+    # rejection is invisible because that import has no .catch(), so it
+    # only ever surfaces as HA's "Cannot parse given Error object".
+    if not hass.data.get(DATA_EXTRA_JS_ADDED):
+        add_extra_js_url(hass, url)
+        hass.data[DATA_EXTRA_JS_ADDED] = True
+    _LOGGER.warning(
+        "The schedule card is not registered as a Lovelace resource "
+        "(YAML-mode dashboards?). Falling back to extra_module_url, which "
+        "gives no ordering guarantee - the card may need a second page load "
+        "to appear. See the README for the manual resource entry."
+    )
 
 
 @dataclass
