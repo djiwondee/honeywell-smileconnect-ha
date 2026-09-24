@@ -1,5 +1,15 @@
 """The Honeywell Smile Connect integration."""
 # Change log:
+# - 2026-09-24: Explicitly create the gateway device (device_registry.
+#   async_get_or_create with device.gateway_device_info()) before forwarding
+#   entry setups to the platforms. Fixes a real, user-reported HA
+#   deprecation warning: the gateway device previously only ever came into
+#   being implicitly, whenever sensor.py/binary_sensor.py happened to set
+#   up first, and climate.py's regler devices (via_device pointing at the
+#   gateway) could run before that, since PLATFORMS are all forwarded
+#   concurrently with no guaranteed order. No migration needed - the
+#   identifiers are identical to what those platforms already used, so this
+#   is a no-op for existing installations.
 # - 2026-09-22 (e): Added async_remove_entry() to delete the Lovelace
 #   resource when the integration is removed. Without it, uninstalling
 #   left an entry pointing at a URL that no longer exists, which Home
@@ -120,7 +130,9 @@ from homeassistant.components.lovelace.const import DOMAIN as LOVELACE_DOMAIN
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import Platform
 from homeassistant.core import HomeAssistant
+from homeassistant.helpers import device_registry as dr
 
+from . import device
 from .const import (
     CONF_HOST,
     CONF_INTERVAL,
@@ -406,6 +418,21 @@ async def async_setup_entry(hass: HomeAssistant, config_entry: ConfigEntry) -> b
         unique_id=config_entry.unique_id,
     )
     config_entry.async_on_unload(config_entry.add_update_listener(_update_listener))
+
+    # Explicitly create the gateway device before any platform runs. Without
+    # this, it only ever came into being implicitly - whichever of
+    # sensor.py/binary_sensor.py happened to set up first - and climate.py's
+    # regler devices (via_device pointing at it) could be created before
+    # that happened, since PLATFORMS below are all forwarded concurrently
+    # with no guaranteed order. That produced HA's "via_device target does
+    # not exist" deprecation warning. gateway_device_info() returns the
+    # exact same identifiers those platforms already use for their own
+    # device_info, so this is a genuine no-op for existing installations
+    # (async_get_or_create matches by identifiers) - no migration needed.
+    dr.async_get(hass).async_get_or_create(
+        config_entry_id=config_entry.entry_id,
+        **device.gateway_device_info(config_entry.unique_id),
+    )
 
     await hass.config_entries.async_forward_entry_setups(config_entry, PLATFORMS)
     return True
