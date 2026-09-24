@@ -1,5 +1,18 @@
 """Config flow for Honeywell Smile Connect."""
 # Change log:
+# - 2026-09-24: VERSION bumped 1 -> 2 (see __init__.py's async_migrate_entry
+#   for the migration itself). ConfigFlow.async_step_user now generates a
+#   random UUID once and stores it in `data` as CONF_UDID, instead of every
+#   installation sharing the hardcoded udid="web" - see const.py's own
+#   change log for the underlying bug (two HA instances against the same
+#   gateway account evicting each other's session). `data`, not `options`,
+#   deliberately: OptionsFlowHandler's async_create_entry(data=...) writes
+#   `options` in an OptionsFlow context despite the parameter name, so
+#   `data` can never be touched by an options-flow edit, unlike `options`
+#   itself (which was affected by exactly this kind of accidental-overwrite
+#   bug once already - see the 2026-09-21 entry below). validate_input()
+#   gained an optional `udid` parameter so OptionsFlowHandler's
+#   revalidation login uses the entry's real, persisted UDID.
 # - 2026-09-21: Added CONF_SCHEDULE_INTERVAL to the shared schema (poll
 #   cadence for the new switching-times coordinator). Also fixed the
 #   long-documented latent bug in OptionsFlowHandler.async_step_init: it
@@ -20,6 +33,7 @@
 from __future__ import annotations
 
 import logging
+import uuid
 
 import voluptuous as vol
 from homeassistant import config_entries, core, exceptions
@@ -33,6 +47,7 @@ from .const import (
     CONF_PASSWORD,
     CONF_PING_INTERVAL,
     CONF_SCHEDULE_INTERVAL,
+    CONF_UDID,
     CONF_USER,
     DEFAULT_INTERVAL,
     DEFAULT_PING_INTERVAL,
@@ -73,7 +88,7 @@ def _build_schema(defaults: dict | None = None) -> vol.Schema:
     )
 
 
-async def validate_input(hass: core.HomeAssistant, data: dict) -> dict:
+async def validate_input(hass: core.HomeAssistant, data: dict, udid: str | None = None) -> dict:
     """Try a real login against the gateway to validate the given input,
     and opportunistically capture the gateway's own uniqueid via the
     unauthenticated /api/ping endpoint for use as a stable HA unique_id
@@ -81,10 +96,16 @@ async def validate_input(hass: core.HomeAssistant, data: dict) -> dict:
     must never block setup just because the diagnostic endpoint had a
     hiccup, since the actual login already proved the gateway is reachable
     and correctly configured).
+
+    `udid`: the entry's own persisted UDID (see CONF_UDID), so options-flow
+    revalidation logs in with the same identity the coordinator actually
+    uses. None (the initial setup step, before an entry - and therefore a
+    UUID - exists yet) falls back to Login's own default (FIXED_UDID) for
+    this one throwaway validation login.
     """
     base_url = "http://" + data[CONF_HOST]
 
-    login = Login(base_url)
+    login = Login(base_url, udid) if udid is not None else Login(base_url)
     try:
         await hass.async_add_executor_job(login.authorize, data[CONF_USER], data[CONF_PASSWORD])
     except ValueError as err:
@@ -114,7 +135,7 @@ async def validate_input(hass: core.HomeAssistant, data: dict) -> dict:
 class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     """Handle a config flow for Honeywell Smile Connect."""
 
-    VERSION = 1
+    VERSION = 2
 
     async def async_step_user(self, user_input=None):
         if user_input is None:
@@ -133,7 +154,16 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         else:
             await self.async_set_unique_id(info["unique_id"])
             self._abort_if_unique_id_configured()
-            return self.async_create_entry(title=info["title"], data={}, options=user_input)
+            # Generated once, here, and never touched again - see
+            # const.py's CONF_UDID and this module's change log. Lives in
+            # `data`, not `options`: the options flow below can only ever
+            # write `options` (see OptionsFlowHandler's docstring), so
+            # `data` is structurally immune to ever being clobbered by it.
+            return self.async_create_entry(
+                title=info["title"],
+                data={CONF_UDID: str(uuid.uuid4())},
+                options=user_input,
+            )
 
         return self.async_show_form(
             step_id="user", data_schema=_build_schema(user_input), errors=errors
@@ -155,6 +185,12 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
     Does not override __init__ / assign self.config_entry manually: recent
     Home Assistant versions provide `self.config_entry` automatically on
     the base OptionsFlow class, and manual assignment is deprecated.
+
+    Never writes to `config_entry.data` - in an OptionsFlow context,
+    async_create_entry(data=...) actually populates `config_entry.options`
+    despite the parameter name (an HA API quirk), so CONF_UDID (stored in
+    `data`, see ConfigFlow.async_step_user) is structurally unreachable
+    from here regardless of this class's own merge logic.
     """
 
     async def async_step_init(self, user_input=None):
@@ -163,7 +199,12 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
 
         if user_input is not None:
             try:
-                await validate_input(self.hass, user_input)
+                # Revalidate with the entry's own persisted UDID, not the
+                # shared fallback - keeps this login consistent with the
+                # identity the coordinator actually uses.
+                await validate_input(
+                    self.hass, user_input, udid=self.config_entry.data.get(CONF_UDID)
+                )
             except CannotConnect:
                 errors["base"] = "cannot_connect"
             except InvalidAuth:

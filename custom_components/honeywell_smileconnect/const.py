@@ -1,5 +1,14 @@
 """Constants for the Honeywell Smile Connect integration."""
 # Change log:
+# - 2026-09-24: Added CONF_UDID. Two Home Assistant instances (or any two
+#   clients) authenticating as the same gateway user were evicting each
+#   other's session, because udid was hardcoded to the literal "web"
+#   everywhere - the gateway appears to key sessions by (userid, udid).
+#   Each config entry now gets its own random UUID, generated once at setup
+#   and persisted in config_entry.data. Removed the dead FIXED_UDID
+#   duplicate that lived here (never imported by anything) - api/login.py's
+#   own FIXED_UDID is now the single remaining "web" constant, kept only as
+#   the fallback for callers with no config entry (scripts/, tests/).
 # - 2026-09-21: Added CONF_SCHEDULE_INTERVAL/DEFAULT_SCHEDULE_INTERVAL for
 #   the new switching-times poller (schedule_coordinator.py) and
 #   SENSOR_TRANSLATION_KEY_ROOM_SCHEDULE for the per-room schedule sensor
@@ -103,6 +112,11 @@ CONF_PASSWORD = "password"
 CONF_INTERVAL = "interval"
 CONF_PING_INTERVAL = "ping_interval"
 CONF_SCHEDULE_INTERVAL = "schedule_interval"
+# Stored in config_entry.data (never .options - see __init__.py's
+# async_migrate_entry and config_flow.py's change log for why), one random
+# UUID generated at first setup and never regenerated. See api/login.py's
+# FIXED_UDID for the protocol-level fallback this replaces.
+CONF_UDID = "udid"
 
 DEFAULT_INTERVAL = 30  # seconds - main room/weather poll cycle
 # The gateway's own internet-facing ping cadence is documented as ~90s;
@@ -119,9 +133,10 @@ DEFAULT_PING_INTERVAL = 15  # seconds
 # coordinator directly (see climate.py).
 DEFAULT_SCHEDULE_INTERVAL = 300  # seconds
 
-# Fixed protocol constants observed on the Honeywell Smile Connect gateway.
-# These differ from the standard HeatApp protocol - see docs/protocol.md.
-FIXED_UDID = "web"
+# Fixed protocol constant observed on the Honeywell Smile Connect gateway.
+# This differs from the standard HeatApp protocol - see docs/protocol.md.
+# udid is NOT fixed as of 0.5.0 - see CONF_UDID above and api/login.py's
+# FIXED_UDID (the protocol-level fallback for callers with no config entry).
 DEVICE_NAME = "Computer"
 
 # Translation keys for sensor.py / binary_sensor.py / climate.py entities
