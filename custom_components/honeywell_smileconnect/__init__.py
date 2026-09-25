@@ -1,6 +1,11 @@
 """The Honeywell Smile Connect integration."""
 # Change log:
-# - 2026-09-24: Explicitly create the gateway device (device_registry.
+# - 2026-09-24 (b): Added async_migrate_entry() to backfill CONF_UDID for
+#   entries created before 0.5.0 (config_flow.py's ConfigFlow.VERSION
+#   bumped 1 -> 2 in the same release). async_setup_entry() now reads the
+#   entry's UDID and passes it to SmileConnectCoordinator - see const.py's
+#   own change log for the underlying two-instances-collide bug this fixes.
+# - 2026-09-24 (a): Explicitly create the gateway device (device_registry.
 #   async_get_or_create with device.gateway_device_info()) before forwarding
 #   entry setups to the platforms. Fixes a real, user-reported HA
 #   deprecation warning: the gateway device previously only ever came into
@@ -121,6 +126,7 @@ from __future__ import annotations
 
 import hashlib
 import logging
+import uuid
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -133,12 +139,14 @@ from homeassistant.core import HomeAssistant
 from homeassistant.helpers import device_registry as dr
 
 from . import device
+from .api.login import FIXED_UDID
 from .const import (
     CONF_HOST,
     CONF_INTERVAL,
     CONF_PASSWORD,
     CONF_PING_INTERVAL,
     CONF_SCHEDULE_INTERVAL,
+    CONF_UDID,
     CONF_USER,
     DEFAULT_PING_INTERVAL,
     DEFAULT_SCHEDULE_INTERVAL,
@@ -369,17 +377,42 @@ class SmileConnectData:
     unique_id: str
 
 
+async def async_migrate_entry(hass: HomeAssistant, config_entry: ConfigEntry) -> bool:
+    """Backfill CONF_UDID for entries created before 0.5.0.
+
+    HA calls this by name, before async_setup_entry ever runs for an entry
+    whose stored version is older than ConfigFlow.VERSION (see
+    config_flow.py) - guaranteed to run exactly once, with no risk of two
+    concurrent setups racing to generate two different UUIDs for the same
+    entry, unlike a lazy check-and-backfill inside async_setup_entry would
+    be. See const.py's change log for why this migration exists at all.
+    """
+    if config_entry.version == 1:
+        hass.config_entries.async_update_entry(
+            config_entry,
+            data={**config_entry.data, CONF_UDID: str(uuid.uuid4())},
+            version=2,
+        )
+    return True
+
+
 async def async_setup_entry(hass: HomeAssistant, config_entry: ConfigEntry) -> bool:
     """Set up Honeywell Smile Connect from a config entry."""
     hass.data.setdefault(DOMAIN, {})
     await _async_register_frontend(hass)
 
+    # .get(default) rather than [...]: defensive belt-and-suspenders even
+    # though async_migrate_entry() below should already guarantee the key
+    # is present - same pattern as CONF_PING_INTERVAL/CONF_SCHEDULE_INTERVAL
+    # a few lines down.
+    udid = config_entry.data.get(CONF_UDID, FIXED_UDID)
     coordinator = SmileConnectCoordinator(
         hass,
         config_entry.options[CONF_HOST],
         config_entry.options[CONF_USER],
         config_entry.options[CONF_PASSWORD],
         config_entry.options[CONF_INTERVAL],
+        udid,
     )
     await coordinator.async_login()
     await coordinator.async_config_entry_first_refresh()

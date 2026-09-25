@@ -3,7 +3,14 @@
 This differs from the standard HeatApp protocol in several important ways -
 see docs/protocol.md for the full write-up. Summary:
 
-- udid is the fixed literal "web", not a generated UUID.
+- udid was originally observed as the fixed literal "web" (what the
+  browser admin console happens to send), not a generated UUID like
+  standard HeatApp. As of 0.5.0 this integration generates and persists
+  its own random UUID per config entry instead (see const.py's CONF_UDID
+  and config_flow.py) - "web" survives here only as FIXED_UDID, the
+  default for callers with no config entry (scripts/, tests/). Nothing
+  suggests the gateway requires the literal string "web" specifically;
+  the protocol just treats udid as an opaque per-session identifier.
 - devicename sent during login is "Computer", not "homeassistant".
 - Password hashing uses PBKDF2/SHA-512 with a "stringToCharcodes"
   pre-processing step (as opposed to plain MD5(password + token) on
@@ -50,6 +57,14 @@ i.e. hashed = Base64(PBKDF2-HMAC-SHA512(
         iterations = 1,
         dkLen    = 64 bytes))
 """
+# Change log:
+# - 2026-09-24: Login() takes an optional `udid` parameter (defaulting to
+#   the existing FIXED_UDID), threaded into the Credentials it builds
+#   instead of the hardcoded constant. Fixes two HA instances (or any two
+#   clients) authenticating as the same gateway user evicting each other's
+#   session - see const.py's CONF_UDID and config_flow.py. FIXED_UDID
+#   itself is unchanged and remains the default for callers with no config
+#   entry (scripts/, tests/).
 from __future__ import annotations
 
 import base64
@@ -82,14 +97,15 @@ _STATIC_IV_B64 = "D3GC5NQEFH13is04KD2tOg=="
 class Login:
     """Performs the challenge/response login against a Smile Connect gateway."""
 
-    def __init__(self, base_url: str) -> None:
+    def __init__(self, base_url: str, udid: str = FIXED_UDID) -> None:
         self.base_url = base_url
+        self.udid = udid
 
     def authorize(self, username: str, password: str) -> Credentials:
         if not username or not password:
             raise ValueError("username and password are required")
 
-        credentials = Credentials(username=username, password=password, udid=FIXED_UDID)
+        credentials = Credentials(username=username, password=password, udid=self.udid)
         credentials.device_token = self._request_challenge_token(credentials)
         return self._login(credentials)
 

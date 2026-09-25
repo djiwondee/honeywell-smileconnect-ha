@@ -1,4 +1,10 @@
 # Change log:
+# - 2026-09-24: Added a `udid` parameter (default: api.login.FIXED_UDID),
+#   threaded through to Login() in async_login(). Part of the fix for two
+#   HA instances (or any two clients) authenticating as the same gateway
+#   user evicting each other's session - see const.py's CONF_UDID and
+#   config_flow.py/__init__.py for where the per-entry UUID actually comes
+#   from.
 # - 2026-09-21 (b): Added a shared asyncio.Lock (async_api_call() /
 #   async_api_session()) serialising EVERY authenticated gateway call in
 #   the integration. api/credentials.py's next_reqcount() is a plain
@@ -82,7 +88,7 @@ from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, Upda
 
 from .api.api_methods import ApiMethods
 from .api.exceptions import SmileConnectSessionExpired
-from .api.login import Login
+from .api.login import FIXED_UDID, Login
 from .const import TIMED_PRESET_SCENE_NAMES, TRACKED_SCENE_NAMES
 
 _LOGGER = logging.getLogger(__name__)
@@ -114,6 +120,7 @@ class SmileConnectCoordinator(DataUpdateCoordinator):
         username: str,
         password: str,
         interval: int,
+        udid: str = FIXED_UDID,
     ) -> None:
         super().__init__(
             hass,
@@ -124,6 +131,7 @@ class SmileConnectCoordinator(DataUpdateCoordinator):
         self.host = host
         self.username = username
         self.password = password
+        self.udid = udid
         self.api: ApiMethods | None = None
         # Guards ALL authenticated gateway access - see this module's
         # change log. Created here rather than lazily so there is exactly
@@ -165,7 +173,7 @@ class SmileConnectCoordinator(DataUpdateCoordinator):
 
     async def async_login(self) -> None:
         """Perform the initial (or a re-)login and build the API client."""
-        login_manager = Login("http://" + self.host)
+        login_manager = Login("http://" + self.host, self.udid)
         # Takes the lock directly rather than via async_api_call(): self.api
         # does not exist yet, and a re-login must not race an in-flight
         # request that is still using the old credentials object.

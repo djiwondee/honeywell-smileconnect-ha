@@ -1,4 +1,8 @@
 # Change log:
+# - 2026-09-24: Added TestUdidPassthrough - the direct regression test for
+#   Login() no longer hardcoding FIXED_UDID into every Credentials it
+#   builds (see api/login.py's own change log). Nothing before this would
+#   have caught a future re-hardcoding.
 # - 2026-08-27: Initial tests using real captured challenge/login response
 #   fixtures (see tests/fixtures/), plus a synthetic AES round-trip test
 #   for _decrypt_devicetoken (does not use the real account password, which
@@ -73,6 +77,49 @@ class TestLoginParsing:
         fixture = load_fixture("login_response.json")
         assert fixture["userid"] == 1
         assert fixture["success"] is True
+
+
+class TestUdidPassthrough:
+    """Login(base_url, udid=...) must reach the Credentials it builds -
+    see api/login.py's change log (two HA instances against the same
+    gateway account were evicting each other's session because udid was
+    hardcoded to FIXED_UDID everywhere, regardless of what was passed to
+    Login itself).
+    """
+
+    _STATIC_IV_B64 = "D3GC5NQEFH13is04KD2tOg=="
+
+    def _encrypt_like_gateway(self, plaintext: str, password: str) -> str:
+        key = SHA256.new(password.encode("utf-8")).digest()
+        cipher = AES.new(key, AES.MODE_CBC, base64.b64decode(self._STATIC_IV_B64))
+        padded = pad(plaintext.encode("utf-8"), AES.block_size)
+        return base64.b64encode(cipher.encrypt(padded)).decode("ascii")
+
+    def test_default_udid_is_fixed_udid(self):
+        login = Login("http://192.168.1.132")
+        assert login.udid == FIXED_UDID
+
+    def test_custom_udid_reaches_constructed_credentials(self):
+        custom_udid = "a1b2c3d4-e5f6-7890-abcd-ef1234567890"
+        login = Login("http://192.168.1.132", custom_udid)
+        assert login.udid == custom_udid
+
+        password = "correct horse battery staple"
+        challenge_response = _FakeResponse({"devicetoken": "some-challenge-token"})
+        login_response = _FakeResponse(
+            {
+                "success": True,
+                "userid": 42,
+                "devicetoken_encrypted": self._encrypt_like_gateway(
+                    "abcdef0123456789abcdef0123456789", password
+                ),
+            }
+        )
+
+        with patch("requests.post", side_effect=[challenge_response, login_response]):
+            credentials = login.authorize("someuser", password)
+
+        assert credentials.udid == custom_udid
 
 
 class TestDecryptDevicetokenRoundTrip:
