@@ -1,7 +1,7 @@
 # Honeywell Smile Connect — Home Assistant Integration
 
 [![hacs_badge](https://img.shields.io/badge/HACS-Custom-orange.svg)](https://github.com/hacs/integration)
-[![Version](https://img.shields.io/badge/version-0.5.0-yellow.svg)](https://github.com/djiwondee/honeywell-smileconnect-ha/releases)
+[![Version](https://img.shields.io/badge/version-0.6.0-yellow.svg)](https://github.com/djiwondee/honeywell-smileconnect-ha/releases)
 [![Status](https://img.shields.io/badge/status-beta-yellow.svg)](CLAUDE.md#versioning--branching-strategy)
 [![License](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 [![Validate](https://github.com/djiwondee/honeywell-smileconnect-ha/actions/workflows/validate.yml/badge.svg)](https://github.com/djiwondee/honeywell-smileconnect-ha/actions/workflows/validate.yml)
@@ -319,15 +319,14 @@ entity: sensor.living_room_schedule
 Colours follow your theme by default: **red** for Comfort Hi (`H`), **green**
 for Comfort Lo (`L`), **blue** for Night (`N`).
 
+A Night (`N`) block is placeable like Comfort Hi/Lo, but marked
+**experimental** — see "Known limitations" below. On an SCN-10 without the
+Room Connect SRC-10 extension this never comes up in practice: the time
+outside any block simply uses the night temperature, and the gateway does
+not report `N` blocks for such a room.
+
 Things the card deliberately will not do:
 
-- **It never creates a Night (`N`) block.** The gateway may in principle
-  report one, and the card renders it blue and read-only if it ever does,
-  but this integration will not write a type it has never been able to
-  verify against real hardware. On an SCN-10 without the Room Connect
-  SRC-10 extension this never comes up — the time outside any block simply
-  uses the night temperature. If a schedule does contain such a block, the
-  card switches to read-only and says so, rather than risk dropping it.
 - **It will not add a fourth block to a day.** The gateway's array width is
   fixed per room (three slots per day on this hardware) and a write of the
   wrong width is rejected outright.
@@ -403,12 +402,23 @@ Two caveats worth knowing:
   Smile App — it does not let you set an arbitrary temperature per slot.**
   Those underlying temperatures can be changed with the Comfort Hi / Comfort
   Lo / Night sliders or the `set_desired_temperature` Action above.
-- **The "Night" switching-time type (`N`) is not supported in schedule
-  slots.** It requires the Honeywell Room Connect SRC-10 hardware
-  extension, which isn't available to verify against; only `H` (Comfort Hi)
-  and `L` (Comfort Lo) are accepted for a slot's `type`. Setting the Night
-  *temperature* (slider / `set_desired_temperature` with `type: night`) is
-  supported.
+- **The "Night" switching-time type (`N`) is settable, but EXPERIMENTAL.**
+  It requires the Honeywell Room Connect SRC-10 hardware extension to be
+  meaningful, and this project has no such hardware to verify a write
+  against — only reads of an existing `N` slot on real SRC-10 hardware were
+  ever confirmed live. The write uses the exact same wire mechanism as `H`/
+  `L` (no new encoding), which is why it ships rather than staying blocked
+  indefinitely, but if you have SRC-10 hardware and try it, please report
+  back what you observe (see the issue tracker link at the top of this
+  file). Setting the Night *temperature* (slider / `set_desired_temperature`
+  with `type: night`) is unrelated and has been supported since `0.3.0`.
+  **Live-confirmed on hardware WITHOUT SRC-10** (single-Regler test
+  installation, `0.6.0`): the gateway accepts an `N`-typed slot without
+  error — no rejection, no timeout — but the room's actual target
+  temperature during that slot follows Comfort Hi, not the Night
+  temperature. That is the expected result on this kind of installation
+  (the room has no SRC-10-controlled zone to apply Night to), not a bug in
+  this integration.
 - **No native visual weekly-schedule editor yet** — the three schedule
   Actions above are the read/write foundation; a proper UI (e.g. a native
   HA "Schedule" helper per room) and automatic gateway↔HA sync are a

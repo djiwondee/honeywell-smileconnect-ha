@@ -774,9 +774,12 @@ GET  /admin/login/index            (returns HTML of the config menu)
   polling the gateway and writing back through the existing
   `set_schedule_room` Action. The `OptionsFlowHandler` merge bug flagged
   below **is fixed** as of `0.4.0` (it had to be, to add the new schedule
-  poll interval). The `"N"` (Night) item below still stands unchanged —
-  still rejected as a settable type, still waiting on real SRC-10
-  hardware. Original text kept for the reasoning:
+  poll interval). The `"N"` (Night) item below is **now shipped
+  EXPERIMENTALLY as of `0.6.0`** — see that version's entry further down
+  and `switching_times.py`'s own change log; this project still has no
+  SRC-10 hardware to verify a write against, but the write mechanism is
+  identical to H/L's, judged low-risk enough to ship rather than wait
+  indefinitely. Original text kept for the reasoning:
   - A native HA "Schedule" helper per room as the visual weekly-plan
     input surface, with the H/L type tagged via each block's `data` field
     (a real HA core feature since 2024.10 — `CONF_DATA` in
@@ -818,10 +821,16 @@ GET  /admin/login/index            (returns HTML of the config menu)
     (see the "TOP PRIORITY" bullet directly above - unrelated to whether
     this phase happens, but relevant if a per-block temperature is ever
     wanted beyond the H/L type selection phase 1 already supports).
-  - `"N"` (Night) type support, if `"N"` is ever needed and if actual
+  - ~~`"N"` (Night) type support, if `"N"` is ever needed and if actual
     Honeywell Room Connect SRC-10 hardware becomes available to verify
     against — `switching_times.py` deliberately rejects `"N"` today (see
-    `VALID_TYPES`) rather than guessing at unverified behavior.
+    `VALID_TYPES`) rather than guessing at unverified behavior.~~ **SHIPPED
+    EXPERIMENTALLY (2026-09-25, `0.6.0`)** without waiting for SRC-10
+    hardware — see that version's entry below for the reasoning (identical
+    wire mechanism to H/L, so the risk of shipping unverified is judged
+    low). Marked experimental everywhere it surfaces (service field
+    description, schedule-card tooltip, README); please report back via
+    the issue tracker if you have SRC-10 hardware and try it.
 - ~~**No automatic re-login on session failure — coordinator gets
   permanently stuck "unavailable" until HA restart/integration reload**~~
   **RESOLVED (2026-09-21, shipped in `0.3.1`, branch
@@ -905,10 +914,21 @@ GET  /admin/login/index            (returns HTML of the config menu)
   from the gateway's own error responses - would need live testing,
   e.g. forcing a gateway reboot mid-session and inspecting exactly what
   error comes back).
-- **`via_device` points at a device that does not exist yet — Home
-  Assistant says this will stop working** (found 2026-09-22 in the dev
-  container's log, while verifying something unrelated; **pre-existing,
-  not introduced by `0.4.0`**):
+- ~~**`via_device` points at a device that does not exist yet — Home
+  Assistant says this will stop working**~~ **FIXED (2026-09-24, shipped
+  in `0.4.1`, branch `bugfix/via-device`).** Root cause was exactly as
+  analyzed below: `climate.py`'s Regler device could be created before the
+  gateway device existed, since `PLATFORMS` are all forwarded concurrently
+  with no guaranteed order. Fixed exactly as proposed:
+  `__init__.py`'s `async_setup_entry()` now calls
+  `device_registry.async_get_or_create(config_entry_id=..., **device.
+  gateway_device_info(config_entry.unique_id))` explicitly, before
+  `async_forward_entry_setups()`. No migration needed - the identifiers
+  are identical to what `sensor.py`/`binary_sensor.py` already used, so
+  this is a no-op for existing installations. Live-verified by the user:
+  fresh install shows no warning; reloading an existing `0.4.0` entry does
+  not create a duplicate gateway device. (Original analysis kept below for
+  context, since it correctly diagnosed the cause.)
   ```
   Detected that custom integration 'honeywell_smileconnect' calls
   device_registry.async_get_or_create referencing a non existing
@@ -923,29 +943,13 @@ GET  /admin/login/index            (returns HTML of the config menu)
   ping-based diagnostic entities (and, since `0.1.1`, not via the weather
   sensors on a single-room install, which moved to the Regler - so that
   change may have made this more likely to surface).
-  **This has a deadline and the others in this list do not**: the
-  user's instance already runs 2026.2.3, well past the version named in
-  the warning, so this is living on borrowed time.
-  Proposed fix (needs a plan session per the workflow rules): create the
-  gateway device explicitly in `__init__.py` via
-  `device_registry.async_get_or_create(**device.gateway_device_info())`
-  **before** `async_forward_entry_setups()`, so the `via_device` target
-  always exists. Touches the hub/sub-device hierarchy that `device.py`
-  was extracted to own in the first place (see "Known Fixes"), so it
-  belongs there rather than being patched per platform.
-- **HACS-appropriate `README.md` rewrite, documenting the integration and
-  its features properly** (agreed 2026-09-11, explicitly deferred to a
-  separate session/PR - not part of the `set_hvac_mode_and_temperature`
-  work it was raised alongside). Should cover, at minimum: the two custom
-  Actions (`set_preset_mode_with_duration`,
-  `set_hvac_mode_and_temperature`) and when to use each instead of the
-  standard `climate.*` services; the known `climate.set_temperature`
-  combined-call limitation (see the 2026-09-11 addendum #3 entry below);
-  the hub/sub-device model (gateway + per-room SDC Regler); supported
-  presets/scenes; the disclaimer/trademark language already established
-  in this file's own header. Check current HACS README requirements
-  before writing it (badges, structure) rather than assuming the
-  existing README's shape is still sufficient.
+- ~~**HACS-appropriate `README.md` rewrite, documenting the integration and
+  its features properly**~~ **effectively DONE**, as of the schedule-card
+  documentation work (`0.4.0`) and ongoing per-release updates since: the
+  README now covers all Actions, the schedule card, the hub/sub-device
+  model, and known limitations. No dedicated rewrite session was ever
+  needed separately - kept as a reminder to keep it current, not as an
+  open task.
 - ~~**Top priority, before anything else touching scene activation:**
   `const.SCENE_ACTIVATION_DURATION["Holiday"]` (currently `0.5`, intended
   to mean 15 days) is very likely WRONG given Holiday's confirmed
@@ -2243,7 +2247,257 @@ must not proceed carelessly.
     session's focus is the `desiredTempDay`/`desiredTempDay2`/
     `desiredTempNight` write investigation (see the "TOP PRIORITY" entry
     under "Next planned work" above), NOT phase 2's native helper UI.
-- **Current version: `0.4.0`** (2026-09-21, developed on branch
+- **Current version: `0.6.0`** (2026-09-25, developed on branch
+  `bugfix/1-0-1-polish`, per the beta-status rule above — merged via pull
+  request). The pre-`1.0.0` polish pass, agreed with the user as a
+  three-PR plan (`0.4.1`/`0.5.0`/`0.6.0`, see their own entries below)
+  before a separate, code-free `1.0.0` "graduation" release. Contents:
+  - **Entity category fix, corrected mid-flight by a live-found HA-core
+    constraint**: `SmileConnectRoomScheduleSensor` (`sensor.py`) was first
+    changed `DIAGNOSTIC` → `CONFIG` (it is the schedule card's write
+    target, not a read-only diagnostic) - but live testing in the dev
+    container immediately broke entity setup entirely:
+    `HomeAssistantError: Entity ... cannot be added as the entity
+    category is set to config`. Home Assistant core's
+    `sensor/__init__.py` (`SensorEntity.async_internal_added_to_hass()`)
+    hard-rejects `entity_category=CONFIG` for the **entire sensor
+    domain**, unconditionally - a constraint that only surfaces at
+    entity-add time, invisible to `ruff`, `py_compile`, or even directly
+    importing the module (all of which this session did first and all of
+    which passed). Final state: **no `entity_category`** (neither
+    `CONFIG` nor `DIAGNOSTIC`) - the closest available option to "not a
+    diagnostic" given `CONFIG` is categorically off the table for
+    sensors. **Lesson for this project specifically**: for any future
+    `entity_category` change, live-verify in the dev container before
+    treating a category change as done - this class of HA-core domain
+    restriction cannot be caught by this project's existing lint/test
+    tooling, only by actually adding the entity.
+  - **Midnight/24:00 slot end for `set_schedule_room_weekday`**: `cv.time`
+    cannot represent hour 24 (same constraint the schedule card's own
+    `<input type="time">` has), so the handler now mirrors the card's own
+    convention - a `slot_N_to` of literal `00:00:00` is sent as the wire
+    string `"24:00"`, never applied to `slot_N_from`. A slot with both
+    `from` and `to` at `00:00` is therefore a full 24h block, not a
+    validation error - matches the card's existing behavior for identical
+    input, chosen deliberately for consistency between the two write
+    paths over an isolated special case.
+  - **Localization consistency pass**, the main piece, prompted by the
+    user finding the existing localization gaps "nicht überall konsistent"
+    (not consistent throughout) when asked to review them:
+    - `set_schedule_room_weekday`'s `slot_N_type` selector used
+      English-only inline `value`/`label` pairs (`H`→"Comfort Hi",
+      `L`→"Comfort Lo") with no `translation_key`, while the conceptually
+      identical `set_desired_temperature`'s `type` field was already
+      fully localized via lowercase keys (`comfort_hi`/`comfort_lo`/
+      `night`) + `translation_key: "desired_temperature_type"`. Fixed by
+      switching `slot_N_type` to the same lowercase-key + shared
+      `translation_key` pattern (reusing `"desired_temperature_type"`
+      rather than introducing a duplicate `"slot_type"` key - identical
+      text, no reason to maintain it twice). New `climate.py` constant
+      `_SLOT_TYPE_KEYS` = `_DESIRED_TEMP_KEY_TO_TARGET`'s keys intersected
+      with `switching_times.VALID_TYPES` - **not** the dict directly: a
+      naive full reuse would have let `"night"` pass schema validation
+      before `VALID_TYPES` itself allowed it (see `replace_weekday_slots()`'s
+      own docstring - it has no second validation layer, trusts the
+      schema completely), which would have let an unverified type reach
+      the gateway. The intersection made `0.6.0`'s Night-unblocking (see
+      below) come essentially for free once `VALID_TYPES` changed.
+    - `set_schedule_room_weekday`'s `slot_1`/`slot_2`/`slot_3` collapsible
+      section headers had no translation entry at all, so they showed as
+      the raw keys `slot_1`/`slot_2`/`slot_3` in every language. **First
+      fix attempt was wrong** - added `"slot_1": {"name": "Slot 1"}` etc.
+      as sibling entries under the service's `fields` key (matching the
+      existing flat leaf-field convention in that file) - live-verified
+      by the user (2026-09-26) to have NO effect; the raw keys still
+      showed. Root cause found by reading HA core's own
+      `bang_olufsen`/`beolink_expand` service (installed HA package,
+      `homeassistant/components/bang_olufsen/{services.yaml,
+      strings.json}`): a collapsible field-GROUP's header is translated
+      via a **separate top-level `sections` key**, sibling to `fields`,
+      not `fields.<group_key>.name` - `fields` covers only individual
+      leaf parameters. Corrected to `services.set_schedule_room_weekday.
+      sections.{slot_1,slot_2,slot_3}.name` in all 5 language files, with
+      the `slot_1_from`/etc. leaf fields staying exactly where they were
+      (that part of the original design was already right - confirmed by
+      the same `bang_olufsen` example, whose leaf fields also stay flat
+      under `fields` alongside a `sections` block for the group header).
+      **Lesson: a translation key path that "should" work by extrapolating
+      from adjacent, confirmed-correct patterns (the leaf-field convention)
+      is still a guess until checked against a live instance or a
+      genuine HA-core precedent - this project had access to the
+      installed `homeassistant` package the whole time and didn't check
+      it first.**
+    - **A second Action's `preset_mode` field had the identical
+      untranslated-mixed-case-selector problem**, found by the user
+      testing `set_preset_mode_with_duration` live (2026-09-26) after
+      the rest of this PR's localization fixes - not part of the
+      original audit's scope, which had focused on `slot_N_type`/
+      `hvac_mode`/`desired_temperature_type` specifically. Same fix
+      shape as `slot_N_type`: new `climate.py` constant
+      `_PRESET_MODE_KEY_TO_VALUE` (lowercase keys `none`/`boost`/`party`/
+      `holiday`/`leave` → the actual mixed-case `SceneName`/`PRESET_NONE`
+      values), `services.yaml`'s `preset_mode` selector switched to those
+      lowercase options + `translation_key: "preset_mode"`, and a new
+      `selector.preset_mode.options` block in all 5 language files -
+      reusing the exact same per-language scene-name translations as
+      `climate.thermostat.state_attributes.preset_mode.state` and the
+      duration-remaining sensor names, so all three surfaces
+      (entity state, sensor names, this Action's field) now agree.
+      `async_set_preset_mode_with_duration()` maps the incoming lowercase
+      key back to the wire value as its very first line, before any of
+      its existing logic (the `PRESET_NONE`+`target` guard,
+      `_async_apply_preset()`) runs unchanged. **This suggests the
+      original audit was not exhaustive** - worth a repeat, broader sweep
+      of every `services.yaml` selector before `1.0.0` rather than
+      assuming the four fields already found were the only ones.
+    - `set_hvac_mode_and_temperature`'s `hvac_mode` selector (`auto`/
+      `off`) had no `translation_key` either - unlike `preset_mode`/the
+      old `slot_N_type`, these values are already lowercase and needed no
+      mapping layer, so this was a pure additive fix (new top-level
+      `selector.hvac_mode.options` block).
+    - The climate entity's own `preset_mode` **state** (shown in history/
+      the entity's state, not an Action field) was untranslated -
+      `strings.json`'s `entity.climate.thermostat` had no
+      `state_attributes` block at all. Added one, matching the state
+      values EXACTLY as `climate.py` returns them (the raw, mixed-case
+      gateway scene names `"Boost"`/`"Party"`/`"Holiday"`/`"Leave"`, not
+      lowercased - HA's state_attributes translation matches the literal
+      state string). The four `sensor.*_duration_remaining.name` entries
+      (already correctly translating "remaining"/"verbleibend"/etc. per
+      language, just never translating the scene name itself) now use the
+      same per-language scene names as the new `preset_mode` state block,
+      so the two surfaces agree with each other. **User's explicit
+      per-language choices, not this project's own invention** (German
+      specifically pins `Leave` to `"Economy"`, mirroring the Smile App's
+      own UI label for that scene per `SceneName`'s docstring, rather than
+      a literal translation of "Leave"): `de` Boost→"Schnell-Aufheizung",
+      Party→"Party" (unchanged - already German), Holiday→"Urlaub",
+      Leave→"Economy". `es`/`fr` equivalents were proposed in the same
+      spirit (not explicitly dictated) - Boost→"Calentamiento rápido"/
+      "Chauffe rapide", Holiday→"Vacaciones"/"Vacances", Leave→"Economy"
+      in both (kept as the borrowed English term, same reasoning as
+      German) - flagged for a native-speaker read-through before wide use,
+      same as any first-pass translation in this project.
+    - All 5 language files (`strings.json` + `translations/{en,de,es,fr}
+      .json`) re-verified structurally identical and scanned for the two
+      historical bug patterns (stray `{`/`}` breaking ICU MessageFormat,
+      `[%key:...%]` markers that never resolve for a HACS integration) -
+      both clean, no regression.
+  - **`"N"` (Night) unblocked as a settable schedule-slot type -
+    EXPERIMENTAL.** `switching_times.VALID_TYPES` now includes `"N"`;
+    `_validate_slot_shape()`'s dedicated SRC-10-rejection branch removed
+    (falls through to the generic accept path). This project still has NO
+    SRC-10 hardware to verify a WRITE against - only reads of an
+    already-present `"N"` slot on real SRC-10 hardware were ever confirmed
+    live (see `docs/switching-times-api.md`'s corrected "Type codes"
+    section, which had drifted into an actively wrong "Night has no
+    wire-level code" hypothesis that predates the live SRC-10 read
+    confirmation - fixed in the same PR). Shipping despite being
+    unverified is a deliberate, explicit decision (not an oversight): the
+    write uses the *identical* wire mechanism as `H`/`L` (same field, same
+    encoding, no new parsing/format), which is a materially different risk
+    profile than this project's past protocol surprises (all of which
+    involved a genuinely new encoding - arrays, booleans, empty lists).
+    Marked experimental everywhere it surfaces, deliberately NOT in the
+    shared `desired_temperature_type` selector label (would pollute text
+    reused elsewhere): `slot_N_type`'s field description in all 5
+    language files, a `title` tooltip on the schedule card's Night legend
+    swatch and type-picker option (visible "Night" label itself
+    unchanged), and README's two Night-related bullets (previously said
+    Night could never be written; now say it can, experimentally, with a
+    request to report back if you have SRC-10 hardware).
+    Almost no card code changed for this: the type picker and read-only
+    logic already read `validTypes` dynamically off the schedule sensor's
+    `valid_types` attribute (fed by `VALID_TYPES`), and
+    `collect_unsupported_types()` already computes unsupported types as a
+    set difference against `VALID_TYPES` - so an "N"-containing week
+    became automatically editable with no `sensor.py` change needed,
+    exactly as anticipated when `_SLOT_TYPE_KEYS`'s intersection design
+    was chosen above.
+    `tests/test_switching_times.py` updated for the flipped behavior
+    (a test that used to assert `"N"` was rejected now asserts it is
+    accepted; `TestNightPassthrough` renamed `TestNightReadWrite` with its
+    full-week-write assertion inverted; the unsupported-types test now
+    uses a genuinely unknown type instead of `"N"`) - 165 tests passing,
+    full suite.
+    **Live-confirmed by the user (2026-09-26), on the single-Regler test
+    installation (no SRC-10 hardware):** both the card and
+    `set_schedule_room_weekday` accept an `N`-typed slot with no error at
+    all - the write itself works exactly like `H`/`L`, confirming the
+    "identical wire mechanism" reasoning above. However, the room's
+    actual applied temperature during that slot follows Comfort Hi
+    (`desiredTempDay`), not the Night temperature - expected on hardware
+    without the SRC-10 extension physically present, not a defect. See
+    `docs/switching-times-api.md`'s "Type codes" section for the full
+    note; this is the first live data point on the write side at all
+    (previously only the read side had ever been confirmed against real
+    hardware) and remains the extent of verification until someone with
+    actual SRC-10 hardware reports back.
+- **`0.5.0`** (2026-09-24, developed on branch `feature/dynamic-udid`, per
+  the beta-status rule above — merged via pull request). Fixes two Home
+  Assistant instances (or any two clients) authenticating as the same
+  gateway user evicting each other's session - raised by the user after
+  configuring a second gateway account as a workaround and asking whether
+  a per-instance random UDID would be the real fix (it is). Root cause:
+  `udid` was hardcoded to the literal `"web"` everywhere (`const.py` had a
+  dead, never-imported duplicate of `api/login.py`'s own `FIXED_UDID` -
+  removed in this release); the gateway appears to key sessions by
+  `(userid, udid)`, not `userid` alone, so two clients sharing that
+  constant evict each other. Contents:
+  - `Login()`/`SmileConnectCoordinator()` gained an optional `udid`
+    parameter, defaulting to `FIXED_UDID` (kept in `api/login.py` as the
+    fallback for callers with no config entry - the ~25
+    `scripts/manual_*.py` diagnostics, `tests/test_login.py` - all
+    verified to keep working unchanged).
+  - `config_flow.py`: `ConfigFlow.async_step_user` generates a real UUID
+    once at initial setup and stores it in `config_entry.data` -
+    deliberately `data`, not `.options`, even though every other setting
+    (host/user/password/intervals) lives in `.options`. Reasoning, not
+    just convention-following: `OptionsFlowHandler.async_create_entry
+    (data=...)` actually writes `config_entry.options` in an `OptionsFlow`
+    context despite the parameter name (a genuinely confusing HA API
+    quirk) - meaning `.data` is structurally UNREACHABLE from the options
+    flow regardless of its own merge logic, where `.options` was hit by
+    exactly the kind of accidental-overwrite bug this project already paid
+    for once (the 2026-09-21 replace-vs-merge fix noted below). A UDID
+    that must never change belongs somewhere a future options-flow
+    regression cannot touch, not just somewhere current code happens to
+    preserve it.
+  - `ConfigFlow.VERSION` bumped `1` → `2`; new `async_migrate_entry()` in
+    `__init__.py` backfills a UUID for entries created before `0.5.0`,
+    guaranteed by HA core to run exactly once before `async_setup_entry`
+    - chosen over a lazy check-and-backfill inside `async_setup_entry`
+    specifically because this project cannot fully rule out overlapping
+    setup calls racing to generate two different UUIDs, and a real
+    migration closes that off entirely rather than probably avoiding it.
+  - `OptionsFlowHandler.async_step_init` now revalidates login using the
+    entry's own persisted UDID (`self.config_entry.data.get(CONF_UDID)`)
+    instead of the shared fallback - a small additional fix riding along
+    since `validate_input()` already needed the parameter.
+  - New `TestUdidPassthrough` in `tests/test_login.py` - the direct
+    regression test for `Login()` no longer hardcoding `FIXED_UDID` into
+    every `Credentials` it builds.
+  - **Live-verified by the user**: three simultaneous logins against the
+    same gateway account (three browser sessions, standing in for a
+    dev + prod HA instance pair) all stayed active without evicting each
+    other - confirms the gateway does key sessions per-UDID, not just
+    per-account, resolving the open question from the fix's own design
+    phase.
+  - One known, deliberately accepted residual gap: the very first
+    validation login in `ConfigFlow.async_step_user`, before the entry
+    (and its UUID) exists yet, still uses the shared `"web"` fallback -
+    narrower than the bug just fixed (two ALREADY-configured, continuously
+    polling instances), and fixing it would need a second login
+    round-trip during setup for no real benefit.
+- **`0.4.1`** (2026-09-24, developed on branch `bugfix/via-device`, per
+  the beta-status rule above — merged via pull request). Single-purpose
+  bugfix: see the now-resolved `via_device` entry under "Still untested /
+  open" above for the full root-cause analysis and fix. No version
+  migration, no test changes (the file has no automated harness) -
+  live-verified by the user in the dev container (fresh install: no
+  warning; reload of an existing `0.4.0` entry: no duplicate gateway
+  device).
+- **`0.4.0`** (2026-09-21, developed on branch
   `feature/schedule-card`, per the beta-status rule above — merged via
   pull request, not committed directly to `main`; rebased onto `0.3.1`
   after that bugfix merged first, which is why `coordinator.py` and

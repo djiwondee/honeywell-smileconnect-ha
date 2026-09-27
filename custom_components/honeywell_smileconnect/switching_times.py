@@ -12,6 +12,21 @@ tests/test_switching_times.py). Consumed by climate.py's
 get_schedule_room/set_schedule_room/set_schedule_room_weekday HA Actions.
 """
 # Change log:
+# - 2026-09-25: VALID_TYPES now includes "N" (Night) - EXPERIMENTAL, and
+#   marked as such everywhere it surfaces (climate.py's service field
+#   description, the schedule card's Night option, README.md). Removed
+#   _validate_slot_shape()'s dedicated "N" rejection branch (falls through
+#   to the generic invalid-type error, which no longer applies to "N"
+#   anyway). This is genuinely unverified against real SRC-10 hardware -
+#   only the READ side (an "N" slot surviving switching_times_to_
+#   weekday_dict()) was ever confirmed live; the WRITE side uses the exact
+#   same wire mechanism as H/L (no new encoding), which is why this is
+#   judged low-risk enough to ship experimentally rather than staying
+#   blocked indefinitely on hardware this project does not have. See
+#   CLAUDE.md for the full reasoning. collect_unsupported_types()'s
+#   docstring updated to match - the read/write asymmetry it used to guard
+#   against is gone, though the function itself is kept as a general
+#   safety net for any future unexpected wire-level type.
 # - 2026-09-21: Added three pure helpers backing the new per-room schedule
 #   sensor (sensor.py) and the Lovelace schedule card:
 #   count_defined_slots(), collect_unsupported_types() and
@@ -67,13 +82,15 @@ WEEKDAYS: tuple[str, ...] = (
 # parameter, and replace_weekday_slots which always prefers the live value).
 MAX_SLOTS_PER_DAY = 3
 
-# Only "H" (Comfort Hi) and "L" (Comfort Lo) are accepted. "N" ("Night") is
-# a real, independent switching type in the protocol - not a fallback value
-# for "no type given" - but requires the Honeywell Room Connect SRC-10
-# hardware extension to be meaningful, which this project cannot verify
-# against real hardware. There is deliberately NO default type: every
+# "H" (Comfort Hi), "L" (Comfort Lo), and "N" (Night) are accepted. "N"
+# requires the Honeywell Room Connect SRC-10 hardware extension to be
+# meaningful, and is EXPERIMENTAL: this project has no SRC-10 hardware to
+# verify a write against, only live reads of an "N" slot already present on
+# such hardware (see collect_unsupported_types()'s docstring history / this
+# module's change log for the asymmetry that stood here before "N" was
+# unblocked for writing). There is deliberately NO default type: every
 # defined slot must specify one explicitly.
-VALID_TYPES = ("H", "L")
+VALID_TYPES = ("H", "L", "N")
 
 
 class ScheduleValidationError(ValueError):
@@ -130,12 +147,6 @@ def _validate_slot_shape(day_name: str, slot_idx: int, slot: dict) -> None:
             "no default type."
         )
     if slot["type"] not in VALID_TYPES:
-        if slot["type"] == "N":
-            raise ScheduleValidationError(
-                f"{day_name}, slot {slot_idx + 1}: type 'N' (Night) requires "
-                "the Honeywell Room Connect SRC-10 hardware extension, which "
-                "this integration does not support - use 'H' or 'L'."
-            )
         raise ScheduleValidationError(
             f"{day_name}, slot {slot_idx + 1}: invalid type {slot['type']!r} "
             f"- must be one of {VALID_TYPES}."
@@ -287,17 +298,15 @@ def count_defined_slots(schedule: dict[str, list[dict]]) -> int:
 def collect_unsupported_types(schedule: dict[str, list[dict]]) -> list[str]:
     """Sorted, de-duplicated slot types present that we cannot write back.
 
-    Today that can only ever be "N" (Night), which the gateway may in
-    principle report but which this integration refuses to send - see
-    VALID_TYPES and _validate_slot_shape().
-
-    This exists because of an asymmetry that is easy to trip over:
-    switching_times_to_weekday_dict() passes `type` through unchanged, so
-    an "N" survives a READ, while weekday_dict_to_switching_times()
-    rejects it - meaning a full-week write fails if an "N" sits anywhere in
-    the week, even on a day the user never touched. Consumers use a
-    non-empty result here to go read-only rather than offering an edit that
-    cannot be committed.
+    As of this module's VALID_TYPES including "N", this is normally empty -
+    the read/write asymmetry that used to make an "N"-containing week
+    force-fail on write (switching_times_to_weekday_dict() always passed
+    `type` through unchanged on read; weekday_dict_to_switching_times()
+    used to reject "N" on write) is gone. Kept as a general mechanism
+    rather than removed entirely: it still protects against any future or
+    unexpected wire-level type this module genuinely cannot express (e.g. a
+    firmware variant reporting something outside H/L/N), letting consumers
+    go read-only rather than offer an edit that cannot be committed.
     """
     return sorted({slot["type"] for slots in schedule.values() for slot in slots} - set(VALID_TYPES))
 

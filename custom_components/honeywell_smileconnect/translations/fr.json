@@ -55,16 +55,16 @@
         "name": "Temps de réponse de la passerelle"
       },
       "boost_duration_remaining": {
-        "name": "Boost restant"
+        "name": "Chauffe rapide restant"
       },
       "party_duration_remaining": {
         "name": "Party restant"
       },
       "leave_duration_remaining": {
-        "name": "Leave restant"
+        "name": "Economy restant"
       },
       "holiday_duration_remaining": {
-        "name": "Holiday restant"
+        "name": "Vacances restant"
       },
       "room_schedule": {
         "name": "Programmation"
@@ -77,7 +77,18 @@
     },
     "climate": {
       "thermostat": {
-        "name": "Thermostat"
+        "name": "Thermostat",
+        "state_attributes": {
+          "preset_mode": {
+            "state": {
+              "none": "Aucun",
+              "Boost": "Chauffe rapide",
+              "Party": "Party",
+              "Holiday": "Vacances",
+              "Leave": "Economy"
+            }
+          }
+        }
       }
     },
     "number": {
@@ -149,11 +160,11 @@
         },
         "slot_1_to": {
           "name": "Plage 1 : Fin",
-          "description": "Heure de fin de la plage 1."
+          "description": "Heure de fin de la plage 1. Une valeur de 00:00 signifie que la plage se termine à minuit (24:00) - la même convention que celle utilisée par la carte de programmation."
         },
         "slot_1_type": {
           "name": "Plage 1 : Type",
-          "description": "Comfort Hi ou Comfort Lo pour la plage 1."
+          "description": "Comfort Hi, Comfort Lo ou Night pour la plage 1. Night est expérimental : non vérifié sur du matériel réel, nécessite l'extension Honeywell Room Connect SRC-10."
         },
         "slot_2_from": {
           "name": "Plage 2 : Début",
@@ -161,11 +172,11 @@
         },
         "slot_2_to": {
           "name": "Plage 2 : Fin",
-          "description": "Heure de fin de la plage 2."
+          "description": "Heure de fin de la plage 2. Une valeur de 00:00 signifie que la plage se termine à minuit (24:00) - la même convention que celle utilisée par la carte de programmation."
         },
         "slot_2_type": {
           "name": "Plage 2 : Type",
-          "description": "Comfort Hi ou Comfort Lo pour la plage 2."
+          "description": "Comfort Hi, Comfort Lo ou Night pour la plage 2. Night est expérimental : non vérifié sur du matériel réel, nécessite l'extension Honeywell Room Connect SRC-10."
         },
         "slot_3_from": {
           "name": "Plage 3 : Début",
@@ -173,11 +184,22 @@
         },
         "slot_3_to": {
           "name": "Plage 3 : Fin",
-          "description": "Heure de fin de la plage 3."
+          "description": "Heure de fin de la plage 3. Une valeur de 00:00 signifie que la plage se termine à minuit (24:00) - la même convention que celle utilisée par la carte de programmation."
         },
         "slot_3_type": {
           "name": "Plage 3 : Type",
-          "description": "Comfort Hi ou Comfort Lo pour la plage 3."
+          "description": "Comfort Hi, Comfort Lo ou Night pour la plage 3. Night est expérimental : non vérifié sur du matériel réel, nécessite l'extension Honeywell Room Connect SRC-10."
+        }
+      },
+      "sections": {
+        "slot_1": {
+          "name": "Plage 1"
+        },
+        "slot_2": {
+          "name": "Plage 2"
+        },
+        "slot_3": {
+          "name": "Plage 3"
         }
       }
     },
@@ -197,6 +219,12 @@
     }
   },
   "selector": {
+    "hvac_mode": {
+      "options": {
+        "auto": "Automatique",
+        "off": "Arrêt"
+      }
+    },
     "weekday": {
       "options": {
         "monday": "Lundi",
@@ -213,6 +241,15 @@
         "comfort_hi": "Confort haut",
         "comfort_lo": "Confort bas",
         "night": "Nuit"
+      }
+    },
+    "preset_mode": {
+      "options": {
+        "none": "Aucun",
+        "boost": "Chauffe rapide",
+        "party": "Party",
+        "holiday": "Vacances",
+        "leave": "Economy"
       }
     }
   }

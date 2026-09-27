@@ -73,16 +73,38 @@ count.
 |---|---|
 | `H` | Comfort Hi |
 | `L` | Comfort Lo |
+| `N` | Night (requires the Honeywell Room Connect SRC-10 hardware extension) |
 
-Only these two have been observed. A third category ("Night" in the Smile
-App's own vocabulary) was investigated: it could not be assigned an
-explicit type through the app UI, and the working hypothesis is that
-"Night" is not a slot type at all but the implicit state that applies
-outside any defined slot — i.e. it has no wire-level code and is not
-represented in `switchingtimes` as a `type` value. This has not been
-independently confirmed against a third letter code, since the app gives
-no way to attempt one; treat it as a reasonably strong but not airtight
-inference.
+**Superseded (2026-09-25):** an earlier version of this section hypothesized
+that "Night" has no wire-level code at all and is only the implicit state
+outside any defined slot on an SCN-10 without the SRC-10 extension - that
+was based on the SRC-10-less app UI offering no way to assign it, not on
+direct evidence either way. It is now known to be wrong: `N` is a real,
+independent slot type, confirmed via live reads of `switchingtimes` on
+hardware with the SRC-10 extension attached, where `type: "N"` appears
+exactly like `H`/`L` would. On hardware without SRC-10, this project's
+earlier read is still accurate in effect - `N` simply never appears - but
+that is because the room has no SRC-10-controlled slots to report, not
+because the wire format has no code for it.
+
+Writing `N` (`switching_times.py`'s `VALID_TYPES`, since `0.6.0`) is
+**experimental**: this project has no SRC-10 hardware to verify a write
+against, only the read side above. The write uses the identical wire
+mechanism as `H`/`L` (same field, same encoding), which is the basis for
+shipping it rather than leaving it blocked indefinitely - see CLAUDE.md
+and switching_times.py's own change log for the full reasoning.
+
+**Live-confirmed (2026-09-26) on a single-Regler installation WITHOUT
+SRC-10:** the gateway accepts a full-week write containing an `N` slot
+with no error and no timeout - `set2` behaves identically to an `H`/`L`
+write. However, the room's actual applied target temperature during that
+slot follows Comfort Hi (`desiredTempDay`), not the Night temperature
+(`desiredTempNight`) - i.e. the wire-level write succeeds, but has no
+functional effect on temperature control without the SRC-10 extension
+actually present. This matches the expected behavior for this class of
+installation and is not evidence of a wire-format bug; it just means the
+write side, like the read side, still awaits confirmation on hardware
+that actually has SRC-10 attached.
 
 ## Writing a schedule: `set2`
 

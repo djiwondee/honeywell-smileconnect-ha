@@ -1,4 +1,13 @@
 # Change log:
+# - 2026-09-25: "N" (Night) is settable now (experimental, see
+#   switching_times.py's own change log) - VALID_TYPES includes it.
+#   TestNightPassthrough renamed TestNightReadWrite and its write
+#   assertions flipped: a full-week write containing "N" now succeeds
+#   instead of raising, matching "H"/"L". test_night_type_rejected_with_
+#   specific_message renamed test_night_type_is_accepted.
+#   test_collect_unsupported_types_reports_night now exercises a genuinely
+#   unknown type ("X"/"Y") instead of "N", since "N" is no longer
+#   unsupported - the mechanism itself still needs a real test case.
 # - 2026-09-21: Added TestNightPassthrough, TestSchedulePayloadHelpers and
 #   TestRoundTripPreservesWidth for the 0.4.0 schedule-card work. The first
 #   locks in a subtle asymmetry the card's read-only-"N" behaviour depends
@@ -127,15 +136,14 @@ class TestWeekdayDictToSwitchingTimes:
         with pytest.raises(ScheduleValidationError, match="invalid type"):
             weekday_dict_to_switching_times(schedule)
 
-    def test_night_type_rejected_with_specific_message(self):
-        """"N" is a real, independent switching type - but requires the
-        SRC-10 hardware extension this project cannot verify against, and
-        must NEVER be silently treated as "no type given". See module
-        change log.
+    def test_night_type_is_accepted(self):
+        """"N" is settable (experimental, since 0.6.0 - see module change
+        log): the write path must accept it exactly like "H"/"L", with no
+        special-casing.
         """
         schedule = {"monday": [{"from": "22:00", "to": "23:00", "type": "N"}]}
-        with pytest.raises(ScheduleValidationError, match="SRC-10"):
-            weekday_dict_to_switching_times(schedule)
+        flat = weekday_dict_to_switching_times(schedule)
+        assert flat[0] == {"from": "22:00", "to": "23:00", "type": "N"}
 
     def test_from_after_to_raises(self):
         schedule = {"monday": [{"from": "10:00", "to": "09:00", "type": "H"}]}
@@ -268,13 +276,15 @@ def _empty_week() -> dict[str, list[dict]]:
     return {day: [] for day in WEEKDAYS}
 
 
-class TestNightPassthrough:
-    """The read/write asymmetry the schedule card's "N is read-only" rule rests on.
-
-    A gateway-supplied "N" must survive a read (so the card can render it
-    blue), must survive a per-weekday write to a DIFFERENT day (so the
-    granular Action stays a usable fallback), but must make a full-week
-    write fail loudly rather than being silently rewritten to H or L.
+class TestNightReadWrite:
+    """"N" (Night) round trips like "H"/"L" now (settable since 0.6.0 -
+    experimental, see module change log). This class used to be
+    TestNightPassthrough and locked in the OPPOSITE of the write assertion
+    below: a full-week write containing "N" used to be rejected outright,
+    even on a day the caller never touched. That asymmetry is gone now that
+    VALID_TYPES includes "N" - kept as its own class since it is still the
+    natural place to check "N" behaves consistently across all three entry
+    points (read, full-week write, per-weekday write).
     """
 
     def test_read_preserves_night_verbatim(self):
@@ -283,16 +293,16 @@ class TestNightPassthrough:
         result = switching_times_to_weekday_dict(flat)
         assert result["monday"] == [{"from": "22:00", "to": "23:00", "type": "N"}]
 
-    def test_full_week_write_rejects_night_on_an_untouched_day(self):
-        # The caller only cares about monday here - tuesday's "N" was read
-        # back from the gateway untouched - but a full-week write still has
-        # to send every day, so it fails. This is exactly why the sensor
-        # reports editable=false when any unsupported type is present.
+    def test_full_week_write_accepts_night_on_an_untouched_day(self):
+        # monday is what the caller actually wants to change; tuesday's "N"
+        # was read back from the gateway untouched and passed straight
+        # through in the same full-week write - this must now succeed,
+        # not raise, since "N" is a normal accepted type like "H"/"L".
         schedule = _empty_week()
         schedule["monday"] = [{"from": "06:00", "to": "08:00", "type": "H"}]
         schedule["tuesday"] = [{"from": "22:00", "to": "23:00", "type": "N"}]
-        with pytest.raises(ScheduleValidationError, match="SRC-10"):
-            weekday_dict_to_switching_times(schedule, slots_per_day=3)
+        flat = weekday_dict_to_switching_times(schedule, slots_per_day=3)
+        assert flat[3] == {"from": "22:00", "to": "23:00", "type": "N"}
 
     def test_per_weekday_write_leaves_night_on_other_days_untouched(self):
         flat = _flat_all_none()
@@ -301,6 +311,13 @@ class TestNightPassthrough:
             flat, "monday", [{"from": "06:00", "to": "08:00", "type": "H"}]
         )
         assert updated[3] == {"from": "22:00", "to": "23:00", "type": "N"}
+
+    def test_per_weekday_write_can_itself_set_night(self):
+        flat = _flat_all_none()
+        updated = replace_weekday_slots(
+            flat, "monday", [{"from": "22:00", "to": "23:00", "type": "N"}]
+        )
+        assert updated[0] == {"from": "22:00", "to": "23:00", "type": "N"}
 
 
 class TestSchedulePayloadHelpers:
@@ -314,25 +331,31 @@ class TestSchedulePayloadHelpers:
         schedule["sunday"] = [{"from": "08:00", "to": "22:00", "type": "L"}]
         assert count_defined_slots(schedule) == 3
 
-    def test_collect_unsupported_types_empty_for_h_and_l(self):
+    def test_collect_unsupported_types_empty_for_h_l_and_n(self):
         schedule = _empty_week()
         schedule["monday"] = [{"from": "06:00", "to": "08:00", "type": "H"}]
         schedule["friday"] = [{"from": "06:00", "to": "08:00", "type": "L"}]
+        schedule["saturday"] = [{"from": "22:00", "to": "23:00", "type": "N"}]
         assert collect_unsupported_types(schedule) == []
 
-    def test_collect_unsupported_types_reports_night(self):
+    def test_collect_unsupported_types_reports_genuinely_unknown_type(self):
+        # "N" is no longer unsupported (VALID_TYPES includes it as of
+        # 0.6.0) - this now exercises the general mechanism via a type this
+        # module has never heard of, e.g. a future/unexpected firmware
+        # value, which is exactly what this function still exists to guard
+        # against (see its own docstring).
         schedule = _empty_week()
-        schedule["monday"] = [{"from": "22:00", "to": "23:00", "type": "N"}]
-        assert collect_unsupported_types(schedule) == ["N"]
+        schedule["monday"] = [{"from": "22:00", "to": "23:00", "type": "X"}]
+        assert collect_unsupported_types(schedule) == ["X"]
 
     def test_collect_unsupported_types_is_sorted_and_deduplicated(self):
         schedule = _empty_week()
-        schedule["monday"] = [{"from": "22:00", "to": "23:00", "type": "N"}]
+        schedule["monday"] = [{"from": "22:00", "to": "23:00", "type": "Y"}]
         schedule["tuesday"] = [
             {"from": "01:00", "to": "02:00", "type": "X"},
-            {"from": "03:00", "to": "04:00", "type": "N"},
+            {"from": "03:00", "to": "04:00", "type": "Y"},
         ]
-        assert collect_unsupported_types(schedule) == ["N", "X"]
+        assert collect_unsupported_types(schedule) == ["X", "Y"]
 
     def test_fingerprint_is_insertion_order_independent(self):
         schedule = _empty_week()

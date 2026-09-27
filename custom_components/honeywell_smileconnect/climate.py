@@ -1,5 +1,28 @@
 """Climate platform for Honeywell Smile Connect."""
 # Change log:
+# - 2026-09-25: Two related fixes to set_schedule_room_weekday, both found
+#   during the pre-1.0.0 localization/polish pass:
+#   (1) slot_N_type's selector was English-only inline value/label pairs
+#   (H->"Comfort Hi", L->"Comfort Lo") in services.yaml, with no
+#   translation_key - unlike the identical Comfort-Hi/Lo concept in
+#   set_desired_temperature's `type` field, which was already fully
+#   localized via _DESIRED_TEMP_KEY_TO_TARGET's lowercase keys +
+#   translation_key "desired_temperature_type". New _SLOT_TYPE_KEYS
+#   (the intersection of _DESIRED_TEMP_KEY_TO_TARGET's keys with
+#   switching_times.VALID_TYPES) replaces VALID_TYPES in
+#   _slot_group_schema()'s slot_N_type validator, and the handler maps the
+#   lowercase key back to the wire letter via _DESIRED_TEMP_KEY_TO_TARGET
+#   before building the slot dict. The intersection (not the dict
+#   directly) matters: replace_weekday_slots() has no second validation
+#   layer of its own (trusts this schema completely), so reusing the dict
+#   wholesale would have let "night" reach the gateway before VALID_TYPES
+#   itself allowed it (see switching_times.py's own change log for when
+#   that changed).
+#   (2) slot_N_to could not express a slot ending at midnight/24:00 -
+#   cv.time cannot hold hour 24. The bundled schedule card already solved
+#   the identical problem for its own write path; the handler now mirrors
+#   that exact convention (a `to` of literal 00:00:00 is sent as "24:00",
+#   never applied to `from`).
 # - 2026-09-21 (b): Every gateway call in this file now goes through
 #   SmileConnectCoordinator.async_api_call() / async_api_session() instead
 #   of hass.async_add_executor_job() directly, so it is serialised against
@@ -385,16 +408,20 @@ SERVICE_SET_SCHEDULE_ROOM = "set_schedule_room"
 SERVICE_SET_SCHEDULE_ROOM_WEEKDAY = "set_schedule_room_weekday"
 SERVICE_SET_DESIRED_TEMPERATURE = "set_desired_temperature"
 
-# Mirrors _attr_preset_modes below - kept as a separate module-level list
-# (rather than importing the class attribute) since voluptuous schemas are
-# built at module import time, before the class body runs.
-_PRESET_MODE_WITH_DURATION_VALUES = [
-    PRESET_NONE,
-    SceneName.BOOST.value,
-    SceneName.HOLIDAY.value,
-    SceneName.LEAVE.value,
-    SceneName.PARTY.value,
-]
+# Lowercase selector keys for the set_preset_mode_with_duration Action's
+# `preset_mode` field, mapped to the actual mixed-case gateway/HA values
+# (SceneName.*.value / PRESET_NONE). The mixed-case values themselves
+# cannot be translation_key options directly (hassfest requires
+# [a-z0-9-_]+) - same reasoning, same fix shape, as _DESIRED_TEMP_KEY_TO_
+# TARGET/_SLOT_TYPE_KEYS below. "none" needed no change (already
+# lowercase); only the four scene names did.
+_PRESET_MODE_KEY_TO_VALUE = {
+    "none": PRESET_NONE,
+    "boost": SceneName.BOOST.value,
+    "party": SceneName.PARTY.value,
+    "holiday": SceneName.HOLIDAY.value,
+    "leave": SceneName.LEAVE.value,
+}
 
 # `target` is a real-world duration in the preset's own unit (minutes for
 # Boost, hours for Party/Leave, days for Holiday) - see SCENE_APP_LIMITS
@@ -404,7 +431,7 @@ _PRESET_MODE_WITH_DURATION_VALUES = [
 # deliberately NOT exposed here (see change log) - it remains available
 # to direct Python callers (scripts, tests), just not through this Action.
 SET_PRESET_MODE_WITH_DURATION_SCHEMA = {
-    vol.Required("preset_mode"): vol.In(_PRESET_MODE_WITH_DURATION_VALUES),
+    vol.Required("preset_mode"): vol.In(list(_PRESET_MODE_KEY_TO_VALUE)),
     vol.Optional("target"): vol.Coerce(float),
 }
 
@@ -446,6 +473,19 @@ SET_SCHEDULE_ROOM_SCHEMA = {
 }
 
 
+# Slot-type keys accepted by set_schedule_room_weekday's slot_N_type field,
+# reusing _DESIRED_TEMP_KEY_TO_TARGET's comfort_hi/comfort_lo/night keys -
+# NOT the whole dict directly: switching_times.VALID_TYPES may allow fewer
+# of the three (today "night" is excluded - see that module's own
+# VALID_TYPES). replace_weekday_slots() has no second validation layer of
+# its own for the type value (see its docstring - it trusts this schema
+# completely), so intersecting with VALID_TYPES here is what stops an
+# unsupported type from reaching the gateway, not just a display nicety.
+# Automatically picks up "night" the moment VALID_TYPES does, with no
+# further change needed here.
+_SLOT_TYPE_KEYS = [key for key, letter in _DESIRED_TEMP_KEY_TO_TARGET.items() if letter in VALID_TYPES]
+
+
 def _slot_group_schema(prefix: str) -> dict:
     """3 flat, vol.Inclusive-grouped fields for one schedule slot.
 
@@ -454,11 +494,17 @@ def _slot_group_schema(prefix: str) -> dict:
     ever reaches our own code. See this module's change log for why these
     are flat fields (slot_N_from/_to/_type) rather than a nested
     `slot_N: {from, to, type}` object.
+
+    `slot_N_to` may be given as `00:00:00` to mean the slot ends at
+    midnight/24:00 - see async_set_schedule_room_weekday(), which is where
+    that's actually interpreted (cv.time itself cannot represent hour 24,
+    so this schema accepts the same value a slot literally starting at
+    midnight would use; the two are disambiguated downstream).
     """
     return {
         vol.Inclusive(f"{prefix}_from", prefix): cv.time,
         vol.Inclusive(f"{prefix}_to", prefix): cv.time,
-        vol.Inclusive(f"{prefix}_type", prefix): vol.In(VALID_TYPES),
+        vol.Inclusive(f"{prefix}_type", prefix): vol.In(_SLOT_TYPE_KEYS),
     }
 
 
@@ -770,7 +816,12 @@ class SmileConnectClimate(CoordinatorEntity, ClimateEntity):
         getting the fixed vendor default - see
         SceneManager.add_member_to_scene()/ApiMethods.set_scene() for the
         target= semantics this just forwards.
+
+        `preset_mode` arrives as one of _PRESET_MODE_KEY_TO_VALUE's
+        lowercase selector keys (schema-enforced), mapped back to the
+        actual gateway/HA value here before anything else runs.
         """
+        preset_mode = _PRESET_MODE_KEY_TO_VALUE[preset_mode]
         if preset_mode == PRESET_NONE and target is not None:
             raise ServiceValidationError(
                 "target only applies when activating a preset - preset_mode "
@@ -986,9 +1037,22 @@ class SmileConnectClimate(CoordinatorEntity, ClimateEntity):
         SET_SCHEDULE_ROOM_WEEKDAY_SCHEMA already guarantees each given
         slot_N_* trio is complete (all three or none) before this runs.
         Returns the freshly re-read schedule after writing.
+
+        A `slot_N_to` of exactly midnight (00:00:00) is sent as the literal
+        string "24:00", not "00:00" - cv.time cannot represent hour 24, so
+        this is the same convention the bundled schedule card already uses
+        for its own write path (see smileconnect-schedule-card.js's
+        ALLOW_MIDNIGHT_END). Only ever applied to `to`, never `from` - a
+        slot cannot start at 24:00. Note this also means a slot with BOTH
+        `from` and `to` at 00:00 is a full 24h block, not a validation
+        error - matches the card's own behaviour for identical input.
         """
         slots = [
-            {"from": slot_from.strftime("%H:%M"), "to": slot_to.strftime("%H:%M"), "type": slot_type}
+            {
+                "from": slot_from.strftime("%H:%M"),
+                "to": "24:00" if slot_to.hour == 0 and slot_to.minute == 0 else slot_to.strftime("%H:%M"),
+                "type": _DESIRED_TEMP_KEY_TO_TARGET[slot_type],
+            }
             for slot_from, slot_to, slot_type in (
                 (slot_1_from, slot_1_to, slot_1_type),
                 (slot_2_from, slot_2_to, slot_2_type),

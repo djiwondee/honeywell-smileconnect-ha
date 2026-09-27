@@ -55,16 +55,16 @@
         "name": "Tiempo de respuesta de la pasarela"
       },
       "boost_duration_remaining": {
-        "name": "Boost restante"
+        "name": "Calentamiento rápido restante"
       },
       "party_duration_remaining": {
         "name": "Party restante"
       },
       "leave_duration_remaining": {
-        "name": "Leave restante"
+        "name": "Economy restante"
       },
       "holiday_duration_remaining": {
-        "name": "Holiday restante"
+        "name": "Vacaciones restante"
       },
       "room_schedule": {
         "name": "Programación"
@@ -77,7 +77,18 @@
     },
     "climate": {
       "thermostat": {
-        "name": "Termostato"
+        "name": "Termostato",
+        "state_attributes": {
+          "preset_mode": {
+            "state": {
+              "none": "Ninguno",
+              "Boost": "Calentamiento rápido",
+              "Party": "Party",
+              "Holiday": "Vacaciones",
+              "Leave": "Economy"
+            }
+          }
+        }
       }
     },
     "number": {
@@ -149,11 +160,11 @@
         },
         "slot_1_to": {
           "name": "Intervalo 1: Hasta",
-          "description": "Hora de fin del intervalo 1."
+          "description": "Hora de fin del intervalo 1. Un valor de 00:00 significa que el intervalo termina a medianoche (24:00) - la misma convención que usa la tarjeta de programación."
         },
         "slot_1_type": {
           "name": "Intervalo 1: Tipo",
-          "description": "Comfort Hi o Comfort Lo para el intervalo 1."
+          "description": "Comfort Hi, Comfort Lo o Night para el intervalo 1. Night es experimental: no verificado en hardware real, requiere la extensión Honeywell Room Connect SRC-10."
         },
         "slot_2_from": {
           "name": "Intervalo 2: Desde",
@@ -161,11 +172,11 @@
         },
         "slot_2_to": {
           "name": "Intervalo 2: Hasta",
-          "description": "Hora de fin del intervalo 2."
+          "description": "Hora de fin del intervalo 2. Un valor de 00:00 significa que el intervalo termina a medianoche (24:00) - la misma convención que usa la tarjeta de programación."
         },
         "slot_2_type": {
           "name": "Intervalo 2: Tipo",
-          "description": "Comfort Hi o Comfort Lo para el intervalo 2."
+          "description": "Comfort Hi, Comfort Lo o Night para el intervalo 2. Night es experimental: no verificado en hardware real, requiere la extensión Honeywell Room Connect SRC-10."
         },
         "slot_3_from": {
           "name": "Intervalo 3: Desde",
@@ -173,11 +184,22 @@
         },
         "slot_3_to": {
           "name": "Intervalo 3: Hasta",
-          "description": "Hora de fin del intervalo 3."
+          "description": "Hora de fin del intervalo 3. Un valor de 00:00 significa que el intervalo termina a medianoche (24:00) - la misma convención que usa la tarjeta de programación."
         },
         "slot_3_type": {
           "name": "Intervalo 3: Tipo",
-          "description": "Comfort Hi o Comfort Lo para el intervalo 3."
+          "description": "Comfort Hi, Comfort Lo o Night para el intervalo 3. Night es experimental: no verificado en hardware real, requiere la extensión Honeywell Room Connect SRC-10."
+        }
+      },
+      "sections": {
+        "slot_1": {
+          "name": "Intervalo 1"
+        },
+        "slot_2": {
+          "name": "Intervalo 2"
+        },
+        "slot_3": {
+          "name": "Intervalo 3"
         }
       }
     },
@@ -197,6 +219,12 @@
     }
   },
   "selector": {
+    "hvac_mode": {
+      "options": {
+        "auto": "Automático",
+        "off": "Apagado"
+      }
+    },
     "weekday": {
       "options": {
         "monday": "Lunes",
@@ -213,6 +241,15 @@
         "comfort_hi": "Confort alto",
         "comfort_lo": "Confort bajo",
         "night": "Noche"
+      }
+    },
+    "preset_mode": {
+      "options": {
+        "none": "Ninguno",
+        "boost": "Calentamiento rápido",
+        "party": "Party",
+        "holiday": "Vacaciones",
+        "leave": "Economy"
       }
     }
   }
