@@ -2272,7 +2272,123 @@ must not proceed carelessly.
     session's focus is the `desiredTempDay`/`desiredTempDay2`/
     `desiredTempNight` write investigation (see the "TOP PRIORITY" entry
     under "Next planned work" above), NOT phase 2's native helper UI.
-- **Current version: `0.6.0`** (2026-09-25, developed on branch
+- **Current version: `0.7.0`** (2026-09-27, developed on branch
+  `feature/reauth-flow`, per the beta-status rule above — merged via pull
+  request). Raised by the user while reviewing `0.6.0`'s README: the
+  "no automatic reconnect" bullet turned out to already be half-fixed
+  (automatic re-login on session expiry has existed since `0.3.1`) - what
+  was actually still missing was any user-facing signal when that retry
+  itself fails, leaving entities silently "unavailable" forever. The user
+  asked for the same pattern other integrations use for expired API
+  tokens, to ship before the `1.0.0` graduation release. Contents:
+  - **Home Assistant's own reauth mechanism is used, not a custom Repair
+    issue.** `homeassistant.exceptions.ConfigEntryAuthFailed`, raised from
+    either `_async_update_data()` or directly from `async_setup_entry()`,
+    is caught by HA core itself (`DataUpdateCoordinator._async_refresh()`
+    and `config_entries.py`'s `async_setup()` respectively) and
+    automatically starts a reauth config flow - surfaced as a
+    "Reconfigure"/re-authenticate prompt under Settings → Devices &
+    Services. Confirmed directly against the installed `homeassistant`
+    package's own source (`helpers/update_coordinator.py`,
+    `config_entries.py`, and `components/tedee/config_flow.py` as a real
+    precedent) before writing any code - this is the modern, idiomatic
+    mechanism; no `issue_registry` code was needed at all.
+  - **A real bug in the original plan, found only by actually running the
+    test script:** the first implementation moved BOTH `async_login()`
+    calls in `coordinator.py`'s `_async_update_data()` entirely outside
+    any `try`/`except`, reasoning that a `ConfigEntryAuthFailed` must
+    never be caught by the surrounding `except Exception → UpdateFailed`
+    clauses. True, but it also meant a NON-auth failure during the
+    post-expiry re-login (e.g. a plain network error) now propagated
+    completely unwrapped instead of becoming `UpdateFailed` - a real
+    regression from the pre-`0.7.0` behavior, caught immediately by
+    `scripts/test_session_recovery_local.py`'s existing transport-error
+    case failing with an uncaught `OSError` instead of the expected
+    `UpdateFailed`. Fixed with a `try: await self.async_login() except
+    ConfigEntryAuthFailed: raise except Exception as err: raise
+    UpdateFailed(...) from err` - re-raising the one exception type that
+    must pass through, wrapping everything else exactly as before.
+    **Lesson: this project's own local, gateway-free regression scripts
+    caught a real bug within seconds of running them, immediately after
+    a very thorough, source-verified planning pass - reinforcing that
+    running the test is not optional even when the design was checked
+    carefully beforehand.**
+  - `coordinator.py`: `SmileConnectCoordinator.__init__` gained a required
+    `config_entry` parameter, passed to `super().__init__(config_entry=...)`
+    so the base class can trigger reauth on its own. `async_login()` now
+    translates a credentials-rejected `ValueError` from `Login.authorize()`
+    into `ConfigEntryAuthFailed` - deliberately done HERE, not in
+    `_async_update_data()`, so BOTH real call sites benefit: the
+    post-expiry retry, and `__init__.py`'s own unprotected direct call
+    before the first refresh. That second call site turned out to be the
+    one that actually matters in production - traced during planning that
+    `__init__.py` calls `coordinator.async_login()` with no `try`/`except`
+    of its own, so a stored password going bad (e.g. changed on the
+    gateway) between HA restarts previously surfaced as a bare, uncaught
+    `ValueError` straight out of `async_setup_entry()`, landing the entry
+    in `SETUP_ERROR` with no retry and no way to fix it short of removing
+    and re-adding the integration - worse than the already-known silent
+    "unavailable" case this feature set out to fix. `_async_update_data()`'s
+    own `if self.api is None:` guard is dead code in the real integration
+    lifecycle (confirmed: `__init__.py` always logs in successfully before
+    the first refresh ever runs it) but is exercised directly by the new
+    `test_initial_login_with_bad_credentials_triggers_reauth` test case
+    regardless, since a future change to that lifecycle could make it live.
+  - `__init__.py`: one-line change - `config_entry` added to the (only)
+    `SmileConnectCoordinator(...)` construction call.
+    `ping_coordinator.py`/`schedule_coordinator.py` need no change:
+    confirmed `ping_coordinator.py` has no auth concept at all (by design,
+    see its own docstring) and `schedule_coordinator.py` never logs in
+    itself, routing every call through the main coordinator's shared,
+    already-authenticated session.
+  - `config_flow.py`: new `async_step_reauth()`/`async_step_reauth_confirm()`.
+    Deliberately a NARROWER, dedicated schema (host/username/password only,
+    via new `_credentials_schema_fields()`/`_build_reauth_schema()`) rather
+    than reusing the full 6-field `_build_schema()` (the pattern
+    `components/tedee/config_flow.py` uses) - a broken session has nothing
+    to do with polling cadence, and re-showing those 3 unrelated fields
+    during what should read as "please re-enter your password" is
+    friction the user does not need right when something is already wrong.
+    Uses the modern `async_update_reload_and_abort()` helper - **but only
+    with `options={**reauth_entry.options, **user_input}`, never
+    `options=user_input` alone**: that parameter *replaces* the entire
+    options mapping per its own docstring, which would silently wipe
+    `interval`/`ping_interval`/`schedule_interval` back to schema defaults
+    on every successful reauth - the exact same bug class already fixed
+    once in `OptionsFlowHandler` (see the `2026-09-21` entry below), caught
+    this time during planning rather than needing a second live incident.
+    `data` is deliberately left unspecified (not passed at all) in that
+    same call - `CONF_UDID` must never be regenerated or touched by
+    reauth, which is what living in `.data` (not `.options`) has protected
+    since `0.5.0`. `_abort_if_unique_id_mismatch()` guards against reauth
+    silently repointing this entry - with its established entity IDs,
+    history and automations - at a physically different gateway if the
+    host is changed during recovery; confirmed this exact helper and its
+    default `"unique_id_mismatch"` abort reason directly against HA core's
+    own `config_entries.py` before using it.
+  - Translations: new `config.step.reauth_confirm.{title,description,
+    data.host,data.username,data.password}` and `config.abort.
+    {reauth_successful,unique_id_mismatch}` keys, literal text in all 5
+    files (`strings.json` + `translations/{en,de,es,fr}.json`) - confirmed
+    via `homeassistant/helpers/translation.py` that a `[%key:...%]`
+    reference (which is what HA core's own components use for the
+    standard `"reauth_successful"` wording) does NOT resolve for a HACS
+    custom integration, the same lesson this project already paid for
+    once in `0.2.0` - not repeated this time.
+  - `scripts/test_session_recovery_local.py`: `test_failed_relogin_surfaces`
+    split into two cases (bad-credentials re-login → `ConfigEntryAuthFailed`
+    unwrapped; transport-error re-login → still `UpdateFailed`), plus a new
+    case for the `api is None` + bad-credentials path, plus a new, separate
+    test exercising the REAL `async_login()` method directly (every other
+    case substitutes it with a mock) to pin down the `ValueError →
+    ConfigEntryAuthFailed` translation itself - none of the control-flow
+    cases would catch that translation regressing on its own. 13/13 checks
+    passing (up from 7).
+  - No `tests/` changes - `coordinator.py`/`config_flow.py` remain on the
+    no-automated-HA-harness list; verification of the actual reauth UI flow
+    is manual-in-dev-container only, as for every other HA-dependent file
+    in this project.
+- **`0.6.0`** (2026-09-25, developed on branch
   `bugfix/1-0-1-polish`, per the beta-status rule above — merged via pull
   request). The pre-`1.0.0` polish pass, agreed with the user as a
   three-PR plan (`0.4.1`/`0.5.0`/`0.6.0`, see their own entries below)

@@ -1,5 +1,9 @@
 """The Honeywell Smile Connect integration."""
 # Change log:
+# - 2026-09-27: Pass config_entry into SmileConnectCoordinator() so it can
+#   trigger a reauth flow when the gateway session cannot be recovered
+#   with the stored credentials - see coordinator.py's/config_flow.py's
+#   own change logs for the rest of this feature.
 # - 2026-09-24 (b): Added async_migrate_entry() to backfill CONF_UDID for
 #   entries created before 0.5.0 (config_flow.py's ConfigFlow.VERSION
 #   bumped 1 -> 2 in the same release). async_setup_entry() now reads the
@@ -408,6 +412,7 @@ async def async_setup_entry(hass: HomeAssistant, config_entry: ConfigEntry) -> b
     udid = config_entry.data.get(CONF_UDID, FIXED_UDID)
     coordinator = SmileConnectCoordinator(
         hass,
+        config_entry,
         config_entry.options[CONF_HOST],
         config_entry.options[CONF_USER],
         config_entry.options[CONF_PASSWORD],

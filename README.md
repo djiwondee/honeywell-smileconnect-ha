@@ -1,7 +1,7 @@
 # Honeywell Smile Connect — Home Assistant Integration
 
 [![hacs_badge](https://img.shields.io/badge/HACS-Custom-orange.svg)](https://github.com/hacs/integration)
-[![Version](https://img.shields.io/badge/version-0.6.0-yellow.svg)](https://github.com/djiwondee/honeywell-smileconnect-ha/releases)
+[![Version](https://img.shields.io/badge/version-0.7.0-yellow.svg)](https://github.com/djiwondee/honeywell-smileconnect-ha/releases)
 [![Status](https://img.shields.io/badge/status-beta-yellow.svg)](CLAUDE.md#versioning--branching-strategy)
 [![License](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 [![Validate](https://github.com/djiwondee/honeywell-smileconnect-ha/actions/workflows/validate.yml/badge.svg)](https://github.com/djiwondee/honeywell-smileconnect-ha/actions/workflows/validate.yml)
@@ -423,17 +423,24 @@ Two caveats worth knowing:
   temperature. That is the expected result on this kind of installation
   (the room has no SRC-10-controlled zone to apply Night to), not a bug in
   this integration.
-- **No native visual weekly-schedule editor yet** — the three schedule
-  Actions above are the read/write foundation; a proper UI (e.g. a native
-  HA "Schedule" helper per room) and automatic gateway↔HA sync are a
-  planned follow-up, deliberately scoped out of this release. See
+- **The bundled schedule card (see above) is the visual weekly-schedule
+  editor** — this used to say "not implemented yet"; that was true before
+  `0.4.0`, no longer. A native HA "Schedule" helper per room was
+  considered instead and abandoned (see
   [`CLAUDE.md`](CLAUDE.md#next-planned-work-agreed-in-project-discussion-not-yet-started)
   for why true two-way auto-sync isn't achievable with HA's native helper
-  at all.
-- **No automatic reconnect if the gateway session is lost** (e.g. a
-  gateway reboot) — entities go "unavailable" until Home Assistant
-  restarts or the integration is reloaded. Tracked as a planned fix in
-  [`CLAUDE.md`](CLAUDE.md#next-planned-work-agreed-in-project-discussion-not-yet-started).
+  at all) in favor of the card, which sidesteps the problem entirely:
+  there is no HA-side storage to keep in sync, so a fresh read on open
+  plus writing straight back through the existing Actions is the sync.
+- **Automatic re-login on a lost gateway session** (e.g. a gateway
+  reboot) retries once per poll cycle. **If the gateway rejects the
+  stored credentials themselves** (changed password, revoked account),
+  Home Assistant now prompts for re-authentication under Settings →
+  Devices & Services instead of leaving entities silently "unavailable"
+  forever — the same pattern used by integrations with expiring API
+  tokens. A non-credentials failure (gateway unreachable, timeout) does
+  NOT trigger this prompt; it is retried on the normal poll schedule
+  instead, exactly as before.
 - **Outside temperature/min/max sensors stay on the gateway device on
   multi-room installations** (an SRC-10 add-on module present), instead of
   moving to the correct Regler as they do on single-room installs. The

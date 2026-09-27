@@ -10,6 +10,15 @@
           "ping_interval": "Ping interval (seconds)",
           "schedule_interval": "Schedule polling interval (seconds)"
         }
+      },
+      "reauth_confirm": {
+        "title": "Re-authenticate",
+        "description": "The gateway rejected the stored username or password. Enter the current credentials to reconnect this integration.",
+        "data": {
+          "host": "Gateway IP address",
+          "username": "Username",
+          "password": "Password"
+        }
       }
     },
     "error": {
@@ -18,7 +27,9 @@
       "unknown": "Unexpected error"
     },
     "abort": {
-      "already_configured": "Device is already configured"
+      "already_configured": "Device is already configured",
+      "reauth_successful": "Re-authentication was successful",
+      "unique_id_mismatch": "The re-entered credentials point at a different gateway than this integration entry. Set up a new integration entry instead of reauthenticating this one."
     }
   },
   "options": {

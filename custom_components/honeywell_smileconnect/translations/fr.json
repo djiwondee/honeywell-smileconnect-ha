@@ -10,6 +10,15 @@
           "ping_interval": "Intervalle de ping (secondes)",
           "schedule_interval": "Intervalle d'interrogation de la programmation (secondes)"
         }
+      },
+      "reauth_confirm": {
+        "title": "Se réauthentifier",
+        "description": "La passerelle a rejeté le nom d'utilisateur ou le mot de passe enregistrés. Saisissez les identifiants actuels pour reconnecter l'intégration.",
+        "data": {
+          "host": "Adresse IP de la passerelle",
+          "username": "Nom d'utilisateur",
+          "password": "Mot de passe"
+        }
       }
     },
     "error": {
@@ -18,7 +27,9 @@
       "unknown": "Erreur inattendue"
     },
     "abort": {
-      "already_configured": "L'appareil est déjà configuré"
+      "already_configured": "L'appareil est déjà configuré",
+      "reauth_successful": "La réauthentification a réussi",
+      "unique_id_mismatch": "Les identifiants saisis pointent vers une passerelle différente de celle de cette intégration. Configurez une nouvelle intégration au lieu de réauthentifier celle-ci."
     }
   },
   "options": {
