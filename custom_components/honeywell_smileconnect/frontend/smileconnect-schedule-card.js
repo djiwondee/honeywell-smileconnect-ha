@@ -25,6 +25,13 @@
  * freshly-re-read response as truth rather than its own optimistic view.
  *
  * Change log:
+ *  - 2026-09-25: Night ("N") blocks are placeable/draggable like H/L now
+ *    that switching_times.py's VALID_TYPES includes "N" - no other change
+ *    needed here, since the type picker and read-only logic already read
+ *    validTypes dynamically off the sensor's valid_types attribute. Added
+ *    a title tooltip (typeNExperimental) on the legend swatch and the type
+ *    picker's Night option, marking it as experimental/unverified against
+ *    real hardware - the visible "Night" label itself is unchanged.
  *  - 2026-09-22: Register the element unconditionally instead of gating
  *    the define() behind customElements.get() - see the comment at the
  *    bottom of this file. The guard was using a read to decide whether to
@@ -97,6 +104,7 @@ const STRINGS = {
     typeH: "Comfort Hi",
     typeL: "Comfort Lo",
     typeN: "Night",
+    typeNExperimental: "Night is experimental: unverified against real hardware, requires the Honeywell Room Connect SRC-10 extension.",
     start: "Start",
     end: "End",
     type: "Type",
@@ -124,6 +132,7 @@ const STRINGS = {
     typeH: "Komfort Hoch",
     typeL: "Komfort Niedrig",
     typeN: "Nacht",
+    typeNExperimental: "Night ist experimentell: nicht an echter Hardware verifiziert, erfordert die Honeywell Room-Connect-SRC-10-Erweiterung.",
     start: "Beginn",
     end: "Ende",
     type: "Typ",
@@ -151,6 +160,7 @@ const STRINGS = {
     typeH: "Confort alto",
     typeL: "Confort bajo",
     typeN: "Noche",
+    typeNExperimental: "Night es experimental: no verificado en hardware real, requiere la extensión Honeywell Room Connect SRC-10.",
     start: "Inicio",
     end: "Fin",
     type: "Tipo",
@@ -178,6 +188,7 @@ const STRINGS = {
     typeH: "Confort haut",
     typeL: "Confort bas",
     typeN: "Nuit",
+    typeNExperimental: "Night est expérimental : non vérifié sur du matériel réel, nécessite l'extension Honeywell Room Connect SRC-10.",
     start: "Début",
     end: "Fin",
     type: "Type",
@@ -809,15 +820,18 @@ class SmileConnectScheduleCard extends HTMLElement {
   _renderLegend() {
     const t = this._t;
     const temps = this._meta.temperatures || {};
+    // Night's title tooltip carries the experimental caveat - see
+    // typeNExperimental's own definition for why it lives only here and
+    // on the type picker, not on typeN's visible label itself.
     const entries = [
-      [TYPE_H, t.typeH, temps.comfort_hi],
-      [TYPE_L, t.typeL, temps.comfort_lo],
-      ["N", t.typeN, temps.night],
+      [TYPE_H, t.typeH, temps.comfort_hi, ""],
+      [TYPE_L, t.typeL, temps.comfort_lo, ""],
+      ["N", t.typeN, temps.night, t.typeNExperimental],
     ];
     this._el.legend.innerHTML = entries
       .map(
-        ([type, label, temp]) =>
-          `<span><i class="swatch" style="background: var(--sc-color-${type})"></i>` +
+        ([type, label, temp, title]) =>
+          `<span title="${title.replace(/"/g, "&quot;")}"><i class="swatch" style="background: var(--sc-color-${type})"></i>` +
           `${label}${temp != null ? ` ${temp} °C` : ""}</span>`
       )
       .join("");
@@ -1137,11 +1151,18 @@ class SmileConnectScheduleCard extends HTMLElement {
     // read it back as 1440 below. See ALLOW_MIDNIGHT_END.
     endInput.value = end >= MINUTES_PER_DAY ? "00:00" : minutesToHHMM(end);
     const typeLabels = { H: t.typeH, L: t.typeL, N: t.typeN };
+    // Night's option carries the experimental caveat as a title tooltip -
+    // see t.typeNExperimental's own definition (_renderLegend uses the
+    // same string for its legend entry).
+    const typeTitles = { N: t.typeNExperimental };
     const options = existing && !this._meta.validTypes.includes(existing.type)
       ? [existing.type]
       : this._meta.validTypes;
     typeSelect.innerHTML = options
-      .map((type) => `<option value="${type}">${typeLabels[type] || type}</option>`)
+      .map((type) => {
+        const title = typeTitles[type] ? ` title="${typeTitles[type].replace(/"/g, "&quot;")}"` : "";
+        return `<option value="${type}"${title}>${typeLabels[type] || type}</option>`;
+      })
       .join("");
     typeSelect.value = existing ? existing.type : TYPE_H;
 

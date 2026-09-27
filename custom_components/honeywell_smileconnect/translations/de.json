@@ -55,16 +55,16 @@
         "name": "Gateway-Antwortzeit"
       },
       "boost_duration_remaining": {
-        "name": "Boost verbleibend"
+        "name": "Schnell-Aufheizung verbleibend"
       },
       "party_duration_remaining": {
         "name": "Party verbleibend"
       },
       "leave_duration_remaining": {
-        "name": "Leave verbleibend"
+        "name": "Economy verbleibend"
       },
       "holiday_duration_remaining": {
-        "name": "Holiday verbleibend"
+        "name": "Urlaub verbleibend"
       },
       "room_schedule": {
         "name": "Zeitplan"
@@ -149,11 +149,11 @@
         },
         "slot_1_to": {
           "name": "Zeitfenster 1: Bis",
-          "description": "Endzeit von Zeitfenster 1."
+          "description": "Endzeit von Zeitfenster 1. Der Wert 00:00 bedeutet, dass das Zeitfenster um Mitternacht (24:00) endet - dieselbe Konvention wie bei der Zeitplan-Karte."
         },
         "slot_1_type": {
           "name": "Zeitfenster 1: Typ",
-          "description": "Comfort Hi oder Comfort Lo für Zeitfenster 1."
+          "description": "Comfort Hi, Comfort Lo oder Night für Zeitfenster 1. Night ist experimentell: nicht an echter Hardware verifiziert, erfordert die Honeywell Room-Connect-SRC-10-Erweiterung."
         },
         "slot_2_from": {
           "name": "Zeitfenster 2: Von",
@@ -161,11 +161,11 @@
         },
         "slot_2_to": {
           "name": "Zeitfenster 2: Bis",
-          "description": "Endzeit von Zeitfenster 2."
+          "description": "Endzeit von Zeitfenster 2. Der Wert 00:00 bedeutet, dass das Zeitfenster um Mitternacht (24:00) endet - dieselbe Konvention wie bei der Zeitplan-Karte."
         },
         "slot_2_type": {
           "name": "Zeitfenster 2: Typ",
-          "description": "Comfort Hi oder Comfort Lo für Zeitfenster 2."
+          "description": "Comfort Hi, Comfort Lo oder Night für Zeitfenster 2. Night ist experimentell: nicht an echter Hardware verifiziert, erfordert die Honeywell Room-Connect-SRC-10-Erweiterung."
         },
         "slot_3_from": {
           "name": "Zeitfenster 3: Von",
@@ -173,11 +173,22 @@
         },
         "slot_3_to": {
           "name": "Zeitfenster 3: Bis",
-          "description": "Endzeit von Zeitfenster 3."
+          "description": "Endzeit von Zeitfenster 3. Der Wert 00:00 bedeutet, dass das Zeitfenster um Mitternacht (24:00) endet - dieselbe Konvention wie bei der Zeitplan-Karte."
         },
         "slot_3_type": {
           "name": "Zeitfenster 3: Typ",
-          "description": "Comfort Hi oder Comfort Lo für Zeitfenster 3."
+          "description": "Comfort Hi, Comfort Lo oder Night für Zeitfenster 3. Night ist experimentell: nicht an echter Hardware verifiziert, erfordert die Honeywell Room-Connect-SRC-10-Erweiterung."
+        }
+      },
+      "sections": {
+        "slot_1": {
+          "name": "Zeitfenster 1"
+        },
+        "slot_2": {
+          "name": "Zeitfenster 2"
+        },
+        "slot_3": {
+          "name": "Zeitfenster 3"
         }
       }
     },
@@ -197,6 +208,12 @@
     }
   },
   "selector": {
+    "hvac_mode": {
+      "options": {
+        "auto": "Automatik",
+        "off": "Aus"
+      }
+    },
     "weekday": {
       "options": {
         "monday": "Montag",
@@ -213,6 +230,15 @@
         "comfort_hi": "Komfort Hoch",
         "comfort_lo": "Komfort Tief",
         "night": "Nacht"
+      }
+    },
+    "preset_mode": {
+      "options": {
+        "none": "Keiner",
+        "boost": "Schnell-Aufheizung",
+        "party": "Party",
+        "holiday": "Urlaub",
+        "leave": "Economy"
       }
     }
   }

@@ -10,10 +10,11 @@ set_preset_mode_with_duration:
         select:
           options:
             - "none"
-            - "Boost"
-            - "Party"
-            - "Holiday"
-            - "Leave"
+            - "boost"
+            - "party"
+            - "holiday"
+            - "leave"
+          translation_key: "preset_mode"
     target:
       required: false
       selector:
@@ -36,6 +37,7 @@ set_hvac_mode_and_temperature:
           options:
             - "auto"
             - "off"
+          translation_key: "hvac_mode"
     temperature:
       required: false
       selector:
@@ -97,10 +99,10 @@ set_schedule_room_weekday:
           selector:
             select:
               options:
-                - value: "H"
-                  label: "Comfort Hi"
-                - value: "L"
-                  label: "Comfort Lo"
+                - "comfort_hi"
+                - "comfort_lo"
+                - "night"
+              translation_key: "desired_temperature_type"
     slot_2:
       collapsed: true
       fields:
@@ -117,10 +119,10 @@ set_schedule_room_weekday:
           selector:
             select:
               options:
-                - value: "H"
-                  label: "Comfort Hi"
-                - value: "L"
-                  label: "Comfort Lo"
+                - "comfort_hi"
+                - "comfort_lo"
+                - "night"
+              translation_key: "desired_temperature_type"
     slot_3:
       collapsed: true
       fields:
@@ -137,10 +139,10 @@ set_schedule_room_weekday:
           selector:
             select:
               options:
-                - value: "H"
-                  label: "Comfort Hi"
-                - value: "L"
-                  label: "Comfort Lo"
+                - "comfort_hi"
+                - "comfort_lo"
+                - "night"
+              translation_key: "desired_temperature_type"
 
 set_desired_temperature:
   target:

@@ -1,5 +1,20 @@
 """Sensor platform for Honeywell Smile Connect (weather + ping diagnostics)."""
 # Change log:
+# - 2026-09-25 (b): Reverted the entity_category change below (a) after
+#   live testing broke entity setup entirely: HomeAssistantError, "Entity
+#   ... cannot be added as the entity category is set to config" -
+#   sensor/__init__.py's async_internal_added_to_hass() hard-rejects
+#   entity_category=CONFIG for the whole sensor domain, unconditionally.
+#   This is a HA-core constraint that a codebase-only review missed - it
+#   only surfaces at entity-add time, not at import or lint time.
+#   SmileConnectRoomScheduleSensor now has NO entity_category (was
+#   DIAGNOSTIC before (a), briefly CONFIG in (a) itself) - the closest
+#   available option to "not a diagnostic" given CONFIG is off the table
+#   for this domain.
+# - 2026-09-25 (a): entity_category changed DIAGNOSTIC -> CONFIG (see (b)
+#   above - reverted, kept here for the record). Reasoning at the time:
+#   it's the write target the schedule card edits, not a read-only
+#   diagnostic.
 # - 2026-09-21: Added SmileConnectRoomScheduleSensor - one per room, fed by
 #   the new schedule_coordinator.py, carrying that room's whole weekly
 #   switching-time plan in its attributes. This is the data contract the
@@ -350,7 +365,17 @@ class SmileConnectRoomScheduleSensor(CoordinatorEntity, SensorEntity):
 
     _attr_has_entity_name = True
     _attr_translation_key = SENSOR_TRANSLATION_KEY_ROOM_SCHEDULE
-    _attr_entity_category = EntityCategory.DIAGNOSTIC
+    # No entity_category (neither CONFIG nor DIAGNOSTIC): Home Assistant
+    # core's SensorEntity.async_internal_added_to_hass() hard-rejects
+    # entity_category=CONFIG for the sensor domain outright (raises
+    # HomeAssistantError, entity never gets added - confirmed live,
+    # 2026-09-25, see this module's change log). DIAGNOSTIC would at least
+    # be accepted, but is exactly the wrong category conceptually - this
+    # entity is the data source AND write target the schedule card edits,
+    # not a read-only diagnostic. With CONFIG unavailable, the closest
+    # correct choice within HA's constraint is no category at all, so it
+    # shows as a normal entity rather than being tucked into a section
+    # that misrepresents what it is.
     _attr_icon = "mdi:calendar-clock"
     # No state_class: this is a configuration count, not a measurement -
     # feeding it into long-term statistics would be noise.

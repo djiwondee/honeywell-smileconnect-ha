@@ -149,11 +149,11 @@
         },
         "slot_1_to": {
           "name": "Slot 1: To",
-          "description": "End time of slot 1."
+          "description": "End time of slot 1. A value of 00:00 means the slot ends at midnight (24:00) - same convention the schedule card uses."
         },
         "slot_1_type": {
           "name": "Slot 1: Type",
-          "description": "Comfort Hi or Comfort Lo for slot 1."
+          "description": "Comfort Hi, Comfort Lo, or Night for slot 1. Night is experimental: unverified against real hardware, requires the Honeywell Room Connect SRC-10 extension."
         },
         "slot_2_from": {
           "name": "Slot 2: From",
@@ -161,11 +161,11 @@
         },
         "slot_2_to": {
           "name": "Slot 2: To",
-          "description": "End time of slot 2."
+          "description": "End time of slot 2. A value of 00:00 means the slot ends at midnight (24:00) - same convention the schedule card uses."
         },
         "slot_2_type": {
           "name": "Slot 2: Type",
-          "description": "Comfort Hi or Comfort Lo for slot 2."
+          "description": "Comfort Hi, Comfort Lo, or Night for slot 2. Night is experimental: unverified against real hardware, requires the Honeywell Room Connect SRC-10 extension."
         },
         "slot_3_from": {
           "name": "Slot 3: From",
@@ -173,11 +173,22 @@
         },
         "slot_3_to": {
           "name": "Slot 3: To",
-          "description": "End time of slot 3."
+          "description": "End time of slot 3. A value of 00:00 means the slot ends at midnight (24:00) - same convention the schedule card uses."
         },
         "slot_3_type": {
           "name": "Slot 3: Type",
-          "description": "Comfort Hi or Comfort Lo for slot 3."
+          "description": "Comfort Hi, Comfort Lo, or Night for slot 3. Night is experimental: unverified against real hardware, requires the Honeywell Room Connect SRC-10 extension."
+        }
+      },
+      "sections": {
+        "slot_1": {
+          "name": "Slot 1"
+        },
+        "slot_2": {
+          "name": "Slot 2"
+        },
+        "slot_3": {
+          "name": "Slot 3"
         }
       }
     },
@@ -197,6 +208,12 @@
     }
   },
   "selector": {
+    "hvac_mode": {
+      "options": {
+        "auto": "Auto",
+        "off": "Off"
+      }
+    },
     "weekday": {
       "options": {
         "monday": "Monday",
@@ -213,6 +230,15 @@
         "comfort_hi": "Comfort Hi",
         "comfort_lo": "Comfort Lo",
         "night": "Night"
+      }
+    },
+    "preset_mode": {
+      "options": {
+        "none": "None",
+        "boost": "Boost",
+        "party": "Party",
+        "holiday": "Holiday",
+        "leave": "Leave"
       }
     }
   }
