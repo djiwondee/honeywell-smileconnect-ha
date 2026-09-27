@@ -423,16 +423,23 @@ Two caveats worth knowing:
   temperature. That is the expected result on this kind of installation
   (the room has no SRC-10-controlled zone to apply Night to), not a bug in
   this integration.
-- **No native visual weekly-schedule editor yet** — the three schedule
-  Actions above are the read/write foundation; a proper UI (e.g. a native
-  HA "Schedule" helper per room) and automatic gateway↔HA sync are a
-  planned follow-up, deliberately scoped out of this release. See
+- **The bundled schedule card (see above) is the visual weekly-schedule
+  editor** — this used to say "not implemented yet"; that was true before
+  `0.4.0`, no longer. A native HA "Schedule" helper per room was
+  considered instead and abandoned (see
   [`CLAUDE.md`](CLAUDE.md#next-planned-work-agreed-in-project-discussion-not-yet-started)
   for why true two-way auto-sync isn't achievable with HA's native helper
-  at all.
-- **No automatic reconnect if the gateway session is lost** (e.g. a
-  gateway reboot) — entities go "unavailable" until Home Assistant
-  restarts or the integration is reloaded. Tracked as a planned fix in
+  at all) in favor of the card, which sidesteps the problem entirely:
+  there is no HA-side storage to keep in sync, so a fresh read on open
+  plus writing straight back through the existing Actions is the sync.
+- **Automatic re-login on a lost gateway session exists, but only retries
+  once per poll cycle, with no user-facing notification if that retry
+  also fails** (e.g. the gateway stays unreachable, or the account itself
+  needs re-authenticating). In that case entities stay "unavailable"
+  until Home Assistant restarts or the integration is reloaded, with
+  nothing telling you why. A Home Assistant Repair notification prompting
+  re-authentication (the same pattern other integrations use for expired
+  API tokens) is planned before the `1.0.0` release — see
   [`CLAUDE.md`](CLAUDE.md#next-planned-work-agreed-in-project-discussion-not-yet-started).
 - **Outside temperature/min/max sensors stay on the gateway device on
   multi-room installations** (an SRC-10 add-on module present), instead of
