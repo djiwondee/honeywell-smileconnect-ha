@@ -77,18 +77,7 @@
     },
     "climate": {
       "thermostat": {
-        "name": "Termostato",
-        "state_attributes": {
-          "preset_mode": {
-            "state": {
-              "none": "Ninguno",
-              "Boost": "Calentamiento rápido",
-              "Party": "Party",
-              "Holiday": "Vacaciones",
-              "Leave": "Economy"
-            }
-          }
-        }
+        "name": "Termostato"
       }
     },
     "number": {

@@ -77,18 +77,7 @@
     },
     "climate": {
       "thermostat": {
-        "name": "Thermostat",
-        "state_attributes": {
-          "preset_mode": {
-            "state": {
-              "none": "None",
-              "Boost": "Boost",
-              "Party": "Party",
-              "Holiday": "Holiday",
-              "Leave": "Leave"
-            }
-          }
-        }
+        "name": "Thermostat"
       }
     },
     "number": {

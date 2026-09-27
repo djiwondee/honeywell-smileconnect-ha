@@ -720,6 +720,31 @@ GET  /admin/login/index            (returns HTML of the config menu)
 
 ### Next planned work (agreed in project discussion, not yet started)
 
+- **Climate entity `preset_mode` STATE cannot be localized without a
+  breaking change - deferred, needs its own decision** (found 2026-09-27,
+  `bugfix/1-0-1-polish`/`0.6.0` - see that version's own entry for the
+  full CI-failure story). `hassfest` requires `state_attributes`
+  translation keys to be `[a-z0-9-_]+`, same as selector options - but
+  unlike a selector, an entity's own `state_attributes` has no
+  translation_key/mapping-layer escape hatch: the underlying VALUE must
+  itself be lowercase for the translation to ever resolve (confirmed
+  against the installed `homeassistant` package's own `honeywell`
+  component, whose preset values are `"hold"`/`"away"`/`"none"`, already
+  lowercase). This project's `preset_mode` values are the raw, mixed-case
+  gateway scene names (`"Boost"`/`"Party"`/`"Holiday"`/`"Leave"`) sent
+  directly on the wire via `SceneManager`/`ApiMethods.set_scene()` and
+  accepted as-is by the standard `climate.set_preset_mode` service - so
+  making the entity's OWN state translatable would mean changing what
+  `climate.py`'s `preset_mode` property returns (and what
+  `climate.set_preset_mode` accepts) to lowercase, a genuine breaking
+  change for any existing automation/script/dashboard using
+  `preset_mode: Boost` today. Options for a future session, not decided
+  here: (a) leave it permanently untranslated (simplest, no compatibility
+  risk); (b) lowercase the public value with a deprecation period/config
+  migration; (c) some other mapping layer at the entity boundary this
+  session didn't fully explore. Needs the Session Workflow's normal
+  plan-and-confirm treatment, specifically BECAUSE of the compatibility
+  question - not something to slip into a routine polish pass.
 - ~~**TOP PRIORITY (decided 2026-09-17, explicitly ordered before the
   switching-times phase 2 bullet below): investigate how to write
   `desiredTempDay`/`desiredTempDay2`/`desiredTempNight`**~~ **RESOLVED
@@ -2339,10 +2364,17 @@ must not proceed carelessly.
       values), `services.yaml`'s `preset_mode` selector switched to those
       lowercase options + `translation_key: "preset_mode"`, and a new
       `selector.preset_mode.options` block in all 5 language files -
-      reusing the exact same per-language scene-name translations as
-      `climate.thermostat.state_attributes.preset_mode.state` and the
-      duration-remaining sensor names, so all three surfaces
-      (entity state, sensor names, this Action's field) now agree.
+      reusing the exact same per-language scene-name translations as the
+      duration-remaining sensor names, so both surfaces that can actually
+      be translated agree (see further down: the climate entity's own
+      `preset_mode` STATE cannot be translated at all without a breaking
+      change, so it is deliberately not part of this agreement).
+      **Breaking change, acceptable pre-`1.0.0`** (same reasoning as
+      `slot_N_type`'s `H`/`L`→`comfort_hi`/`comfort_lo` change earlier):
+      any automation calling `set_preset_mode_with_duration` with the old
+      mixed-case `preset_mode: Boost` now fails schema validation - README
+      updated with the new lowercase example and a call-out of the
+      change.
       `async_set_preset_mode_with_duration()` maps the incoming lowercase
       key back to the wire value as its very first line, before any of
       its existing logic (the `PRESET_NONE`+`target` guard,
@@ -2355,18 +2387,53 @@ must not proceed carelessly.
       old `slot_N_type`, these values are already lowercase and needed no
       mapping layer, so this was a pure additive fix (new top-level
       `selector.hvac_mode.options` block).
-    - The climate entity's own `preset_mode` **state** (shown in history/
-      the entity's state, not an Action field) was untranslated -
-      `strings.json`'s `entity.climate.thermostat` had no
-      `state_attributes` block at all. Added one, matching the state
-      values EXACTLY as `climate.py` returns them (the raw, mixed-case
-      gateway scene names `"Boost"`/`"Party"`/`"Holiday"`/`"Leave"`, not
-      lowercased - HA's state_attributes translation matches the literal
-      state string). The four `sensor.*_duration_remaining.name` entries
-      (already correctly translating "remaining"/"verbleibend"/etc. per
-      language, just never translating the scene name itself) now use the
-      same per-language scene names as the new `preset_mode` state block,
-      so the two surfaces agree with each other. **User's explicit
+    - **The climate entity's own `preset_mode` STATE could NOT be
+      translated - attempted, then reverted after CI (`hassfest`)
+      rejected it.** First attempt: added `entity.climate.thermostat.
+      state_attributes.preset_mode.state` with keys matching the raw,
+      mixed-case gateway scene names (`"Boost"`/`"Party"`/`"Holiday"`/
+      `"Leave"`) exactly as `climate.py` returns them, on the (wrong)
+      assumption that HA's `state_attributes` translation matches the
+      literal state string regardless of case. `hassfest` failed CI on
+      this exact block: `Invalid translation key 'Boost', need to be
+      [a-z0-9-_]+`  - the **same** lowercase-key rule that already applies
+      to selector options also applies to `state_attributes` keys, with no
+      exception for "this happens to be the real state value." Checked
+      against the installed `homeassistant` package's own `honeywell`
+      component (a different, core-bundled Honeywell integration) for
+      precedent: its `climate.py` preset values are themselves already
+      lowercase (`"hold"`, `"away"`, `"none"` - not `"Hold"`/`"Away"`), and
+      its `state_attributes.preset_mode.state` keys match them exactly,
+      also lowercase. This is the deciding evidence that the actual
+      **runtime** attribute value must itself be lowercase for this
+      translation mechanism to ever resolve - not just the JSON file's
+      keys - so lowercasing only the translation file (to satisfy
+      `hassfest`) would silently never match this integration's real,
+      mixed-case `preset_mode` values and the translation would just never
+      apply, with no error. Making it work for real would mean changing
+      `climate.py`'s actual `preset_mode` return value (and therefore what
+      `climate.set_preset_mode` accepts) to lowercase - a genuine breaking
+      change to the public entity interface for any existing automation,
+      script, or dashboard that reads or sets `preset_mode: Boost` today,
+      not a translation-file fix. **Reverted the `state_attributes` block
+      entirely rather than ship something that looks fixed but silently
+      isn't** - the climate entity's `preset_mode` dropdown/history
+      remains untranslated (back to its pre-`0.6.0` state). Left as an
+      open decision for a future, deliberate session if ever pursued (see
+      "Next planned work") - not slipped into this polish pass, since it
+      would need its own compatibility discussion, not a quiet side effect
+      of a localization cleanup.
+      The `set_preset_mode_with_duration` Action's OWN `preset_mode`
+      field (see two bullets above) is unaffected by any of this - it
+      uses `_PRESET_MODE_KEY_TO_VALUE`'s own lowercase-key mapping layer,
+      which Action `selector`/`translation_key` blocks support and plain
+      entity `state_attributes` does not.
+      The four `sensor.*_duration_remaining.name` entries (already
+      correctly translating "remaining"/"verbleibend"/etc. per language)
+      still gained real per-language scene-name translations - that part
+      is unaffected by this constraint, since entity NAMES built from
+      `translation_key` are free-form display text, not a value-keyed
+      dict subject to the `[a-z0-9-_]+` rule. **User's explicit
       per-language choices, not this project's own invention** (German
       specifically pins `Leave` to `"Economy"`, mirroring the Smile App's
       own UI label for that scene per `SceneName`'s docstring, rather than
@@ -2377,7 +2444,19 @@ must not proceed carelessly.
       "Chauffe rapide", Holiday→"Vacaciones"/"Vacances", Leave→"Economy"
       in both (kept as the borrowed English term, same reasoning as
       German) - flagged for a native-speaker read-through before wide use,
-      same as any first-pass translation in this project.
+      same as any first-pass translation in this project. The
+      `selector.preset_mode.options` block (Action field, above) reuses
+      these same per-language strings, so both surfaces that CAN be
+      translated agree with each other.
+      **Lesson: `hassfest`'s `[a-z0-9-_]+` key rule is not a cosmetic
+      naming nitpick - it is a hard signal that the underlying VALUE must
+      also be lowercase for HA's translation mechanism to work at all.
+      Test any `state_attributes`/selector-option translation attempt
+      against an actual core-integration precedent (or push through CI)
+      before treating it as done, exactly the same lesson as the
+      `slot_1`/`slot_2`/`slot_3` `sections`-vs-`fields` mistake two
+      bullets up - this project hit the same class of "looks right,
+      wasn't checked against a real precedent" mistake twice in one PR.**
     - All 5 language files (`strings.json` + `translations/{en,de,es,fr}
       .json`) re-verified structurally identical and scanned for the two
       historical bug patterns (stray `{`/`}` breaking ICU MessageFormat,

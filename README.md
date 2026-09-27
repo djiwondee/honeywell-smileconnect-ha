@@ -145,18 +145,22 @@ action: honeywell_smileconnect.set_preset_mode_with_duration
 target:
   entity_id: climate.living_room
 data:
-  preset_mode: Boost
+  preset_mode: boost
   target: 45
 ```
 
-`target` is a real-world value in the preset's own unit and range:
+`preset_mode` accepts `none`/`boost`/`party`/`holiday`/`leave` (lowercase —
+changed from `Boost`/`Party`/`Holiday`/`Leave` in `0.6.0` so the field is
+translatable in the UI; breaking for any automation still using the old
+mixed-case values, acceptable pre-`1.0.0`). `target` is a real-world value
+in the preset's own unit and range:
 
 | Preset | Unit | Range |
 |---|---|---|
-| Boost | minutes | 30–120, step 30 |
-| Party | hours | 1–12 |
-| Leave | hours | 1–12 |
-| Holiday | days | 1–30 |
+| `boost` | minutes | 30–120, step 30 |
+| `party` | hours | 1–12 |
+| `leave` | hours | 1–12 |
+| `holiday` | days | 1–30 |
 
 Omit `target` to use the vendor default; set `preset_mode: none` (no
 `target`) to clear whatever preset is currently active.
