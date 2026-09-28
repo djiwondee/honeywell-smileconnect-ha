@@ -33,7 +33,11 @@ real heating behaviour in your home.
 Stable — `1.0.1` is the first regular (non-pre-release) version. Login,
 room/climate control, scene (preset) activation, the schedule card, and all
 six custom Actions below have been live-verified against a real SCN-10
-gateway and a real Home Assistant instance. Coming from a `0.x` version?
+gateway and a real Home Assistant instance.
+
+<img width="1023" height="478" alt="image" src="https://github.com/user-attachments/assets/4dcaf383-89d6-43ba-8448-f43c59e6a66a" />
+
+Coming from a `0.x` version?
 See [Upgrading from 0.x](#upgrading-from-0x). See [`CLAUDE.md`](CLAUDE.md) for
 the full architecture/history and [`docs/protocol.md`](docs/protocol.md) /
 [`docs/switching-times-api.md`](docs/switching-times-api.md) for the
@@ -71,11 +75,17 @@ reverse-engineered wire protocol.
 
 **Climate** (one per room):
 
+ <img width="1024" height="849" alt="image" src="https://github.com/user-attachments/assets/453585db-9c38-416d-a1a6-38d9baa08421" />
+
+
 | Entity | Notes |
 |---|---|
 | `climate.<room>` | `hvac_mode`: `auto` (follow the room's schedule) or `off` (Standby). `preset_mode`: `none`/`leave`/`holiday`/`party`/`boost` — shown translated in the thermostat dialog (e.g. Economy/Urlaub/Party/Schnell-Aufheizung in German), each with its own icon. Target temperature read/write. |
 
 **Sensor**:
+
+<img width="331" height="466" alt="image" src="https://github.com/user-attachments/assets/921571a6-dcf5-43e1-90a5-c9539430ab60" />
+
 
 | Entity | Scope | Category | Notes |
 |---|---|---|---|
@@ -97,6 +107,8 @@ Ranges are the ones the Smile App offers. Changes made in the Smile App show
 up here on the next poll.
 
 **Binary sensor**:
+
+<img width="1030" height="496" alt="image" src="https://github.com/user-attachments/assets/2c3da7c4-0bc3-4b87-b6a7-49c3a908787f" />
 
 | Entity | Scope | Category | Notes |
 |---|---|---|---|
@@ -130,6 +142,8 @@ Copy `custom_components/honeywell_smileconnect` into your Home Assistant
 
 Set up via the UI (Settings → Devices & Services → Add Integration):
 
+<img width="403" height="629" alt="image" src="https://github.com/user-attachments/assets/efe0b373-8d61-4f0c-b669-36010b74432d" />
+
 | Field | Default | Notes |
 |---|---|---|
 | Gateway IP address | — | e.g. `192.168.1.132` |
@@ -154,6 +168,8 @@ Home Assistant instances (e.g. test and production) can share the same
 Smile App account.
 
 ## Actions
+
+<img width="1020" height="755" alt="image" src="https://github.com/user-attachments/assets/cde820e6-a76f-4239-8fd7-21badab66276" />
 
 Standard `hvac_mode`, `preset_mode`, and temperature control already work
 through Home Assistant's generic `climate.set_hvac_mode` /
@@ -335,6 +351,8 @@ The integration ships a Lovelace card that edits a room's weekly switching
 times the same way Home Assistant's built-in Schedule helper does: drag on
 an empty area to create a block, drag a block to move it (including to
 another day), drag its edges to resize, click it to edit or delete it.
+
+<img width="1022" height="846" alt="image" src="https://github.com/user-attachments/assets/044967b6-6e25-478d-9c55-4cd95063e3ba" />
 
 It is registered automatically — **no manual entry under Settings →
 Dashboards → Resources** — so after installing or updating the integration
