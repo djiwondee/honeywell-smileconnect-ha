@@ -10,10 +10,10 @@ set_preset_mode_with_duration:
         select:
           options:
             - "none"
-            - "boost"
-            - "party"
-            - "holiday"
             - "leave"
+            - "holiday"
+            - "party"
+            - "boost"
           translation_key: "preset_mode"
     target:
       required: false

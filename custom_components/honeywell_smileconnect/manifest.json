@@ -19,6 +19,6 @@
     "requests>=2.31.0"
   ],
   "ssdp": [],
-  "version": "0.7.0",
+  "version": "0.8.0",
   "zeroconf": []
 }

@@ -720,10 +720,38 @@ GET  /admin/login/index            (returns HTML of the config menu)
 
 ### Next planned work (agreed in project discussion, not yet started)
 
-- **Climate entity `preset_mode` STATE cannot be localized without a
-  breaking change - deferred, needs its own decision** (found 2026-09-27,
-  `bugfix/1-0-1-polish`/`0.6.0` - see that version's own entry for the
-  full CI-failure story). `hassfest` requires `state_attributes`
+- ~~**Climate entity `preset_mode` STATE cannot be localized without a
+  breaking change - deferred, needs its own decision**~~ **RESOLVED
+  (2026-09-28, branch `feature/preset-mode-state-localization`, shipped in
+  `0.8.0`).** Found live by the user (2026-09-28): the
+  `set_preset_mode_with_duration` Action's `preset_mode` field showed
+  translated presets (Keiner/Schnell-Aufheizung/Party/Urlaub/Economy), but
+  the same climate entity's own thermostat-dialog dropdown still showed the
+  raw gateway names (Ohne/Boost/Holiday/Leave/Party) - confirming this was
+  the exact gap this entry already described. **Chose option (b)** from
+  the three below: `climate.py`'s `preset_mode` property and
+  `_attr_preset_modes` are now lowercase (`none`/`boost`/`party`/
+  `holiday`/`leave`), reusing the same `_PRESET_MODE_KEY_TO_VALUE` mapping
+  the Action already had (plus a new reverse map,
+  `_PRESET_MODE_VALUE_TO_KEY`, for the property's return direction).
+  `async_set_preset_mode()` now translates the incoming lowercase key back
+  to the gateway value as its first line, same pattern
+  `async_set_preset_mode_with_duration()` already used.
+  `_update_active_preset()`/`_active_preset` and the wire protocol
+  (`SceneManager`/`ApiMethods.set_scene()`, still sent as `"Boost"` etc.)
+  are UNCHANGED - purely an HA-entity-boundary translation. With the
+  runtime value itself now lowercase, `entity.climate.thermostat.
+  state_attributes.preset_mode.state` could finally be added to
+  `strings.json`/all 4 `translations/*.json` without hitting the
+  `hassfest` rejection from the first `0.6.0` attempt - text reused
+  verbatim from the already-existing `selector.preset_mode.options` block
+  (German: Leave→"Economy" as established in `0.6.0`, unchanged). Genuine
+  breaking change, same shape and same acceptance rationale as the
+  Action's own `0.6.0` cut: any automation/dashboard using
+  `preset_mode: Boost` must move to `preset_mode: boost` - documented in
+  `README.md`'s Actions section and entity table.
+  (Original analysis, options (a)/(b)/(c), kept below for context.)
+  `hassfest` requires `state_attributes`
   translation keys to be `[a-z0-9-_]+`, same as selector options - but
   unlike a selector, an entity's own `state_attributes` has no
   translation_key/mapping-layer escape hatch: the underlying VALUE must
@@ -738,13 +766,11 @@ GET  /admin/login/index            (returns HTML of the config menu)
   `climate.py`'s `preset_mode` property returns (and what
   `climate.set_preset_mode` accepts) to lowercase, a genuine breaking
   change for any existing automation/script/dashboard using
-  `preset_mode: Boost` today. Options for a future session, not decided
-  here: (a) leave it permanently untranslated (simplest, no compatibility
-  risk); (b) lowercase the public value with a deprecation period/config
-  migration; (c) some other mapping layer at the entity boundary this
-  session didn't fully explore. Needs the Session Workflow's normal
-  plan-and-confirm treatment, specifically BECAUSE of the compatibility
-  question - not something to slip into a routine polish pass.
+  `preset_mode: Boost` today. Options considered: (a) leave it permanently
+  untranslated (simplest, no compatibility risk); (b) lowercase the public
+  value with a deprecation period/config migration - **the option chosen,
+  see above**; (c) some other mapping layer at the entity boundary that
+  was never fully explored.
 - ~~**TOP PRIORITY (decided 2026-09-17, explicitly ordered before the
   switching-times phase 2 bullet below): investigate how to write
   `desiredTempDay`/`desiredTempDay2`/`desiredTempNight`**~~ **RESOLVED
@@ -1810,6 +1836,17 @@ install, since this was implemented without live HA available)
   convention — keep both in sync when English strings change (the
   `translations/en.json` copy exists for compatibility with tooling that
   still expects it there).
+- **Icons are a separate mechanism, added `0.8.0` (`icons.json` at the
+  component root — see that version's own entry under "Versioning &
+  Branching Strategy" for the full story).** Icons are NOT per-language —
+  a single `icons.json`, no `translations/` equivalent — but follow the
+  identical `entity.<platform>.<translation_key>` nesting and precedence
+  rules as `strings.json`: an integration's own icons.json for a given
+  `translation_key` overrides HA core's own `entity_component` per-domain
+  defaults (e.g. `climate`'s own `icons.json` ships default icons for a
+  few well-known `preset_mode` values like `boost`/`eco`/`away`). Add a
+  new key here whenever a `state_attributes` value needs its own icon
+  instead of falling back to core's default or the generic dot.
 
 ## Session Workflow (applies to every new chat/session on this project)
 
@@ -2272,7 +2309,70 @@ must not proceed carelessly.
     session's focus is the `desiredTempDay`/`desiredTempDay2`/
     `desiredTempNight` write investigation (see the "TOP PRIORITY" entry
     under "Next planned work" above), NOT phase 2's native helper UI.
-- **Current version: `0.7.0`** (2026-09-27, developed on branch
+- **Current version: `0.8.0`** (2026-09-28, developed on branch
+  `feature/preset-mode-state-localization`, per the beta-status rule
+  above — merged via pull request). See the resolved "Climate entity
+  `preset_mode` STATE cannot be localized" entry under "Next planned
+  work" above for the full story and design. In short: `climate.py`'s
+  `preset_mode` property/`_attr_preset_modes`/`async_set_preset_mode()`
+  now use lowercase keys (`none`/`boost`/`party`/`holiday`/`leave`)
+  instead of the raw mixed-case gateway scene names, via the same
+  `_PRESET_MODE_KEY_TO_VALUE` mapping the `set_preset_mode_with_duration`
+  Action already used (plus a new reverse map,
+  `_PRESET_MODE_VALUE_TO_KEY`). This finally makes
+  `entity.climate.thermostat.state_attributes.preset_mode.state`
+  translatable (`strings.json` + all 4 `translations/*.json`, text reused
+  from the existing `selector.preset_mode.options` block) — `hassfest`
+  rejected this in `0.6.0` because the underlying value was still
+  mixed-case; it is not anymore. Wire protocol
+  (`SceneManager`/`ApiMethods.set_scene()`) is completely unchanged.
+  **Breaking change** for any automation/dashboard using
+  `preset_mode: Boost` — documented in `README.md`. No `tests/` change
+  (`climate.py` remains on the no-automated-HA-harness list); verified
+  manually in the dev container plus the existing `pytest tests/` suite
+  (165 passed, unaffected) as a regression check on the unrelated layers.
+  **2026-09-28 addendum (same branch, folded into this same `0.8.0` line):
+  fixed preset dropdown order and added per-preset icons**, both found by
+  the user live-testing the lowercase rollout above. Root cause of the
+  icons, once investigated: HA core's OWN `climate` component ships a
+  platform-wide `entity_component` icon default
+  (`homeassistant/components/climate/icons.json`,
+  `state_attributes.preset_mode.state`) mapping a handful of well-known
+  preset words - `away`/`boost`/`comfort`/`eco`/`home`/`sleep`/`activity`
+  - to specific MDI icons (`boost` → `mdi:rocket-launch`), falling back to
+  a plain `mdi:circle-medium` dot for anything else. That is the entire
+  explanation for "Boost got a rocket icon, the others got dots" - it had
+  nothing to do with this integration's own code; `party`/`holiday`/
+  `leave`/`none` simply aren't in core's list.
+  New `custom_components/honeywell_smileconnect/icons.json` (first icon
+  file this project ships) overrides all four scene presets for the
+  `thermostat` `translation_key` specifically - `boost`→
+  `mdi:rocket-launch` (kept identical to core's own default, no reason to
+  diverge), `party`→`mdi:party-popper`, `holiday`→`mdi:beach`, `leave`→
+  `mdi:leaf` (mirrors core's own `eco`→`mdi:leaf` convention, and matches
+  this preset's own display name "Economy"). `none` deliberately left
+  unmapped - the plain dot is an accurate "no preset selected" indicator,
+  and the user's own report only flagged Holiday/Party/Economy, not
+  `none`. Same integration-level `entity.<platform>.<translation_key>`
+  icon-precedence mechanism as `strings.json`'s translation lookup (an
+  integration's own icons.json for a given `translation_key` overrides
+  `climate`'s `entity_component` default) - confirmed by reading
+  `climate/icons.json` and several core components' own `icons.json`
+  files directly, not assumed. Icons are not per-language (single shared
+  file, no `translations/` equivalent).
+  User-requested fixed order for the thermostat dialog's preset dropdown
+  (previously it was `_attr_preset_modes`' insertion order: none/boost/
+  party/holiday/leave) - now none, then Economy/Holiday/Party/Boost
+  (`leave`/`holiday`/`party`/`boost`). `_PRESET_MODE_KEY_TO_VALUE`'s
+  dict order in `climate.py` was reordered directly (`_attr_preset_modes`
+  derives from it via `list(...)`, so no second place to keep in sync);
+  `services.yaml`'s separate `set_preset_mode_with_duration` Action
+  selector option list was reordered to match, for consistency between
+  the two preset-selecting surfaces (no shared source between the two -
+  this ordering must be kept in sync by hand if either changes again,
+  same situation as the pre-existing `desired_temperature_type`
+  options/`DESIRED_TEMP_TARGETS` sync noted elsewhere in this file).
+- **`0.7.0`** (2026-09-27, developed on branch
   `feature/reauth-flow`, per the beta-status rule above — merged via pull
   request). Raised by the user while reviewing `0.6.0`'s README: the
   "no automatic reconnect" bullet turned out to already be half-fixed
