@@ -1,8 +1,8 @@
 # Honeywell Smile Connect — Home Assistant Integration
 
 [![hacs_badge](https://img.shields.io/badge/HACS-Custom-orange.svg)](https://github.com/hacs/integration)
-[![Version](https://img.shields.io/badge/version-0.8.0-yellow.svg)](https://github.com/djiwondee/honeywell-smileconnect-ha/releases)
-[![Status](https://img.shields.io/badge/status-beta-yellow.svg)](CLAUDE.md#versioning--branching-strategy)
+[![Version](https://img.shields.io/badge/version-1.0.1-blue.svg)](https://github.com/djiwondee/honeywell-smileconnect-ha/releases)
+[![Status](https://img.shields.io/badge/status-stable-brightgreen.svg)](CLAUDE.md#versioning--branching-strategy)
 [![License](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 [![Validate](https://github.com/djiwondee/honeywell-smileconnect-ha/actions/workflows/validate.yml/badge.svg)](https://github.com/djiwondee/honeywell-smileconnect-ha/actions/workflows/validate.yml)
 [![Lint](https://github.com/djiwondee/honeywell-smileconnect-ha/actions/workflows/lint.yml/badge.svg)](https://github.com/djiwondee/honeywell-smileconnect-ha/actions/workflows/lint.yml)
@@ -30,9 +30,11 @@ real heating behaviour in your home.
 
 ## Status
 
-Beta. Login, room/climate control, scene (preset) activation, and all six
-custom Actions below have all been live-verified against a real SCN-10
-gateway and a real Home Assistant instance. See [`CLAUDE.md`](CLAUDE.md) for
+Stable — `1.0.1` is the first regular (non-pre-release) version. Login,
+room/climate control, scene (preset) activation, the schedule card, and all
+six custom Actions below have been live-verified against a real SCN-10
+gateway and a real Home Assistant instance. Coming from a `0.x` version?
+See [Upgrading from 0.x](#upgrading-from-0x). See [`CLAUDE.md`](CLAUDE.md) for
 the full architecture/history and [`docs/protocol.md`](docs/protocol.md) /
 [`docs/switching-times-api.md`](docs/switching-times-api.md) for the
 reverse-engineered wire protocol.
@@ -51,9 +53,19 @@ reverse-engineered wire protocol.
   installations — see [Entities provided](#entities-provided))
 - A lightweight, independent connectivity/response-time diagnostic, so you
   can tell "gateway unreachable" apart from "login broken"
+- A bundled Lovelace card for editing a room's weekly schedule visually —
+  see [Schedule card](#schedule-card), no manual resource setup needed
 - Six custom Actions for automations that need more control than the
   standard `climate.*` services offer, including full read/write access to
   a room's weekly switching-time schedule — see [Actions](#actions) below
+- Automatic recovery: a lost gateway session (e.g. after a gateway reboot)
+  is re-established on its own; if the gateway rejects the stored
+  credentials, Home Assistant asks you to sign in again instead of leaving
+  the entities silently unavailable
+- Several Home Assistant instances (e.g. a test and a production instance)
+  can use the same gateway account at the same time without logging each
+  other out
+- UI translated into English, German, Spanish, and French
 
 ## Entities provided
 
@@ -61,7 +73,7 @@ reverse-engineered wire protocol.
 
 | Entity | Notes |
 |---|---|
-| `climate.<room>` | `hvac_mode`: `auto` (follow the room's schedule) or `off` (Standby). `preset_mode`: `none`/`boost`/`party`/`leave`/`holiday` (lowercase since 0.8.0 — breaking change, see below). Target temperature read/write. |
+| `climate.<room>` | `hvac_mode`: `auto` (follow the room's schedule) or `off` (Standby). `preset_mode`: `none`/`leave`/`holiday`/`party`/`boost` — shown translated in the thermostat dialog (e.g. Economy/Urlaub/Party/Schnell-Aufheizung in German), each with its own icon. Target temperature read/write. |
 
 **Sensor**:
 
@@ -70,7 +82,7 @@ reverse-engineered wire protocol.
 | Outside temperature / min / max | Regler (single-room installs); gateway otherwise | primary | Value comes from the gateway's `/api/weather` relay, but the physical sensor is wired to the Regler for its own weather-compensated control — see [Known limitations](#known-limitations) for the multi-room caveat |
 | Gateway response time | gateway | diagnostic | From the unauthenticated `/api/ping` endpoint |
 | Boost / Party / Leave / Holiday remaining | **per room** | primary | Time left on that preset, in its own natural unit (minutes/hours/hours/days) — reads "unknown" when that specific preset isn't active for the room. See [Known limitations](#known-limitations) for why there are four independent sensors instead of one. |
-| Schedule | **per room** | diagnostic | Number of switching-time slots in the week; the whole weekly plan sits in its attributes. This is what the [schedule card](#schedule-card) reads — you normally look at the card, not at this entity. |
+| Schedule | **per room** | primary | Number of switching-time slots in the week; the whole weekly plan sits in its attributes. This is what the [schedule card](#schedule-card) reads — you normally look at the card, not at this entity. |
 
 **Number** (config entities, one set per room, on the Regler device):
 
@@ -98,6 +110,8 @@ installs), linked to the
 gateway via `via_device`.
 
 ## Installation
+
+Requires **Home Assistant 2024.11 or newer**.
 
 ### Via HACS (custom repository, until/if accepted into the default store)
 
@@ -128,22 +142,24 @@ All of the above, including credentials, can be changed later via the
 integration's **Configure** (Options) button without losing entity/device
 history.
 
+If the gateway ever rejects the stored credentials (for example after the
+password was changed in the Smile App), Home Assistant shows a
+**re-authenticate** prompt under Settings → Devices & Services. Enter the
+current login there; the integration reloads and your poll intervals and
+entities stay as they were. A gateway that is merely unreachable does not
+trigger this prompt — it is simply retried on the next poll.
+
+Each configured instance uses its own session with the gateway, so two
+Home Assistant instances (e.g. test and production) can share the same
+Smile App account.
+
 ## Actions
 
 Standard `hvac_mode`, `preset_mode`, and temperature control already work
 through Home Assistant's generic `climate.set_hvac_mode` /
-`climate.set_preset_mode` / `climate.set_temperature` services — the two
-Actions below are additive, for cases those don't cover.
-
-**Breaking change in `0.8.0`:** `climate.<room>`'s own `preset_mode` state
-and the value `climate.set_preset_mode` expects are now lowercase
-(`none`/`boost`/`party`/`holiday`/`leave` instead of `none`/`Boost`/
-`Party`/`Holiday`/`Leave`) — this is what makes the preset dropdown in the
-thermostat dialog translatable, matching the same cut
-`set_preset_mode_with_duration` already made in `0.6.0`. Any automation,
-script, or dashboard card reading or setting `preset_mode: Boost` must be
-updated to `preset_mode: boost`. The gateway's own scenes are unaffected —
-this only changes the value at the Home Assistant entity boundary.
+`climate.set_preset_mode` / `climate.set_temperature` services — the six
+Actions below are additive, for cases those don't cover. All of them target
+a room's `climate.<room>` entity.
 
 ### `honeywell_smileconnect.set_preset_mode_with_duration`
 
@@ -159,18 +175,16 @@ data:
   target: 45
 ```
 
-`preset_mode` accepts `none`/`boost`/`party`/`holiday`/`leave` (lowercase —
-changed from `Boost`/`Party`/`Holiday`/`Leave` in `0.6.0` so the field is
-translatable in the UI; breaking for any automation still using the old
-mixed-case values, acceptable pre-`1.0.0`). `target` is a real-world value
-in the preset's own unit and range:
+`preset_mode` accepts `none`/`leave`/`holiday`/`party`/`boost` (lowercase,
+the same values as the climate entity's own `preset_mode`). `target` is a
+real-world value in the preset's own unit and range:
 
 | Preset | Unit | Range |
 |---|---|---|
-| `boost` | minutes | 30–120, step 30 |
-| `party` | hours | 1–12 |
-| `leave` | hours | 1–12 |
+| `leave` (Economy) | hours | 1–12 |
 | `holiday` | days | 1–30 |
+| `party` | hours | 1–12 |
+| `boost` | minutes | 30–120, step 30 |
 
 Omit `target` to use the vendor default; set `preset_mode: none` (no
 `target`) to clear whatever preset is currently active.
@@ -240,7 +254,8 @@ target:
 ```
 
 Returns an object with one list per weekday (`monday`..`sunday`); each
-entry has `from`, `to`, and `type` (`H` = Comfort Hi, `L` = Comfort Lo). A
+entry has `from`, `to`, and `type` (`H` = Comfort Hi, `L` = Comfort Lo,
+`N` = Night — see [Known limitations](#known-limitations) for Night). A
 time not covered by any slot follows the room's implicit "Night" behaviour.
 The response has the same shape `set_schedule_room` expects below, so it
 can be read, tweaked, and written straight back.
@@ -275,8 +290,8 @@ data:
 The `schedule` field is a nested object (up to 7 days × 3 slots × 3 fields
 — too large for a sane form UI), so it's entered via YAML: switch to
 **Edit in YAML** in Developer Tools → Actions to type it directly. Every
-defined slot must include `from`, `to`, **and** `type` — there is no
-default type. The number of slots per weekday must not exceed the room's
+defined slot must include `from`, `to`, **and** `type` (`H`, `L` or `N`) —
+there is no default type. A slot may end at `"24:00"`. The number of slots per weekday must not exceed the room's
 current schedule capacity (usually 3); this is checked automatically
 against a fresh read before writing, and a schedule that doesn't fit is
 rejected with a clear error rather than silently failing.
@@ -295,7 +310,10 @@ data:
   weekday: monday
   slot_1_from: "04:00:00"
   slot_1_to: "08:00:00"
-  slot_1_type: L
+  slot_1_type: comfort_lo
+  slot_2_from: "17:00:00"
+  slot_2_to: "00:00:00"
+  slot_2_type: comfort_hi
 ```
 
 Up to 3 slots (`slot_1`/`slot_2`/`slot_3`), each with its own `_from`/`_to`/
@@ -303,6 +321,13 @@ Up to 3 slots (`slot_1`/`slot_2`/`slot_3`), each with its own `_from`/`_to`/
 together — the HA UI shows this as three checkboxes per slot that must all
 be checked at once; leaving all three of a slot's fields empty clears that
 slot.
+
+- `_type` is `comfort_hi`, `comfort_lo`, or `night` (Night is experimental,
+  see [Known limitations](#known-limitations)). Note these are the same
+  names `set_desired_temperature` uses — not the single letters `H`/`L`/`N`
+  of the full-week `schedule` object above.
+- A `_to` of `00:00:00` means the slot runs until midnight (`24:00`), as in
+  `slot_2` above — the same convention the schedule card uses.
 
 ## Schedule card
 
@@ -416,41 +441,23 @@ Two caveats worth knowing:
   Smile App — it does not let you set an arbitrary temperature per slot.**
   Those underlying temperatures can be changed with the Comfort Hi / Comfort
   Lo / Night sliders or the `set_desired_temperature` Action above.
-- **The "Night" switching-time type (`N`) is settable, but EXPERIMENTAL.**
-  It requires the Honeywell Room Connect SRC-10 hardware extension to be
-  meaningful, and this project has no such hardware to verify a write
-  against — only reads of an existing `N` slot on real SRC-10 hardware were
-  ever confirmed live. The write uses the exact same wire mechanism as `H`/
-  `L` (no new encoding), which is why it ships rather than staying blocked
-  indefinitely, but if you have SRC-10 hardware and try it, please report
-  back what you observe (see the issue tracker link at the top of this
-  file). Setting the Night *temperature* (slider / `set_desired_temperature`
-  with `type: night`) is unrelated and has been supported since `0.3.0`.
-  **Live-confirmed on hardware WITHOUT SRC-10** (single-Regler test
-  installation, `0.6.0`): the gateway accepts an `N`-typed slot without
-  error — no rejection, no timeout — but the room's actual target
-  temperature during that slot follows Comfort Hi, not the Night
-  temperature. That is the expected result on this kind of installation
-  (the room has no SRC-10-controlled zone to apply Night to), not a bug in
-  this integration.
-- **The bundled schedule card (see above) is the visual weekly-schedule
-  editor** — this used to say "not implemented yet"; that was true before
-  `0.4.0`, no longer. A native HA "Schedule" helper per room was
-  considered instead and abandoned (see
-  [`CLAUDE.md`](CLAUDE.md#next-planned-work-agreed-in-project-discussion-not-yet-started)
-  for why true two-way auto-sync isn't achievable with HA's native helper
-  at all) in favor of the card, which sidesteps the problem entirely:
-  there is no HA-side storage to keep in sync, so a fresh read on open
-  plus writing straight back through the existing Actions is the sync.
-- **Automatic re-login on a lost gateway session** (e.g. a gateway
-  reboot) retries once per poll cycle. **If the gateway rejects the
-  stored credentials themselves** (changed password, revoked account),
-  Home Assistant now prompts for re-authentication under Settings →
-  Devices & Services instead of leaving entities silently "unavailable"
-  forever — the same pattern used by integrations with expiring API
-  tokens. A non-credentials failure (gateway unreachable, timeout) does
-  NOT trigger this prompt; it is retried on the normal poll schedule
-  instead, exactly as before.
+- **The "Night" switching-time type (`N` / `night`) is settable, but
+  EXPERIMENTAL.** It requires the Honeywell Room Connect SRC-10 hardware
+  extension to be meaningful, and this project has no such hardware to
+  verify a write against — only reads of an existing `N` slot on real
+  SRC-10 hardware were ever confirmed. The write uses the exact same wire
+  mechanism as `H`/`L`, which is why it ships rather than staying blocked.
+  On hardware **without** SRC-10 the gateway accepts a Night slot without
+  error, but the room follows Comfort Hi during it — expected there, not a
+  bug. If you have SRC-10 hardware and try it, please report what you see
+  in the [issue tracker](https://github.com/djiwondee/honeywell-smileconnect-ha/issues).
+  Setting the Night *temperature* (slider / `set_desired_temperature` with
+  `type: night`) is unrelated and fully supported.
+- **Room schedules are not native Home Assistant "Schedule" helpers.** The
+  bundled [schedule card](#schedule-card) is the visual editor instead:
+  Home Assistant's Schedule helper has no API an integration could use to
+  keep it in sync with the gateway, so the card reads the gateway directly
+  and writes straight back through the Actions above.
 - **Outside temperature/min/max sensors stay on the gateway device on
   multi-room installations** (an SRC-10 add-on module present), instead of
   moving to the correct Regler as they do on single-room installs. The
@@ -458,6 +465,24 @@ Two caveats worth knowing:
   Regler a reading came from once more than one exists, and there is no
   SRC-10 hardware available to verify the right behavior against — see
   [`CLAUDE.md`](CLAUDE.md) for the full reasoning.
+
+## Upgrading from 0.x
+
+`1.0.1` is the first stable release (there is no `1.0.0`). If you used a
+`0.x` version, check your automations, scripts, and dashboards for these
+changes — everything else upgrades in place without losing entities or
+history:
+
+| Since | What changed | Update to |
+|---|---|---|
+| `0.6.0` | `set_preset_mode_with_duration`: `preset_mode` values are lowercase | `preset_mode: boost` instead of `Boost` (likewise `party`, `holiday`, `leave`) |
+| `0.6.0` | `set_schedule_room_weekday`: `slot_N_type` values are named | `comfort_hi` / `comfort_lo` / `night` instead of `H` / `L` |
+| `0.6.0` | Schedule sensor is no longer in the "Diagnostic" category | Nothing to do — it just moves on the device page |
+| `0.8.0` | `climate.<room>` `preset_mode` state and `climate.set_preset_mode` values are lowercase | `preset_mode: boost` instead of `Boost`, e.g. in state conditions and triggers |
+| `1.0.1` | Minimum Home Assistant version raised to 2024.11 | Update Home Assistant first |
+
+The full-week `schedule` object of `get_schedule_room` / `set_schedule_room`
+still uses the single letters `H` / `L` / `N` — unchanged.
 
 ## Development
 
