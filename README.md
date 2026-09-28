@@ -1,7 +1,7 @@
 # Honeywell Smile Connect — Home Assistant Integration
 
 [![hacs_badge](https://img.shields.io/badge/HACS-Custom-orange.svg)](https://github.com/hacs/integration)
-[![Version](https://img.shields.io/badge/version-0.7.0-yellow.svg)](https://github.com/djiwondee/honeywell-smileconnect-ha/releases)
+[![Version](https://img.shields.io/badge/version-0.8.0-yellow.svg)](https://github.com/djiwondee/honeywell-smileconnect-ha/releases)
 [![Status](https://img.shields.io/badge/status-beta-yellow.svg)](CLAUDE.md#versioning--branching-strategy)
 [![License](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 [![Validate](https://github.com/djiwondee/honeywell-smileconnect-ha/actions/workflows/validate.yml/badge.svg)](https://github.com/djiwondee/honeywell-smileconnect-ha/actions/workflows/validate.yml)
@@ -61,7 +61,7 @@ reverse-engineered wire protocol.
 
 | Entity | Notes |
 |---|---|
-| `climate.<room>` | `hvac_mode`: `auto` (follow the room's schedule) or `off` (Standby). `preset_mode`: `none`/`Boost`/`Party`/`Leave`/`Holiday`. Target temperature read/write. |
+| `climate.<room>` | `hvac_mode`: `auto` (follow the room's schedule) or `off` (Standby). `preset_mode`: `none`/`boost`/`party`/`leave`/`holiday` (lowercase since 0.8.0 — breaking change, see below). Target temperature read/write. |
 
 **Sensor**:
 
@@ -134,6 +134,16 @@ Standard `hvac_mode`, `preset_mode`, and temperature control already work
 through Home Assistant's generic `climate.set_hvac_mode` /
 `climate.set_preset_mode` / `climate.set_temperature` services — the two
 Actions below are additive, for cases those don't cover.
+
+**Breaking change in `0.8.0`:** `climate.<room>`'s own `preset_mode` state
+and the value `climate.set_preset_mode` expects are now lowercase
+(`none`/`boost`/`party`/`holiday`/`leave` instead of `none`/`Boost`/
+`Party`/`Holiday`/`Leave`) — this is what makes the preset dropdown in the
+thermostat dialog translatable, matching the same cut
+`set_preset_mode_with_duration` already made in `0.6.0`. Any automation,
+script, or dashboard card reading or setting `preset_mode: Boost` must be
+updated to `preset_mode: boost`. The gateway's own scenes are unaffected —
+this only changes the value at the Home Assistant entity boundary.
 
 ### `honeywell_smileconnect.set_preset_mode_with_duration`
 

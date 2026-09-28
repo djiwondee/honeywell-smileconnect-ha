@@ -1,5 +1,37 @@
 """Climate platform for Honeywell Smile Connect."""
 # Change log:
+# - 2026-09-28 (b): Two follow-up fixes found by the user live-testing the
+#   lowercase preset_mode rollout below: (1) the thermostat dialog's preset
+#   dropdown order (derived from _PRESET_MODE_KEY_TO_VALUE's dict order via
+#   _attr_preset_modes) is now none/leave/holiday/party/boost per the
+#   user's requested order, not the original none/boost/party/holiday/
+#   leave insertion order - see CLAUDE.md's 0.8.0 addendum for the full
+#   reasoning. (2) party/holiday/leave got a plain dot icon instead of a
+#   real one - turned out to be HA core's OWN climate component's
+#   entity_component icon default (only a handful of well-known preset
+#   words like "boost"/"eco"/"away" have one; "boost" already had
+#   mdi:rocket-launch from THAT default, which is why only it looked
+#   right) - fixed with this integration's own new icons.json, which
+#   overrides it per the same translation_key mechanism strings.json uses.
+# - 2026-09-28 (a): preset_mode is now lowercase at the HA entity boundary
+#   ("none"/"boost"/"party"/"holiday"/"leave" instead of "none"/"Boost"/
+#   "Party"/"Holiday"/"Leave") - resolves the entity-state translation gap
+#   left open in the 2026-09-25 entry below (hassfest rejected a mixed-case
+#   state_attributes translation attempt back then; the underlying runtime
+#   value itself must be lowercase for that mechanism to work at all, not
+#   just the JSON keys - confirmed against HA core's own `honeywell`
+#   integration, whose preset values are already "hold"/"away"/"none").
+#   Deliberate, user-approved breaking change for any automation/dashboard
+#   using preset_mode: Boost - the set_preset_mode_with_duration Action
+#   already made this exact cut in 0.6.0.
+#   _PRESET_MODE_KEY_TO_VALUE (already existed for that Action) is now also
+#   used by the standard async_set_preset_mode(); new reverse map
+#   _PRESET_MODE_VALUE_TO_KEY translates the internally-tracked, still
+#   mixed-case _active_preset back to a lowercase key at the preset_mode
+#   property's return boundary. _update_active_preset()/_active_preset and
+#   the wire protocol (SceneManager/ApiMethods.set_scene(), still sent as
+#   e.g. "Boost") are UNCHANGED - this is purely an HA-entity-boundary
+#   translation, same shape as the Action's existing mapping.
 # - 2026-09-25: Two related fixes to set_schedule_room_weekday, both found
 #   during the pre-1.0.0 localization/polish pass:
 #   (1) slot_N_type's selector was English-only inline value/label pairs
@@ -415,13 +447,26 @@ SERVICE_SET_DESIRED_TEMPERATURE = "set_desired_temperature"
 # [a-z0-9-_]+) - same reasoning, same fix shape, as _DESIRED_TEMP_KEY_TO_
 # TARGET/_SLOT_TYPE_KEYS below. "none" needed no change (already
 # lowercase); only the four scene names did.
+# Dict/list ORDER matters here too (2026-09-28): _attr_preset_modes below
+# derives its order from this dict, which is what the thermostat dialog's
+# preset dropdown displays in - user-requested order (none first, then
+# Economy/Holiday/Party/Boost), not alphabetical or gateway-scene order.
+# services.yaml's own preset_mode selector for the
+# set_preset_mode_with_duration Action mirrors this same order separately
+# (no shared source - see that file).
 _PRESET_MODE_KEY_TO_VALUE = {
     "none": PRESET_NONE,
-    "boost": SceneName.BOOST.value,
-    "party": SceneName.PARTY.value,
-    "holiday": SceneName.HOLIDAY.value,
     "leave": SceneName.LEAVE.value,
+    "holiday": SceneName.HOLIDAY.value,
+    "party": SceneName.PARTY.value,
+    "boost": SceneName.BOOST.value,
 }
+# Reverse of the above, used to translate the entity's OWN preset_mode
+# property/preset_modes list to the same lowercase keys (see 2026-09-28
+# change log entry) - _active_preset itself stays the raw, mixed-case
+# gateway value internally, since it's passed straight through to
+# scene_manager.py.
+_PRESET_MODE_VALUE_TO_KEY = {value: key for key, value in _PRESET_MODE_KEY_TO_VALUE.items()}
 
 # `target` is a real-world duration in the preset's own unit (minutes for
 # Boost, hours for Party/Leave, days for Holiday) - see SCENE_APP_LIMITS
@@ -606,7 +651,7 @@ async def async_setup_entry(
 class SmileConnectClimate(CoordinatorEntity, ClimateEntity):
     """One climate entity per room/SDC Regler reported by the gateway.
 
-    hvac_mode (AUTO/OFF) and preset_mode (Boost/Party/Leave/Holiday) are
+    hvac_mode (AUTO/OFF) and preset_mode (boost/party/leave/holiday) are
     deliberately independent of each other - see module change log for the
     "Standby" behavior this reflects.
     """
@@ -637,13 +682,10 @@ class SmileConnectClimate(CoordinatorEntity, ClimateEntity):
     # nothing in this list represents "no preset", so HA's UI had no way
     # to clear an active preset without picking a different one. See this
     # module's change log.
-    _attr_preset_modes: ClassVar[list[str]] = [
-        PRESET_NONE,
-        SceneName.BOOST.value,
-        SceneName.HOLIDAY.value,
-        SceneName.LEAVE.value,
-        SceneName.PARTY.value,
-    ]
+    # Lowercase keys as of 2026-09-28 (see module change log) - derived
+    # from _PRESET_MODE_KEY_TO_VALUE rather than hardcoded, so this list
+    # can never drift from the mapping that translates it back and forth.
+    _attr_preset_modes: ClassVar[list[str]] = list(_PRESET_MODE_KEY_TO_VALUE)
 
     def __init__(
         self,
@@ -758,13 +800,15 @@ class SmileConnectClimate(CoordinatorEntity, ClimateEntity):
 
     @property
     def preset_mode(self) -> str:
-        # Returns PRESET_NONE (not Python None) when nothing is active, so
-        # HA's dropdown correctly highlights "None" as the selected entry
-        # - self._active_preset itself stays str | None internally (see
-        # _update_active_preset() below), only this property's return
-        # value is translated.
+        # Returns a lowercase key ("none"/"boost"/"party"/"holiday"/
+        # "leave", matching _attr_preset_modes) via _PRESET_MODE_VALUE_TO_
+        # KEY, not the raw mixed-case gateway value - see module change
+        # log (2026-09-28). self._active_preset itself stays str | None,
+        # holding the raw gateway value internally (see
+        # _update_active_preset() below); only this property's return
+        # value is translated at the HA-entity boundary.
         self._update_active_preset()
-        return self._active_preset or PRESET_NONE
+        return _PRESET_MODE_VALUE_TO_KEY.get(self._active_preset, PRESET_NONE)
 
     def _update_active_preset(self) -> None:
         # Reads each preset's ground-truth room membership directly (docs/
@@ -801,7 +845,12 @@ class SmileConnectClimate(CoordinatorEntity, ClimateEntity):
 
     @_translate_gateway_errors
     async def async_set_preset_mode(self, preset_mode: str) -> None:
-        await self._async_apply_preset(preset_mode)
+        # preset_mode arrives as one of _PRESET_MODE_KEY_TO_VALUE's
+        # lowercase keys now (advertised via _attr_preset_modes) - mapped
+        # back to the actual gateway/HA value here before anything else
+        # runs, same as async_set_preset_mode_with_duration() already
+        # does (see module change log, 2026-09-28).
+        await self._async_apply_preset(_PRESET_MODE_KEY_TO_VALUE[preset_mode])
 
     @_translate_gateway_errors
     async def async_set_preset_mode_with_duration(

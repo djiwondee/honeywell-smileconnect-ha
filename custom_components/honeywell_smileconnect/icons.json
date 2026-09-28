@@ -1,0 +1,18 @@
+{
+  "entity": {
+    "climate": {
+      "thermostat": {
+        "state_attributes": {
+          "preset_mode": {
+            "state": {
+              "boost": "mdi:rocket-launch",
+              "party": "mdi:party-popper",
+              "holiday": "mdi:beach",
+              "leave": "mdi:leaf"
+            }
+          }
+        }
+      }
+    }
+  }
+}
