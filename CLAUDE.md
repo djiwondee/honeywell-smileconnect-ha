@@ -720,6 +720,25 @@ GET  /admin/login/index            (returns HTML of the config menu)
 
 ### Next planned work (agreed in project discussion, not yet started)
 
+**Still open as of `1.0.1` (2026-09-28)** — everything else in this
+section is resolved and kept for its history; entries are only struck
+through, never deleted:
+- `actualTemperature` missing on relay-only "Regler MK1" installations —
+  is there another endpoint that reports it? (see "Full temperature
+  sync" below and "Still untested / open" above)
+- Shower/Towel scenes — protocol constants exist, no entities; needs
+  hardware with hot-water control to verify against.
+- Multi-room (SRC-10) installations: weather sensors stay on the gateway
+  device (see the `0.1.1` entry), Night slot writes are unverified on
+  real SRC-10 hardware (see `0.6.0`).
+- `suggested_area` triggering HA's area suggestion — see "⚠️ Needs
+  runtime verification".
+- Live re-capture of `tests/fixtures/ping_response.json` (the only
+  fixture not recorded live).
+- Housekeeping: `const.py`'s `ROOM_STATUS_*` constants are no longer read
+  by `climate.py` (since `0.0.18`) — keep as protocol documentation or
+  remove, decide when next touching that file.
+
 - ~~**Climate entity `preset_mode` STATE cannot be localized without a
   breaking change - deferred, needs its own decision**~~ **RESOLVED
   (2026-09-28, branch `feature/preset-mode-state-localization`, shipped in
@@ -1254,6 +1273,8 @@ pytest tests/ -v
   decrypt/PKCS7 handling via a self-constructed round trip (a real password
   is never available to, or stored in, this repo, so this can't test
   against the real fixture's actual encrypted value directly).
+  `TestUdidPassthrough` (`0.5.0`) guards against `Login()` hardcoding
+  `FIXED_UDID` into the `Credentials` it builds again.
 - `test_api_request.py` — locks in the pipe-string signature construction
   rules (sorting, array rendering, `None`-filtering) and the `reqcount`
   post-increment ordering that caused the original "session is finished"
@@ -1280,11 +1301,21 @@ pytest tests/ -v
   `gateway_device_info()`'s own identifier — this is precisely the kind of
   mismatch that caused the original "two unrelated devices" bug, so it's
   asserted explicitly rather than just implicitly.
-- `test_switching_times.py` — the conversion/validation rules, plus (as of
-  `0.4.0`) the `"N"` read/write asymmetry locked in from BOTH sides (an
-  `"N"` survives a read and survives a per-weekday write to another day,
-  but makes a full-week write fail) and the fixed-array-width round trip
-  for several widths, so nothing may hardcode 3 or 21.
+- `test_switching_times.py` — the conversion/validation rules and the
+  fixed-array-width round trip for several widths, so nothing may
+  hardcode 3 or 21. `TestNightReadWrite` (renamed from
+  `TestNightPassthrough` in `0.6.0`) locks in that `"N"` is now accepted
+  on read AND write; the unsupported-type path is tested with a genuinely
+  unknown type (`"X"`) instead. (From `0.4.0` to `0.5.0` this class locked
+  in the opposite: `"N"` survived a read but failed a full-week write.)
+- `test_scene_manager.py` — `SceneManager` add/remove sequencing: never
+  calls `setrooms` with an empty list when the last room leaves a scene
+  (the gateway hangs on it), still deactivates the scene, sends the
+  corrected `SCENE_ACTIVATION_DURATION` per preset rather than the stale
+  `get_scene_duration()` value, and passes `target=`/`duration=`
+  overrides through (`0.1.0`).
+- `conftest.py` — only the `load_fixture()` helper for `tests/fixtures/`;
+  see the import-path debugging story at the top of this section.
 - `tests/fixtures/session_expired_response.json` — live-captured
   2026-09-21 via `scripts/manual_probe_failure_responses.py`. What EVERY
   authenticated endpoint returns once the gateway drops the session.
@@ -1297,11 +1328,16 @@ pytest tests/ -v
   deliberately outside `tests/` (so they stay out of `lint.yml`'s scope)
   and needing **no gateway, no credentials, no network and no Home
   Assistant test harness**. Run any of them directly with `python3`:
-  - `test_scene_guards_local.py` — see below.
-  - `test_session_recovery_local.py` (added `0.3.1`, 10 checks) — the
-    coordinator's re-login control flow, which would otherwise have no
-    automated test at all. The important case is that a second session
-    expiry straight after a successful login does NOT loop.
+  - `test_scene_guards_local.py` (8 tests) — see below.
+  - `test_session_recovery_local.py` (added `0.3.1`, 13 checks since
+    `0.7.0`) — the coordinator's re-login control flow, which would
+    otherwise have no automated test at all. The important case is that a
+    second session expiry straight after a successful login does NOT
+    loop. Since `0.7.0` it also covers the reauth split: a credentials
+    rejection during re-login surfaces as `ConfigEntryAuthFailed`
+    (unwrapped), a transport error stays `UpdateFailed`, and one check
+    runs the REAL `async_login()` to pin the `ValueError` →
+    `ConfigEntryAuthFailed` translation itself.
   - `test_frontend_registration_local.py` (added `0.4.0`, 12 checks) —
     the Lovelace resource registration and its removal: idempotent,
     rewrites an existing entry on a hash change instead of duplicating
@@ -1340,9 +1376,13 @@ that exercises the actual parsing code against it — this is the pattern to
 follow going forward, not just for the crypto layer.
 
 **Not covered by automated tests (HA-dependent, no test harness set up
-yet):** `climate.py`, `sensor.py`, `binary_sensor.py`, `coordinator.py`,
-`ping_coordinator.py`, `config_flow.py` (including `OptionsFlowHandler`),
-`__init__.py`. These all import Home Assistant directly and would need
+yet):** `climate.py`, `sensor.py`, `binary_sensor.py`, `number.py`,
+`coordinator.py` (control flow partly covered by
+`scripts/test_session_recovery_local.py`), `schedule_coordinator.py`,
+`ping_coordinator.py`, `config_flow.py` (including `OptionsFlowHandler`
+and the reauth flow), `__init__.py` (card registration partly covered by
+`scripts/test_frontend_registration_local.py`). Current `tests/` total:
+165 tests. These all import Home Assistant directly and would need
 `pytest-homeassistant-custom-component` (already listed in
 `requirements_test.txt` but not yet wired up with fixtures/conftest
 support for it) to test properly. Until that harness exists, changes to
@@ -1502,7 +1542,11 @@ construct a `device_info` dict inline.
     this the single source of truth for the crypto scheme — do not
     reimplement it inline elsewhere.
   - `login.py` — challenge/response login, password hashing, AES devicetoken
-    decryption.
+    decryption. `Login(base_url, udid=FIXED_UDID)` (since `0.5.0`): the
+    integration passes each config entry's own persisted UUID; the
+    `FIXED_UDID = "web"` default remains only for callers without a config
+    entry (manual scripts, tests). A rejected login raises `ValueError`,
+    which `coordinator.async_login()` translates to `ConfigEntryAuthFailed`.
   - `api_request.py` — signs and executes authenticated requests.
   - `api_methods.py` — high-level per-endpoint methods. Also owns
     `SCENE_MAX`, `FRACTION_DURATION_SCENES`, `RAW_DAYS_DURATION_SCENES`,
@@ -1558,6 +1602,14 @@ construct a `device_info` dict inline.
   **not re-entrant**: multi-call read-modify-write sequences must use
   `async_api_session()` and call the yielded handle directly, never
   `async_api_call()` from inside it.
+  Session handling: a `SmileConnectSessionExpired` during a poll triggers
+  exactly one re-login and retry (`0.3.1`). Since `0.7.0` the coordinator
+  is constructed with its `config_entry`, and `async_login()` turns a
+  credentials rejection into `ConfigEntryAuthFailed` — raised from a poll
+  it starts HA's reauth flow via the base class; raised from
+  `__init__.py`'s initial login it does the same via
+  `config_entries.async_setup()`. Any other re-login failure stays
+  `UpdateFailed` (retried on the next poll, no prompt).
 - `schedule_coordinator.py` — `SmileConnectScheduleCoordinator` (added
   `0.4.0`), a **third** `DataUpdateCoordinator` polling every room's
   `switchingtimes` on its own slow cadence (`CONF_SCHEDULE_INTERVAL`,
@@ -1583,8 +1635,8 @@ construct a `device_info` dict inline.
 - `switching_times.py` — HA-independent conversion/validation between the
   gateway's flat, day-major `switchingtimes` wire format and a per-weekday
   dict. No `homeassistant.*` import, fully unit-tested. Owns `VALID_TYPES`
-  (`H`/`L` only - `"N"` is a real protocol type but is refused as a
-  settable value, see its own change log), `MAX_SLOTS_PER_DAY`, and the
+  (`H`/`L`/`N` since `0.6.0` — `N` settable but experimental, see that
+  version's entry; it was refused as a settable value before), `MAX_SLOTS_PER_DAY`, and the
   pure helpers backing the schedule sensor's attributes
   (`count_defined_slots()`, `collect_unsupported_types()`,
   `schedule_fingerprint()`).
@@ -1626,7 +1678,17 @@ construct a `device_info` dict inline.
   + a `translation_key` so the entity's display name combines its
   device's name with a translated "Thermostat" label (see `const.py`'s
   own comment on this choice).
-- `sensor.py` — three entity groups:
+  **`preset_mode` values at the HA boundary are lowercase keys** since
+  `0.8.0` (`none`/`leave`/`holiday`/`party`/`boost`, in exactly this
+  display order), mapped to/from the gateway's mixed-case scene names by
+  `_PRESET_MODE_KEY_TO_VALUE` / `_PRESET_MODE_VALUE_TO_KEY`; internally
+  `_active_preset` and everything sent to `SceneManager` keep the raw
+  gateway names. The lowercase keys are what make the state translatable
+  (`entity.climate.thermostat.state_attributes.preset_mode.state`) and
+  give each preset its own icon (`icons.json`). The six custom Actions
+  are registered here too (`async_setup_entry`); their service handlers
+  are wrapped in `_translate_gateway_errors`.
+- `sensor.py` — four entity groups:
   - Weather: outside temperature/min/max, sourced from
     `coordinator.data["weather"]` (fed by the main, authenticated
     coordinator). One parameterized `SmileConnectWeatherSensor` class
@@ -1662,11 +1724,15 @@ construct a `device_info` dict inline.
     writing the misreading back), `schedule`, `slots_per_day`,
     `valid_types`, `unsupported_types`, `editable`, `climate_entity_id`,
     `room_id`, `room_name`, `fingerprint`.
-    **`editable` is computed here, in Python, not in JavaScript** — an
-    `"N"` slot survives a READ but makes a full-week write fail
-    (`switching_times.collect_unsupported_types()` has the full
-    asymmetry), so the card must fail closed. Keeping the H/L-only policy
-    in one place means JS never duplicates it.
+    **`editable` is computed here, in Python, not in JavaScript** — it is
+    `False` whenever the week contains a slot type outside
+    `switching_times.VALID_TYPES` (`collect_unsupported_types()`), so the
+    card fails closed instead of writing a misread plan back. Up to
+    `0.5.0` this is what kept an `"N"` week read-only; since `0.6.0` `N`
+    is in `VALID_TYPES`, so it only triggers for a genuinely unknown type
+    now. Keeping the policy in one place means JS never duplicates it.
+    The sensor has **no `entity_category`** (since `0.6.0`: `CONFIG` is
+    rejected for the sensor domain by HA core, and it is not diagnostic).
     `climate_entity_id` is resolved through the entity registry from
     `climate.py`'s known `unique_id` format
     (`f"{DOMAIN}_room_{room_id}"`) — the frontend cannot turn a
@@ -1690,8 +1756,9 @@ construct a `device_info` dict inline.
   `extra_state_attributes` rather than separate entities (deliberate
   granularity decision from project discussion: 2 entities +
   attributes, not N entities for every ping field).
-- `config_flow.py` — host/user/password + two poll intervals
-  (`CONF_INTERVAL`, `CONF_PING_INTERVAL`), validated via an actual login
+- `config_flow.py` — host/user/password + three poll intervals
+  (`CONF_INTERVAL`, `CONF_PING_INTERVAL`, `CONF_SCHEDULE_INTERVAL`),
+  validated via an actual login
   attempt against the gateway. Also opportunistically calls `/api/ping`
   during setup to capture the gateway's own `"uniqueid"` and registers it
   as this entry's **native HA `unique_id`** via
@@ -1701,26 +1768,79 @@ construct a `device_info` dict inline.
   code, actually functional. Also implements `OptionsFlowHandler` so
   host/credentials/both intervals can be changed after initial setup
   without recreating the entry (and therefore without losing the
-  `unique_id`-based device identity).
-- `__init__.py` — creates and owns BOTH coordinators, wraps them plus the
-  entry's `unique_id` in a small `SmileConnectData` dataclass stored in
-  `hass.data[DOMAIN][entry_id]`. Every platform reads from that dataclass,
-  not from a bare coordinator reference.
+  `unique_id`-based device identity); since `0.4.0` it MERGES into the
+  existing options instead of replacing them.
+  Everything user-editable lives in `config_entry.options`; the only
+  thing in `config_entry.data` is `CONF_UDID` (since `0.5.0`, `VERSION =
+  2`) — a per-entry UUID generated once at setup, deliberately in `.data`
+  because the options flow can never write there.
+  Since `0.7.0` also `async_step_reauth()`/`async_step_reauth_confirm()`:
+  a narrow host/username/password form (no poll intervals), revalidated
+  with the entry's own UDID, guarded by `_abort_if_unique_id_mismatch()`,
+  finished with `async_update_reload_and_abort(options={**old,
+  **user_input})` — merged, and `data` left untouched so the UDID
+  survives.
+- `__init__.py` — creates and owns all three coordinators (main,
+  schedule, ping), wraps them plus the entry's `unique_id` in a small
+  `SmileConnectData` dataclass stored in `hass.data[DOMAIN][entry_id]`.
+  Every platform reads from that dataclass, not from a bare coordinator
+  reference. Also: `async_migrate_entry()` (config entry `1` → `2`,
+  backfills `CONF_UDID`, `0.5.0`); creates the gateway device explicitly
+  before forwarding the platforms, so `via_device` never points at a
+  missing device (`0.4.1`); registers the schedule card as a Lovelace
+  resource and removes it again in `async_remove_entry()` (`0.4.0`).
+- `const.py` — domain, config keys (`CONF_*`), defaults, `SceneName`,
+  `TRACKED_SCENE_NAMES`/`TIMED_PRESET_SCENE_NAMES`,
+  `SCENE_ACTIVATION_DURATION` (vendor-default durations per preset), and
+  translation keys. Protocol-level constants (`FIXED_UDID`, `SCENE_MAX`,
+  `SCENE_APP_LIMITS`, …) live in `api/` instead, so the HA-independent
+  layer stays self-contained.
+- Static integration files (no code): `manifest.json` (version,
+  `dependencies: http/frontend/lovelace`), `services.yaml` (the six
+  Actions' fields and selectors — select-option lists must be kept in
+  sync with `climate.py`'s key mappings by hand), `strings.json` +
+  `translations/{en,de,es,fr}.json` (see "Localization"), `icons.json`
+  (since `0.8.0`, per-preset icons — see "Localization"), `brand/`
+  (integration icon). `hacs.json` at the repo root holds the minimum
+  Home Assistant version (`2024.11.0` since `1.0.1`).
+
+### Credential storage (decided 2026-09-28, no code change)
+
+The gateway password is stored in plain text in Home Assistant's
+`.storage/core.config_entries`, like the credentials of every other HA
+integration — HA has no encrypted secret store for config entries; its
+security model is file-system access control. Raised by the user and
+deliberately left as is:
+- Encrypting it inside the integration would be theatre: the key would
+  have to sit next to it for unattended re-login to work.
+- Storing a hash instead is impossible: every login needs the real
+  password (PBKDF2 over its char codes with a per-login challenge as salt,
+  plus SHA-256(password) as the AES key for the devicetoken), so any
+  stored derivative would be password-equivalent for this gateway anyway.
+- Storing only the session token (dropping the password after login,
+  relying on the reauth flow whenever the session ends) was offered and
+  rejected: the token is still a plain-text secret, and every gateway
+  reboot would require typing the password again.
+Practical mitigations are on the user's side (a dedicated gateway account
+with a unique password, encrypted HA backups, restricted access to the
+config directory). **Not documented in the README, by user decision.**
+Repo hygiene checked at the same time: `config/.storage/` is in
+`.gitignore` and nothing from it is tracked, and no code path logs the
+password. **If a `diagnostics.py` platform is ever added, it must redact
+host/username/password with `async_redact_data`.**
 
 ### ⚠️ Needs runtime verification (not yet confirmed against a real HA
 install, since this was implemented without live HA available)
 
-- `EntityCategory` is imported from `homeassistant.const` in `sensor.py`
-  and `binary_sensor.py`. This is believed correct for current HA versions
-  but was not confirmed by actually running the integration - if you hit
-  an `ImportError` here, check whether your HA version instead expects
-  `from homeassistant.helpers.entity import EntityCategory` and fix at
-  that single point (both files import from the same place).
-- The `OptionsFlowHandler` deliberately does NOT define `__init__` /
-  assign `self.config_entry` manually, relying on the base `OptionsFlow`
-  class providing `self.config_entry` automatically (current recommended
-  pattern, older manual-assignment pattern is deprecated). Confirm this
-  works as expected on first use of the options flow in the dev container.
+- ~~`EntityCategory` imported from `homeassistant.const`~~ **Confirmed by
+  live use** (reconciled for `1.0.1`): `sensor.py`/`binary_sensor.py` have
+  loaded and run on the user's production and dev instances since `0.0.x`
+  — an `ImportError` there would have prevented the whole platform from
+  loading.
+- ~~`OptionsFlowHandler` relying on the base class's `self.config_entry`~~
+  **Confirmed by live use** (reconciled for `1.0.1`): the options flow has
+  been used live repeatedly (schedule interval in `0.4.0`, UDID
+  revalidation in `0.5.0`).
 - `suggested_area` in `device.regler_device_info()` has not yet been
   confirmed to actually trigger HA's area-suggestion UI on first device
   creation — verify by deleting and re-adding the integration and checking
@@ -1828,10 +1948,24 @@ install, since this was implemented without live HA available)
 - Code identifiers themselves (see Code Standards above) stay in English
   regardless of this — localization applies only to strings actually
   rendered to the end user, not to internal naming.
-- **Current status (as of 2026-08-27):** `en`, `de`, `es`, `fr` are all
-  present under `custom_components/honeywell_smileconnect/translations/`,
-  covering both the config flow strings and the `sensor.py` entity names
-  (`entity.sensor.*`). `strings.json` at the component root mirrors the
+- **Current status (as of `1.0.1`, 2026-09-28):** `en`, `de`, `es`, `fr`
+  are all present under
+  `custom_components/honeywell_smileconnect/translations/` and
+  structurally identical to `strings.json`. Covered: config flow
+  (including options and the reauth step/aborts), all entity names
+  (`entity.sensor/number/binary_sensor/climate.*`), the climate entity's
+  `preset_mode` state (`state_attributes`, since `0.8.0`), all six
+  Actions with their fields and collapsible `sections`, and the select
+  selectors (`weekday`, `desired_temperature_type`, `hvac_mode`,
+  `preset_mode`). German deliberately shows the `leave` preset as
+  "Economy", mirroring the Smile App.
+  Lessons already paid for: no raw `{`/`}` in any string (ICU
+  MessageFormat), no `[%key:...%]` references (not resolved for HACS
+  integrations), select-option and `state_attributes` keys must be
+  `[a-z0-9-_]+` (hassfest), and a translated state only resolves if the
+  runtime value itself is that lowercase key.
+  Originally (2026-08-27) this covered only the config flow and the
+  `sensor.py` entity names (`entity.sensor.*`). `strings.json` at the component root mirrors the
   English translation as the source-of-truth file per current HA
   convention — keep both in sync when English strings change (the
   `translations/en.json` copy exists for compatibility with tooling that
@@ -1928,6 +2062,23 @@ must not proceed carelessly.
 - Before beta status (i.e. `x.0.y`), direct commits to `main` are
   acceptable for rapid early-stage iteration, as has been the practice so
   far in this project.
+- **The two rules above describe the `0.y.z` line only.** `0.0.x` was
+  pre-alpha, `0.1.0`–`0.8.0` was beta. **From `1.0.1` on (2026-09-28) the
+  integration is stable** — `1.0.0` was deliberately skipped (user
+  decision; `1.0.1` is the first non-pre-release). For `1.x` and later:
+  - Every change still goes through a feature/bugfix branch and a pull
+    request against `main` — never a direct commit to `main`.
+  - Versions follow semantic versioning from the user's point of view: a
+    change that breaks existing automations/dashboards/entity IDs → major
+    (`2.0.0`); new capability → minor (`1.1.0`); bugfix only → patch
+    (`1.0.2`). The `0.x` habit of accepting breaking changes in a minor
+    bump (as `0.6.0`/`0.8.0` did) no longer applies.
+  - A breaking change additionally needs a row in `README.md`'s
+    "Upgrading" table, the way the `0.x` ones are listed there.
+  - GitHub releases up to `0.4.0` were published as pre-releases tagged
+    `vX.Y.Z-beta`; from `1.0.1` on, releases are regular (non-pre-release)
+    GitHub releases. Creating the release/tag is done by the user, not as
+    part of a PR.
 - **`0.0.21`** (bumped 2026-09-09, patch-only — still
   `0.0.x`, so this is a normal direct-to-`main` release per the rule
   above, not an exception to it). Fixes a real defect introduced in
@@ -2309,7 +2460,44 @@ must not proceed carelessly.
     session's focus is the `desiredTempDay`/`desiredTempDay2`/
     `desiredTempNight` write investigation (see the "TOP PRIORITY" entry
     under "Next planned work" above), NOT phase 2's native helper UI.
-- **Current version: `0.8.0`** (2026-09-28, developed on branch
+- **Current version: `1.0.1`** (2026-09-28, branch `release/1.0.1`, merged
+  via pull request) — **the first stable, non-pre-release version.**
+  `1.0.0` was deliberately skipped (user decision). Planned from the start
+  as a "graduation" release after `0.4.1`–`0.8.0` closed the last known
+  gaps (via_device warning, per-instance UDID, localization/polish,
+  reauth flow, preset state translation). No integration code changed.
+  Contents:
+  - `manifest.json` → `1.0.1`.
+  - **`hacs.json` `"homeassistant"` floor `2024.7.0` → `2024.11.0` — a
+    real compatibility fix, not cosmetic.** The `0.7.0` reauth code uses
+    `ConfigFlow._get_reauth_entry()`, `ConfigFlow._abort_if_unique_id_
+    mismatch()`, and `DataUpdateCoordinator(config_entry=...)`. Checked
+    against the HA core git tags (`gh api repos/home-assistant/core/
+    contents/...?ref=<tag>`): all three are absent in `2024.10.0` and
+    present in `2024.11.0`. On HA 2024.7–2024.10 the integration would
+    have failed at setup. Lesson, now also written into the badge/
+    maintenance rule below: raise `hacs.json`'s floor in the same PR that
+    first uses a newer HA API.
+  - `README.md` brought up to date for stable users: status/version
+    badges, Features (schedule card, recovery/reauth, multi-instance,
+    translations), minimum HA version, reauth/multi-instance notes under
+    Configuration, schedule sensor category (`primary`, not `diagnostic`
+    since `0.6.0`), "six" (not "two") Actions, and a new **"Upgrading from
+    0.x"** table collecting every breaking change of the `0.x` line in one
+    place instead of per-Action "breaking, acceptable pre-1.0.0" notes.
+    **Also fixed a genuinely wrong README example:**
+    `set_schedule_room_weekday` still showed `slot_1_type: L`, which has
+    failed schema validation since `0.6.0` (the values are
+    `comfort_hi`/`comfort_lo`/`night`). "Known limitations" lost two
+    entries that described features, not limitations (schedule card,
+    reauth). Nothing about credential storage in the README — deliberate,
+    see "Credential storage" under "Integration Architecture".
+  - `CLAUDE.md` reconciled per Session Workflow rule 7 (Module layout,
+    Test Suite, runtime-verification callout, open-items list) plus the
+    new stable-line versioning rules above.
+  - No GitHub release/tag created in this PR — the user adds README
+    screenshots first and publishes the release themselves.
+- **`0.8.0`** (2026-09-28, developed on branch
   `feature/preset-mode-state-localization`, per the beta-status rule
   above — merged via pull request). See the resolved "Climate entity
   `preset_mode` STATE cannot be localized" entry under "Next planned
@@ -3177,13 +3365,12 @@ must not proceed carelessly.
     (`roomid` scoping only tested on the single-room install), and whether
     `change_mode=0` also floors off-grid values.
 - When proposing a plan (per the Session Workflow rules above), also
-  propose the appropriate version bump and, once beta status applies,
-  the branch name to use.
+  propose the appropriate version bump and the branch name to use.
 - **README badge maintenance:** `README.md`'s badge row includes a static
-  `version-x.y.z` badge (not auto-updating) and a `status-pre--alpha`/
-  `status-beta` badge reflecting the tier above. Whenever `manifest.json`'s
-  `version` is bumped, update the version badge to match in the same
-  commit; whenever the project actually transitions from pre-alpha to
-  beta status, update the status badge's text/color/link accordingly
-  (e.g. to `status-beta-yellow.svg` or similar) rather than leaving it
-  saying "pre-alpha" past that point.
+  `version-x.y.z` badge (not auto-updating) and a status badge reflecting
+  the tier above — `status-stable-brightgreen` since `1.0.1` (previously
+  `status-pre--alpha`, then `status-beta-yellow`). Whenever
+  `manifest.json`'s `version` is bumped, update the version badge to match
+  in the same commit. `hacs.json`'s `"homeassistant"` minimum must be
+  raised in the same PR whenever code starts using a Home Assistant API
+  newer than it (check against the HA core git tag, as done for `1.0.1`).
