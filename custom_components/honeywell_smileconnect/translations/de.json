@@ -10,6 +10,15 @@
           "ping_interval": "Ping-Intervall (Sekunden)",
           "schedule_interval": "Abfrageintervall Zeitplan (Sekunden)"
         }
+      },
+      "reauth_confirm": {
+        "title": "Erneut authentifizieren",
+        "description": "Das Gateway hat den gespeicherten Benutzernamen oder das Passwort abgelehnt. Geben Sie die aktuellen Zugangsdaten ein, um die Integration wieder zu verbinden.",
+        "data": {
+          "host": "Gateway-IP-Adresse",
+          "username": "Benutzername",
+          "password": "Passwort"
+        }
       }
     },
     "error": {
@@ -18,7 +27,9 @@
       "unknown": "Unerwarteter Fehler"
     },
     "abort": {
-      "already_configured": "Gerät ist bereits konfiguriert"
+      "already_configured": "Gerät ist bereits konfiguriert",
+      "reauth_successful": "Die erneute Authentifizierung war erfolgreich",
+      "unique_id_mismatch": "Die neu eingegebenen Zugangsdaten verweisen auf ein anderes Gateway als dieser Integrationseintrag. Richten Sie stattdessen eine neue Integration ein, statt diese erneut zu authentifizieren."
     }
   },
   "options": {

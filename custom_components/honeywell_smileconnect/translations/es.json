@@ -10,6 +10,15 @@
           "ping_interval": "Intervalo de ping (segundos)",
           "schedule_interval": "Intervalo de sondeo de la programación (segundos)"
         }
+      },
+      "reauth_confirm": {
+        "title": "Volver a autenticar",
+        "description": "La pasarela rechazó el nombre de usuario o la contraseña guardados. Introduzca las credenciales actuales para volver a conectar la integración.",
+        "data": {
+          "host": "Dirección IP de la pasarela",
+          "username": "Nombre de usuario",
+          "password": "Contraseña"
+        }
       }
     },
     "error": {
@@ -18,7 +27,9 @@
       "unknown": "Error inesperado"
     },
     "abort": {
-      "already_configured": "El dispositivo ya está configurado"
+      "already_configured": "El dispositivo ya está configurado",
+      "reauth_successful": "La reautenticación se realizó correctamente",
+      "unique_id_mismatch": "Las credenciales introducidas apuntan a una pasarela distinta a la de esta entrada de integración. Configure una nueva integración en lugar de volver a autenticar esta."
     }
   },
   "options": {

@@ -1,4 +1,16 @@
 # Change log:
+# - 2026-09-27: Added a required `config_entry` parameter, passed through
+#   to DataUpdateCoordinator so it can trigger a reauth flow on its own
+#   (see homeassistant/helpers/update_coordinator.py's handling of
+#   ConfigEntryAuthFailed). async_login() now translates a ValueError from
+#   Login.authorize() (bad credentials) into ConfigEntryAuthFailed instead
+#   of letting it propagate as a bare ValueError - this is the one login
+#   failure the user can fix by re-entering credentials, and translating
+#   it here (not in _async_update_data()) means every caller benefits,
+#   including __init__.py's own unprotected first call. See
+#   config_flow.py's new async_step_reauth() for the other half of this
+#   feature, and README.md's "Known limitations" for the user-facing
+#   description of the gap this closes.
 # - 2026-09-24: Added a `udid` parameter (default: api.login.FIXED_UDID),
 #   threaded through to Login() in async_login(). Part of the fix for two
 #   HA instances (or any two clients) authenticating as the same gateway
@@ -83,7 +95,9 @@ from contextlib import asynccontextmanager
 from datetime import timedelta
 from typing import Any
 
+from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
+from homeassistant.exceptions import ConfigEntryAuthFailed
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 
 from .api.api_methods import ApiMethods
@@ -116,6 +130,7 @@ class SmileConnectCoordinator(DataUpdateCoordinator):
     def __init__(
         self,
         hass: HomeAssistant,
+        config_entry: ConfigEntry,
         host: str,
         username: str,
         password: str,
@@ -125,6 +140,7 @@ class SmileConnectCoordinator(DataUpdateCoordinator):
         super().__init__(
             hass,
             _LOGGER,
+            config_entry=config_entry,
             name="honeywell_smileconnect",
             update_interval=timedelta(seconds=interval),
         )
@@ -172,15 +188,37 @@ class SmileConnectCoordinator(DataUpdateCoordinator):
             yield self.api
 
     async def async_login(self) -> None:
-        """Perform the initial (or a re-)login and build the API client."""
+        """Perform the initial (or a re-)login and build the API client.
+
+        Raises ConfigEntryAuthFailed - not a bare ValueError - when the
+        gateway rejects the stored credentials outright
+        (Login.authorize()'s ValueError, see api/login.py). This is the
+        one login failure a user can actually fix by re-entering
+        credentials, so it is translated here rather than in
+        _async_update_data(): every caller of this method benefits,
+        including __init__.py's own direct call before the first refresh.
+        That call has no try/except of its own - previously, a stored
+        password going bad (e.g. changed on the gateway) surfaced as an
+        uncaught ValueError straight out of async_setup_entry(), landing
+        the entry in a bare SETUP_ERROR with no retry and no way for the
+        user to fix it short of removing and re-adding the integration.
+        Home Assistant's own config_entries.py already catches
+        ConfigEntryAuthFailed from async_setup_entry() and starts a reauth
+        flow automatically - see config_flow.py's async_step_reauth().
+        Any other failure (network error, timeout, malformed JSON) is not
+        a credentials problem and is left to propagate unchanged.
+        """
         login_manager = Login("http://" + self.host, self.udid)
         # Takes the lock directly rather than via async_api_call(): self.api
         # does not exist yet, and a re-login must not race an in-flight
         # request that is still using the old credentials object.
         async with self._api_lock:
-            credentials = await self.hass.async_add_executor_job(
-                login_manager.authorize, self.username, self.password
-            )
+            try:
+                credentials = await self.hass.async_add_executor_job(
+                    login_manager.authorize, self.username, self.password
+                )
+            except ValueError as err:
+                raise ConfigEntryAuthFailed(str(err)) from err
             self.api = ApiMethods(credentials, "http://" + self.host)
 
     async def _async_update_data(self) -> dict:
@@ -195,6 +233,20 @@ class SmileConnectCoordinator(DataUpdateCoordinator):
             )
             try:
                 await self.async_login()
+            except ConfigEntryAuthFailed:
+                # Must reach DataUpdateCoordinator UNCHANGED, not be
+                # downgraded to UpdateFailed by the except Exception
+                # clause below - this is the signal that starts a reauth
+                # flow (see async_login()'s own docstring). Any OTHER
+                # failure here (network, timeout) is not a credentials
+                # problem and falls through to the same UpdateFailed as a
+                # failed retry further down.
+                raise
+            except Exception as err:
+                raise UpdateFailed(
+                    f"Error communicating with gateway after re-login: {err}"
+                ) from err
+            try:
                 return await self._async_fetch_all()
             except Exception as err:
                 # Deliberately no second retry: if a cycle fails straight

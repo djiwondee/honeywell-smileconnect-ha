@@ -1,5 +1,19 @@
 """Config flow for Honeywell Smile Connect."""
 # Change log:
+# - 2026-09-27: Added async_step_reauth()/async_step_reauth_confirm() -
+#   Home Assistant starts this flow automatically when coordinator.py's
+#   async_login() raises ConfigEntryAuthFailed (bad stored credentials).
+#   Deliberately a narrower, dedicated schema (host/username/password
+#   only, via the new _credentials_schema_fields()/_build_reauth_schema())
+#   rather than reusing the full 6-field _build_schema() - a broken
+#   session has nothing to do with polling cadence, and re-showing those 3
+#   fields during what should read as "please re-enter your password" is
+#   unneeded friction. Uses the modern async_update_reload_and_abort()
+#   helper, merging into `options` (never replacing - same bug class fixed
+#   once already in OptionsFlowHandler below) and leaving `data` (and
+#   therefore CONF_UDID) completely untouched. _abort_if_unique_id_mismatch()
+#   guards against reauth silently repointing this entry at a different
+#   physical gateway.
 # - 2026-09-24: VERSION bumped 1 -> 2 (see __init__.py's async_migrate_entry
 #   for the migration itself). ConfigFlow.async_step_user now generates a
 #   random UUID once and stores it in `data` as CONF_UDID, instead of every
@@ -58,6 +72,15 @@ from .const import (
 _LOGGER = logging.getLogger(__name__)
 
 
+def _credentials_schema_fields(defaults: dict) -> dict:
+    """The 3 fields shared by the full setup schema and the reauth schema."""
+    return {
+        vol.Required(CONF_HOST, default=defaults.get(CONF_HOST, vol.UNDEFINED)): str,
+        vol.Required(CONF_USER, default=defaults.get(CONF_USER, vol.UNDEFINED)): str,
+        vol.Required(CONF_PASSWORD, default=defaults.get(CONF_PASSWORD, vol.UNDEFINED)): str,
+    }
+
+
 def _build_schema(defaults: dict | None = None) -> vol.Schema:
     """Shared schema for both the initial setup step and the options flow.
 
@@ -68,11 +91,7 @@ def _build_schema(defaults: dict | None = None) -> vol.Schema:
     defaults = defaults or {}
     return vol.Schema(
         {
-            vol.Required(CONF_HOST, default=defaults.get(CONF_HOST, vol.UNDEFINED)): str,
-            vol.Required(CONF_USER, default=defaults.get(CONF_USER, vol.UNDEFINED)): str,
-            vol.Required(
-                CONF_PASSWORD, default=defaults.get(CONF_PASSWORD, vol.UNDEFINED)
-            ): str,
+            **_credentials_schema_fields(defaults),
             vol.Optional(
                 CONF_INTERVAL, default=defaults.get(CONF_INTERVAL, DEFAULT_INTERVAL)
             ): int,
@@ -86,6 +105,16 @@ def _build_schema(defaults: dict | None = None) -> vol.Schema:
             ): int,
         }
     )
+
+
+def _build_reauth_schema(defaults: dict | None = None) -> vol.Schema:
+    """Deliberately narrower than _build_schema(): a broken session has
+    nothing to do with polling cadence, and re-showing those 3 fields
+    during what should read as "please re-enter your password" is
+    unneeded friction exactly when the user is already concerned
+    something's wrong.
+    """
+    return vol.Schema(_credentials_schema_fields(defaults or {}))
 
 
 async def validate_input(hass: core.HomeAssistant, data: dict, udid: str | None = None) -> dict:
@@ -167,6 +196,53 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 
         return self.async_show_form(
             step_id="user", data_schema=_build_schema(user_input), errors=errors
+        )
+
+    async def async_step_reauth(self, entry_data: dict) -> config_entries.ConfigFlowResult:
+        """Entry point Home Assistant calls after ConfigEntryAuthFailed
+        triggers a reauth flow (see coordinator.py's async_login()).
+        """
+        return await self.async_step_reauth_confirm()
+
+    async def async_step_reauth_confirm(
+        self, user_input: dict | None = None
+    ) -> config_entries.ConfigFlowResult:
+        reauth_entry = self._get_reauth_entry()
+        errors: dict[str, str] = {}
+        current = dict(reauth_entry.options)
+
+        if user_input is not None:
+            try:
+                info = await validate_input(
+                    self.hass, user_input, udid=reauth_entry.data.get(CONF_UDID)
+                )
+            except CannotConnect:
+                errors["base"] = "cannot_connect"
+            except InvalidAuth:
+                errors["base"] = "invalid_auth"
+            except Exception:
+                _LOGGER.exception("Unexpected exception during reauth")
+                errors["base"] = "unknown"
+            else:
+                # Guards against silently repointing this entry - with its
+                # established entity IDs, history and automations - at a
+                # DIFFERENT physical gateway if the user fumbles the host
+                # during recovery. Official HA reauth pattern.
+                await self.async_set_unique_id(info["unique_id"])
+                self._abort_if_unique_id_mismatch()
+                # Merge, never replace - same reasoning as
+                # OptionsFlowHandler below: this form only carries
+                # host/username/password, so options=user_input alone
+                # would wipe interval/ping_interval/schedule_interval back
+                # to schema defaults. `data` stays untouched (not passed
+                # at all) - CONF_UDID must never be regenerated by reauth.
+                return self.async_update_reload_and_abort(
+                    reauth_entry, options={**reauth_entry.options, **user_input}
+                )
+            current = user_input
+
+        return self.async_show_form(
+            step_id="reauth_confirm", data_schema=_build_reauth_schema(current), errors=errors
         )
 
     @staticmethod

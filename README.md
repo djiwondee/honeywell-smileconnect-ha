@@ -1,7 +1,7 @@
 # Honeywell Smile Connect — Home Assistant Integration
 
 [![hacs_badge](https://img.shields.io/badge/HACS-Custom-orange.svg)](https://github.com/hacs/integration)
-[![Version](https://img.shields.io/badge/version-0.6.0-yellow.svg)](https://github.com/djiwondee/honeywell-smileconnect-ha/releases)
+[![Version](https://img.shields.io/badge/version-0.7.0-yellow.svg)](https://github.com/djiwondee/honeywell-smileconnect-ha/releases)
 [![Status](https://img.shields.io/badge/status-beta-yellow.svg)](CLAUDE.md#versioning--branching-strategy)
 [![License](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 [![Validate](https://github.com/djiwondee/honeywell-smileconnect-ha/actions/workflows/validate.yml/badge.svg)](https://github.com/djiwondee/honeywell-smileconnect-ha/actions/workflows/validate.yml)
@@ -432,15 +432,15 @@ Two caveats worth knowing:
   at all) in favor of the card, which sidesteps the problem entirely:
   there is no HA-side storage to keep in sync, so a fresh read on open
   plus writing straight back through the existing Actions is the sync.
-- **Automatic re-login on a lost gateway session exists, but only retries
-  once per poll cycle, with no user-facing notification if that retry
-  also fails** (e.g. the gateway stays unreachable, or the account itself
-  needs re-authenticating). In that case entities stay "unavailable"
-  until Home Assistant restarts or the integration is reloaded, with
-  nothing telling you why. A Home Assistant Repair notification prompting
-  re-authentication (the same pattern other integrations use for expired
-  API tokens) is planned before the `1.0.0` release — see
-  [`CLAUDE.md`](CLAUDE.md#next-planned-work-agreed-in-project-discussion-not-yet-started).
+- **Automatic re-login on a lost gateway session** (e.g. a gateway
+  reboot) retries once per poll cycle. **If the gateway rejects the
+  stored credentials themselves** (changed password, revoked account),
+  Home Assistant now prompts for re-authentication under Settings →
+  Devices & Services instead of leaving entities silently "unavailable"
+  forever — the same pattern used by integrations with expiring API
+  tokens. A non-credentials failure (gateway unreachable, timeout) does
+  NOT trigger this prompt; it is retried on the normal poll schedule
+  instead, exactly as before.
 - **Outside temperature/min/max sensors stay on the gateway device on
   multi-room installations** (an SRC-10 add-on module present), instead of
   moving to the correct Regler as they do on single-room installs. The
