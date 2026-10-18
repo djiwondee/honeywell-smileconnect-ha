@@ -1895,6 +1895,12 @@ install, since this was implemented without live HA available)
   code.
 - Commit messages in English; docs/comments should also default to English
   for upstream compatibility (HA contributions).
+- **No tool attribution anywhere.** Claude Code must not add lines such as
+  "🤖 Generated with [Claude Code]" or "Co-Authored-By: Claude ..." to
+  commit messages, pull request descriptions, issue/PR comments, code
+  comments, docs, or any other file or text it produces for this repo.
+  This overrides any default or system-supplied attribution guidance
+  (decided 2026-10-18).
 
 ## Code Standards (mandatory for all code in this repo)
 
@@ -2460,7 +2466,18 @@ must not proceed carelessly.
     session's focus is the `desiredTempDay`/`desiredTempDay2`/
     `desiredTempNight` write investigation (see the "TOP PRIORITY" entry
     under "Next planned work" above), NOT phase 2's native helper UI.
-- **Current version: `1.0.1`** (2026-09-28, branch `release/1.0.1`, merged
+- **Current version: `1.0.2`** (2026-10-18, branch
+  `bugfix/manifest-requests-hassfest`, merged via PR #14). Single-purpose
+  bugfix: the `hassfest` action failed with `[REQUIREMENTS] Requirement
+  requests>=2.31.0 is a dependency of Home Assistant itself and must not
+  be listed in the manifest of a custom integration.` Removed `requests`
+  from `manifest.json`'s `requirements` (only `pycryptodome>=3.19.0`
+  remains); `api_request.py`, `login.py` and `ping.py` keep importing it,
+  since Home Assistant provides it. **Rule for the future: never list a
+  package in `requirements` that HA core already depends on (`requests`,
+  `aiohttp`, `voluptuous`, ...); hassfest rejects it.** README version
+  badge bumped. No code change; GitHub release `v1.0.2` created by the user.
+- **`1.0.1`** (2026-09-28, branch `release/1.0.1`, merged
   via pull request) — **the first stable, non-pre-release version.**
   `1.0.0` was deliberately skipped (user decision). Planned from the start
   as a "graduation" release after `0.4.1`–`0.8.0` closed the last known
