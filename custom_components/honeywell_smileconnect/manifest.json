@@ -15,10 +15,9 @@
   "iot_class": "local_polling",
   "issue_tracker": "https://github.com/djiwondee/honeywell-smileconnect-ha/issues",
   "requirements": [
-    "pycryptodome>=3.19.0",
-    "requests>=2.31.0"
+    "pycryptodome>=3.19.0"
   ],
   "ssdp": [],
-  "version": "1.0.1",
+  "version": "1.0.2",
   "zeroconf": []
 }
