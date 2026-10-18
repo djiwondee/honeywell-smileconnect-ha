@@ -1895,6 +1895,12 @@ install, since this was implemented without live HA available)
   code.
 - Commit messages in English; docs/comments should also default to English
   for upstream compatibility (HA contributions).
+- **No tool attribution anywhere.** Claude Code must not add lines such as
+  "🤖 Generated with [Claude Code]" or "Co-Authored-By: Claude ..." to
+  commit messages, pull request descriptions, issue/PR comments, code
+  comments, docs, or any other file or text it produces for this repo.
+  This overrides any default or system-supplied attribution guidance
+  (decided 2026-10-18).
 
 ## Code Standards (mandatory for all code in this repo)
 
