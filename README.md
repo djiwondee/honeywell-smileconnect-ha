@@ -32,16 +32,14 @@ real heating behaviour in your home.
 
 ## Status
 
-Stable — `1.0.1` is the first regular (non-pre-release) version. Login,
-room/climate control, scene (preset) activation, the schedule card, and all
-six custom Actions below have been live-verified against a real SCN-10
-gateway and a real Home Assistant instance.
+Stable. Login, room/climate control, scene (preset) activation, the schedule
+card, and all six custom Actions below have been live-verified against a real
+SCN-10 gateway and a real Home Assistant instance.
 
 <img width="1023" height="478" alt="image" src="https://github.com/user-attachments/assets/4dcaf383-89d6-43ba-8448-f43c59e6a66a" />
 
-Coming from a `0.x` version?
-See [Upgrading from 0.x](#upgrading-from-0x). See [`CLAUDE.md`](CLAUDE.md) for
-the full architecture/history and [`docs/protocol.md`](docs/protocol.md) /
+See [`CLAUDE.md`](CLAUDE.md) for the full architecture/history and
+[`docs/protocol.md`](docs/protocol.md) /
 [`docs/switching-times-api.md`](docs/switching-times-api.md) for the
 reverse-engineered wire protocol.
 
@@ -507,24 +505,6 @@ Two caveats worth knowing:
   Regler a reading came from once more than one exists, and there is no
   SRC-10 hardware available to verify the right behavior against — see
   [`CLAUDE.md`](CLAUDE.md) for the full reasoning.
-
-## Upgrading from 0.x
-
-`1.0.1` is the first stable release (there is no `1.0.0`). If you used a
-`0.x` version, check your automations, scripts, and dashboards for these
-changes — everything else upgrades in place without losing entities or
-history:
-
-| Since | What changed | Update to |
-|---|---|---|
-| `0.6.0` | `set_preset_mode_with_duration`: `preset_mode` values are lowercase | `preset_mode: boost` instead of `Boost` (likewise `party`, `holiday`, `leave`) |
-| `0.6.0` | `set_schedule_room_weekday`: `slot_N_type` values are named | `comfort_hi` / `comfort_lo` / `night` instead of `H` / `L` |
-| `0.6.0` | Schedule sensor is no longer in the "Diagnostic" category | Nothing to do — it just moves on the device page |
-| `0.8.0` | `climate.<room>` `preset_mode` state and `climate.set_preset_mode` values are lowercase | `preset_mode: boost` instead of `Boost`, e.g. in state conditions and triggers |
-| `1.0.1` | Minimum Home Assistant version raised to 2024.11 | Update Home Assistant first |
-
-The full-week `schedule` object of `get_schedule_room` / `set_schedule_room`
-still uses the single letters `H` / `L` / `N` — unchanged.
 
 ## Development
 
