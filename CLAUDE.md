@@ -6,7 +6,9 @@ no session has to start from zero.
 
 ## Project Goal
 
-A HACS-compatible Home Assistant integration for the **Honeywell Smile
+A Home Assistant custom integration, distributed through the Home Assistant
+Marketplace (the built-in successor of HACS since HA 2026.11; still
+installable via HACS on older versions), for the **Honeywell Smile
 Connect** heating gateway (model **SCN-10**). This is an OEM/rebranded
 variant of the HeatApp system by EbV GmbH, but it uses an **incompatible**
 protocol (different cryptography, different request signing). For that
@@ -2466,7 +2468,46 @@ must not proceed carelessly.
     session's focus is the `desiredTempDay`/`desiredTempDay2`/
     `desiredTempNight` write investigation (see the "TOP PRIORITY" entry
     under "Next planned work" above), NOT phase 2's native helper UI.
-- **Current version: `1.0.2`** (2026-10-18, branch
+- **Current version: `1.0.3`** (2026-11-06, branch
+  `feature/marketplace-support`, merged via PR). Marketplace polish only:
+  no integration code, behaviour, entity or Action changed. Home
+  Assistant 2026.11 ships HACS built in as the **Marketplace**
+  (`Settings → Marketplace`, core integration `marketplace`). It reads the
+  same catalog (`hacs/default`), the same `hacs.json` and the same
+  `hacs/action` checks, so the repository was already compatible; this
+  release only adjusts metadata and docs. Contents:
+  - `hacs.json`: dropped `render_readme` (not in the Marketplace's
+    `hacs.json` reference and ignored) and `zip_release: false` (the
+    default). Kept `name` and the `homeassistant` floor `2024.11.0`, which
+    the Marketplace enforces before installing. Releases deliberately stay
+    source-based: switching to `zip_release` would change how every version
+    is downloaded and needs a release asset per tag, which is not polish.
+  - `README.md`: Marketplace badge instead of "HACS Custom", new
+    "Via the Marketplace (2026.11 and newer)" install section with the
+    `marketplace_repository` My Home Assistant button, a "Coming from HACS?"
+    note, and the old HACS steps kept for 2024.11 to 2026.10. Behaviour
+    documented per the Marketplace publisher docs: an integration with a
+    config flow loads right away on first install, an update asks for a
+    restart through a repair.
+  - `manifest.json` + README version badge → `1.0.3`.
+  - **Preparing the `hacs/default` submission** (the catalog the
+    Marketplace shows; checked 2026-11-06): GitHub description, topics and
+    Issues are set, the repo is public and not archived, `hacs.json` and
+    the README are in the root, the brand icons live in
+    `custom_components/honeywell_smileconnect/brand/`, and `validate.yml`
+    runs `hacs/action` (category `integration`) and hassfest without any
+    `ignore`. Remaining steps are the user's: publish `v1.0.3` as a full
+    (non-pre-release) GitHub release, confirm both CI jobs are green on
+    it, then open the PR to `hacs/default` from the repository owner's personal
+    GitHub account, as the catalog requires. Once
+    listed, switch the README badge to "Marketplace Default" and shorten
+    the install section to "search for it in the Marketplace".
+  - Practical note for the maintainer's own instance: an installation that
+    reports a commit hash as its installed version (seen here as
+    `7c84222` while the latest release was `v1.0.2`) is not offered the
+    release as an update. Reinstall the release tag once through the
+    Marketplace.
+- **`1.0.2`** (2026-10-18, branch
   `bugfix/manifest-requests-hassfest`, merged via PR #14). Single-purpose
   bugfix: the `hassfest` action failed with `[REQUIREMENTS] Requirement
   requests>=2.31.0 is a dependency of Home Assistant itself and must not
