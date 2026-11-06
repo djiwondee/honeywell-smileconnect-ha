@@ -23,7 +23,8 @@ platform of which Smile Connect is an OEM-rebranded variant). "Honeywell" and
 integration targets.
 
 This integration is **not compatible** with standard HeatApp gateways or the
-existing `heatapp_local` / `py-heatapp-de` projects — Honeywell's variant
+existing [`heatapp_local`](https://github.com/sfstar/hass-heatapp_local) /
+[`py-heatapp-de`](https://github.com/sfstar/py-heatapp-de) projects — Honeywell's variant
 uses a different authentication and request-signing protocol. See
 [`docs/protocol.md`](docs/protocol.md) for the technical details.
 
