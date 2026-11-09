@@ -1,5 +1,9 @@
 """Sensor platform for Honeywell Smile Connect (weather + ping diagnostics)."""
 # Change log:
+# - 2026-11-09: Pass the gateway's device-registry id
+#   (SmileConnectData.gateway_device_id) into device.regler_device_info(),
+#   which now links regler devices via `via_device_id` - HA deprecated
+#   `via_device` (removal in 2027.8). See device.py's change log.
 # - 2026-09-25 (b): Reverted the entity_category change below (a) after
 #   live testing broke entity setup entirely: HomeAssistantError, "Entity
 #   ... cannot be added as the entity category is set to config" -
@@ -175,6 +179,7 @@ async def async_setup_entry(
             unique_id_suffix="outside_temperature",
             room_id=weather_room_id,
             room_name=weather_room_name,
+            gateway_device_id=data.gateway_device_id,
         ),
         SmileConnectWeatherSensor(
             data.coordinator,
@@ -184,6 +189,7 @@ async def async_setup_entry(
             unique_id_suffix="outside_temperature_min",
             room_id=weather_room_id,
             room_name=weather_room_name,
+            gateway_device_id=data.gateway_device_id,
         ),
         SmileConnectWeatherSensor(
             data.coordinator,
@@ -193,6 +199,7 @@ async def async_setup_entry(
             unique_id_suffix="outside_temperature_max",
             room_id=weather_room_id,
             room_name=weather_room_name,
+            gateway_device_id=data.gateway_device_id,
         ),
         SmileConnectPingResponseTimeSensor(data.ping_coordinator, data.unique_id),
     ]
@@ -203,12 +210,21 @@ async def async_setup_entry(
         for scene in TIMED_PRESET_SCENE_NAMES:
             entities.append(
                 SmileConnectPresetDurationSensor(
-                    data.coordinator, data.unique_id, room_id, room_name, scene
+                    data.coordinator,
+                    data.unique_id,
+                    room_id,
+                    room_name,
+                    scene,
+                    gateway_device_id=data.gateway_device_id,
                 )
             )
         entities.append(
             SmileConnectRoomScheduleSensor(
-                data.schedule_coordinator, data.unique_id, room_id, room_name
+                data.schedule_coordinator,
+                data.unique_id,
+                room_id,
+                room_name,
+                gateway_device_id=data.gateway_device_id,
             )
         )
 
@@ -244,10 +260,14 @@ class SmileConnectWeatherSensor(CoordinatorEntity, SensorEntity):
         unique_id_suffix: str,
         room_id: object | None = None,
         room_name: str | None = None,
+        gateway_device_id: str | None = None,
     ) -> None:
         super().__init__(coordinator)
         self._weather_key = weather_key
         self._gateway_unique_id = gateway_unique_id
+        # Only used when room_id is set (single-room install, sensor sits
+        # on the regler device); the gateway device itself needs no link.
+        self._gateway_device_id = gateway_device_id
         self._room_id = room_id
         self._room_name = room_name
         self._attr_translation_key = translation_key
@@ -256,7 +276,9 @@ class SmileConnectWeatherSensor(CoordinatorEntity, SensorEntity):
     @property
     def device_info(self):
         if self._room_id is not None:
-            return device.regler_device_info(self._gateway_unique_id, self._room_id, self._room_name)
+            return device.regler_device_info(
+                self._gateway_unique_id, self._room_id, self._room_name, self._gateway_device_id
+            )
         return device.gateway_device_info(self._gateway_unique_id)
 
     @property
@@ -323,9 +345,12 @@ class SmileConnectPresetDurationSensor(CoordinatorEntity, SensorEntity):
         room_id,
         room_name: str,
         scene: SceneName,
+        *,
+        gateway_device_id: str,
     ) -> None:
         super().__init__(coordinator)
         self._gateway_unique_id = gateway_unique_id
+        self._gateway_device_id = gateway_device_id
         self._room_id = room_id
         self._room_name = room_name
         self._scene = scene
@@ -339,7 +364,9 @@ class SmileConnectPresetDurationSensor(CoordinatorEntity, SensorEntity):
         # info()), not the gateway - these are framed as a companion to
         # the room's preset control, unlike the gateway-wide weather
         # sensors above.
-        return device.regler_device_info(self._gateway_unique_id, self._room_id, self._room_name)
+        return device.regler_device_info(
+            self._gateway_unique_id, self._room_id, self._room_name, self._gateway_device_id
+        )
 
     @property
     def native_value(self):
@@ -386,9 +413,12 @@ class SmileConnectRoomScheduleSensor(CoordinatorEntity, SensorEntity):
         gateway_unique_id: str,
         room_id,
         room_name: str,
+        *,
+        gateway_device_id: str,
     ) -> None:
         super().__init__(coordinator)
         self._gateway_unique_id = gateway_unique_id
+        self._gateway_device_id = gateway_device_id
         self._room_id = room_id
         self._room_name = room_name
         self._attr_unique_id = f"{DOMAIN}_room_{room_id}_schedule"
@@ -398,7 +428,9 @@ class SmileConnectRoomScheduleSensor(CoordinatorEntity, SensorEntity):
         # The room's own Regler, same device as its climate entity and its
         # temperature sliders - a schedule is a property of the room, not
         # of the gateway.
-        return device.regler_device_info(self._gateway_unique_id, self._room_id, self._room_name)
+        return device.regler_device_info(
+            self._gateway_unique_id, self._room_id, self._room_name, self._gateway_device_id
+        )
 
     @property
     def _room_data(self) -> dict | None:

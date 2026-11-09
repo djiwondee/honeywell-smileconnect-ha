@@ -1,5 +1,10 @@
 """The Honeywell Smile Connect integration."""
 # Change log:
+# - 2026-11-09: Keep the gateway device's registry id (returned by the
+#   explicit async_get_or_create() call, now made before SmileConnectData
+#   is built) and expose it as SmileConnectData.gateway_device_id, so the
+#   regler devices can link to it via via_device_id. HA deprecated
+#   via_device (removal in 2027.8) - see device.py's change log.
 # - 2026-09-27: Pass config_entry into SmileConnectCoordinator() so it can
 #   trigger a reauth flow when the gateway session cannot be recovered
 #   with the stored credentials - see coordinator.py's/config_flow.py's
@@ -379,6 +384,9 @@ class SmileConnectData:
     ping_coordinator: SmileConnectPingCoordinator
     schedule_coordinator: SmileConnectScheduleCoordinator
     unique_id: str
+    # Device-registry id of the gateway device, created in async_setup_entry()
+    # before any platform runs. Regler devices link to it via via_device_id.
+    gateway_device_id: str
 
 
 async def async_migrate_entry(hass: HomeAssistant, config_entry: ConfigEntry) -> bool:
@@ -445,18 +453,6 @@ async def async_setup_entry(hass: HomeAssistant, config_entry: ConfigEntry) -> b
     # next cycle.
     await schedule_coordinator.async_refresh()
 
-    # config_entry.unique_id was set during the config flow via
-    # async_set_unique_id() using /api/ping's "uniqueid" (or a host-based
-    # fallback) - see config_flow.py validate_input(). It is never None by
-    # the time an entry exists.
-    hass.data[DOMAIN][config_entry.entry_id] = SmileConnectData(
-        coordinator=coordinator,
-        ping_coordinator=ping_coordinator,
-        schedule_coordinator=schedule_coordinator,
-        unique_id=config_entry.unique_id,
-    )
-    config_entry.async_on_unload(config_entry.add_update_listener(_update_listener))
-
     # Explicitly create the gateway device before any platform runs. Without
     # this, it only ever came into being implicitly - whichever of
     # sensor.py/binary_sensor.py happened to set up first - and climate.py's
@@ -467,10 +463,27 @@ async def async_setup_entry(hass: HomeAssistant, config_entry: ConfigEntry) -> b
     # exact same identifiers those platforms already use for their own
     # device_info, so this is a genuine no-op for existing installations
     # (async_get_or_create matches by identifiers) - no migration needed.
-    dr.async_get(hass).async_get_or_create(
+    #
+    # Its registry id is kept: since HA 2026.9 a sub-device links to its hub
+    # by that id (via_device_id) instead of by identifier tuple (via_device,
+    # deprecated, removed in HA 2027.8) - see device.regler_device_info().
+    gateway_device = dr.async_get(hass).async_get_or_create(
         config_entry_id=config_entry.entry_id,
         **device.gateway_device_info(config_entry.unique_id),
     )
+
+    # config_entry.unique_id was set during the config flow via
+    # async_set_unique_id() using /api/ping's "uniqueid" (or a host-based
+    # fallback) - see config_flow.py validate_input(). It is never None by
+    # the time an entry exists.
+    hass.data[DOMAIN][config_entry.entry_id] = SmileConnectData(
+        coordinator=coordinator,
+        ping_coordinator=ping_coordinator,
+        schedule_coordinator=schedule_coordinator,
+        unique_id=config_entry.unique_id,
+        gateway_device_id=gateway_device.id,
+    )
+    config_entry.async_on_unload(config_entry.add_update_listener(_update_listener))
 
     await hass.config_entries.async_forward_entry_setups(config_entry, PLATFORMS)
     return True
