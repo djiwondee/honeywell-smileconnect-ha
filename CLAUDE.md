@@ -740,6 +740,9 @@ through, never deleted:
 - Housekeeping: `const.py`'s `ROOM_STATUS_*` constants are no longer read
   by `climate.py` (since `0.0.18`) — keep as protocol documentation or
   remove, decide when next touching that file.
+- Mixer operation/heating mode ("Automatik"): no known endpoint is
+  confirmed to report it yet. `scripts/manual_probe_operation_mode.py`
+  is the read-only probe for it; its result has not been recorded here.
 
 - ~~**Climate entity `preset_mode` STATE cannot be localized without a
   breaking change - deferred, needs its own decision**~~ **RESOLVED
@@ -1412,7 +1415,11 @@ manual_probe_leave_duration_contradiction.py` / `scripts/
 manual_probe_leave_formula_ceiling.py` / `scripts/
 manual_probe_leave_single_value.py` family (also 2026-09-09) follows it
 for the `scene/set`/`scene/duration` investigation — see "Still untested /
-open" above. Lessons from that round worth calling out explicitly for
+open" above. `scripts/manual_probe_operation_mode.py` (2026-10-29) is a
+read-only probe in the same style: it calls the known read-only
+endpoints (plus any paths given as arguments) and lists every
+response field that looks like an operation/heating mode (the mixer's
+"Automatik" state, which the Smile App cannot set). Lessons from that round worth calling out explicitly for
 future manual scripts: (1) **check `api_request.py`'s/`api_methods.py`'s
 own documented gateway quirks (e.g. the empty-list hang) before writing a
 test that deliberately exercises an edge case** — a diagnostic script
