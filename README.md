@@ -1,7 +1,7 @@
 # Honeywell Smile Connect — Home Assistant Integration
 
 [![Marketplace](https://img.shields.io/badge/Marketplace-Custom-orange.svg)](https://www.home-assistant.io/integrations/marketplace/)
-[![Version](https://img.shields.io/badge/version-1.0.5-blue.svg)](https://github.com/djiwondee/honeywell-smileconnect-ha/releases)
+[![Version](https://img.shields.io/badge/version-1.0.6-blue.svg)](https://github.com/djiwondee/honeywell-smileconnect-ha/releases)
 [![Status](https://img.shields.io/badge/status-stable-brightgreen.svg)](CLAUDE.md#versioning--branching-strategy)
 [![License](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 [![Validate](https://github.com/djiwondee/honeywell-smileconnect-ha/actions/workflows/validate.yml/badge.svg)](https://github.com/djiwondee/honeywell-smileconnect-ha/actions/workflows/validate.yml)

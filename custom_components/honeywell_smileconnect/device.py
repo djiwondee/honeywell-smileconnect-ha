@@ -18,6 +18,13 @@ device, each regler is a sub-device linked to it (`via_device_id`, or
 `via_device` on HA < 2026.9).
 """
 # Change log:
+# - 2026-11-09 (b): Added entity_unique_id() and migrated_unique_id().
+#   Entity unique IDs used to be "honeywell_smileconnect_<suffix>" with no
+#   gateway in them, so a second gateway's entities collided with the
+#   first's and HA dropped them as duplicates (raised in the HACS review).
+#   They are now "<gateway unique_id>_<suffix>", the same anchor the
+#   device identifiers already use; migrated_unique_id() maps the old
+#   format for __init__.py's async_migrate_entry().
 # - 2026-11-09: regler_device_info() takes the gateway's device-registry id
 #   and links to it via `via_device_id` on HA >= 2026.9. HA deprecated the
 #   identifier-tuple `via_device` (removal announced for
@@ -42,6 +49,34 @@ GATEWAY_NAME = "Smile Connect Gateway"
 GATEWAY_MODEL = "Smile Connect (SCN-10)"
 REGLER_MODEL = "SDC Regler"
 MANUFACTURER = "Honeywell"
+
+# Prefix of the pre-1.0.6 entity unique IDs, which were not scoped to a
+# gateway. Only used to recognise them for migration.
+_LEGACY_UNIQUE_ID_PREFIX = f"{DOMAIN}_"
+
+
+def entity_unique_id(gateway_unique_id: str, suffix: str) -> str:
+    """Unique ID of an entity, scoped to its gateway.
+
+    `suffix` names the entity within one gateway (e.g. "connectivity",
+    "room_1", "room_1_schedule"). Prefixing the gateway's unique_id - the
+    same anchor as the device identifiers below - keeps two config entries
+    for two gateways from producing the same entity unique IDs.
+    """
+    return f"{gateway_unique_id}_{suffix}"
+
+
+def migrated_unique_id(old_unique_id: str, gateway_unique_id: str) -> str | None:
+    """New-format unique ID for a pre-1.0.6 one, or None if already new.
+
+    Old IDs were "honeywell_smileconnect_<suffix>"; the suffix carries over
+    unchanged, so every entity keeps its identity (entity_id, history,
+    customisations) through the migration.
+    """
+    if not old_unique_id.startswith(_LEGACY_UNIQUE_ID_PREFIX):
+        return None
+    suffix = old_unique_id[len(_LEGACY_UNIQUE_ID_PREFIX):]
+    return entity_unique_id(gateway_unique_id, suffix)
 
 
 def gateway_device_info(gateway_unique_id: str) -> dict:

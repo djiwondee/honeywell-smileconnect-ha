@@ -1,5 +1,13 @@
 """The Honeywell Smile Connect integration."""
 # Change log:
+# - 2026-11-09 (unique IDs): async_migrate_entry() gained a 2.1 -> 2.2 step
+#   (ConfigFlow.MINOR_VERSION) that rewrites the entry's entity unique IDs
+#   from "honeywell_smileconnect_<suffix>" to "<gateway unique_id>_<suffix>"
+#   with er.async_migrate_entries(), so existing installs keep their
+#   entities, entity_ids and history. The old IDs were not scoped to a
+#   gateway, so a second gateway's entities were dropped as duplicates.
+#   Minor version on purpose: a downgrade keeps loading the entry. Raised
+#   in the HACS review.
 # - 2026-11-09: Keep the gateway device's registry id (returned by the
 #   explicit async_get_or_create() call, now made before SmileConnectData
 #   is built) and expose it as SmileConnectData.gateway_device_id, so the
@@ -144,8 +152,9 @@ from homeassistant.components.http import StaticPathConfig
 from homeassistant.components.lovelace.const import DOMAIN as LOVELACE_DOMAIN
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import Platform
-from homeassistant.core import HomeAssistant
+from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers import device_registry as dr
+from homeassistant.helpers import entity_registry as er
 
 from . import device
 from .api.login import FIXED_UDID
@@ -399,13 +408,66 @@ async def async_migrate_entry(hass: HomeAssistant, config_entry: ConfigEntry) ->
     entry, unlike a lazy check-and-backfill inside async_setup_entry would
     be. See const.py's change log for why this migration exists at all.
     """
+    if config_entry.version > 2:
+        # Written by a newer release with an incompatible format.
+        return False
+
     if config_entry.version == 1:
         hass.config_entries.async_update_entry(
             config_entry,
             data={**config_entry.data, CONF_UDID: str(uuid.uuid4())},
             version=2,
+            minor_version=1,
         )
+
+    if config_entry.minor_version < 2:
+        await _async_migrate_entity_unique_ids(hass, config_entry)
+        hass.config_entries.async_update_entry(config_entry, minor_version=2)
+
     return True
+
+
+async def _async_migrate_entity_unique_ids(hass: HomeAssistant, config_entry: ConfigEntry) -> None:
+    """Scope this entry's entity unique IDs to its gateway (2.1 -> 2.2).
+
+    Only IDs still in the old "honeywell_smileconnect_<suffix>" format are
+    touched, so running this again is harmless. If the new ID is somehow
+    taken already, that entity is left alone and logged rather than
+    aborting the whole migration - HA raises on a duplicate unique_id.
+    """
+    gateway_unique_id = config_entry.unique_id
+    if gateway_unique_id is None:
+        # Every entry gets a unique_id in the config flow; without one
+        # there is nothing to anchor the new IDs to.
+        _LOGGER.warning(
+            "Config entry %s has no unique_id, entity unique IDs not migrated",
+            config_entry.entry_id,
+        )
+        return
+
+    registry = er.async_get(hass)
+
+    @callback
+    def _migrate(entity_entry: er.RegistryEntry) -> dict | None:
+        new_unique_id = device.migrated_unique_id(entity_entry.unique_id, gateway_unique_id)
+        if new_unique_id is None:
+            return None
+        if registry.async_get_entity_id(entity_entry.domain, DOMAIN, new_unique_id):
+            _LOGGER.warning(
+                "Not migrating %s: unique_id %s is already in use",
+                entity_entry.entity_id,
+                new_unique_id,
+            )
+            return None
+        _LOGGER.debug(
+            "Migrating %s unique_id %s -> %s",
+            entity_entry.entity_id,
+            entity_entry.unique_id,
+            new_unique_id,
+        )
+        return {"new_unique_id": new_unique_id}
+
+    await er.async_migrate_entries(hass, config_entry.entry_id, _migrate)
 
 
 async def async_setup_entry(hass: HomeAssistant, config_entry: ConfigEntry) -> bool:

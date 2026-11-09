@@ -1,4 +1,7 @@
 # Change log:
+# - 2026-11-09: Added TestNoSecretsInDebugLog - the challenge and login
+#   responses must never reach the log with their tokens (see
+#   api/login.py's change log; raised in the HACS review).
 # - 2026-09-24: Added TestUdidPassthrough - the direct regression test for
 #   Login() no longer hardcoding FIXED_UDID into every Credentials it
 #   builds (see api/login.py's own change log). Nothing before this would
@@ -19,6 +22,7 @@ catches regressions in the AES/PKCS7 handling without needing any secret.
 from __future__ import annotations
 
 import base64
+import logging
 from unittest.mock import patch
 
 from Crypto.Cipher import AES
@@ -160,3 +164,43 @@ class TestDecryptDevicetokenRoundTrip:
             assert result != original
         except (ValueError, UnicodeDecodeError):
             pass  # expected: wrong key corrupts padding or produces invalid UTF-8
+
+
+class TestNoSecretsInDebugLog:
+    """Neither login step may log its token-bearing response in full."""
+
+    def test_challenge_token_is_not_logged(self, caplog):
+        fixture = load_fixture("challenge_response.json")
+        login = Login("http://192.168.1.132")
+        caplog.set_level(logging.DEBUG)
+
+        with patch("requests.post", return_value=_FakeResponse(fixture)):
+            login._request_challenge_token(type("Creds", (), {"udid": FIXED_UDID})())
+
+        assert fixture["devicetoken"] not in caplog.text
+
+    def test_encrypted_devicetoken_is_not_logged(self, caplog):
+        fixture = load_fixture("login_response.json")
+        login = Login("http://192.168.1.132")
+        credentials = type(
+            "Creds",
+            (),
+            {
+                "udid": FIXED_UDID,
+                "username": "someuser",
+                "password": "somepass",
+                "device_token": "sometoken",
+            },
+        )()
+        caplog.set_level(logging.DEBUG)
+
+        # The real fixture's token cannot be decrypted without the real
+        # password, so decryption is stubbed - only the logging matters here.
+        with (
+            patch("requests.post", return_value=_FakeResponse(fixture)),
+            patch.object(Login, "_decrypt_devicetoken", return_value="plain"),
+        ):
+            login._login(credentials)
+
+        assert fixture["devicetoken_encrypted"] not in caplog.text
+        assert "login response" in caplog.text

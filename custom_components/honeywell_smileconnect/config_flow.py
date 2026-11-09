@@ -1,5 +1,7 @@
 """Config flow for Honeywell Smile Connect."""
 # Change log:
+# - 2026-11-09: MINOR_VERSION = 2 for the gateway-scoped entity unique IDs
+#   (migration in __init__.py's async_migrate_entry()).
 # - 2026-09-27: Added async_step_reauth()/async_step_reauth_confirm() -
 #   Home Assistant starts this flow automatically when coordinator.py's
 #   async_login() raises ConfigEntryAuthFailed (bad stored credentials).
@@ -165,6 +167,10 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     """Handle a config flow for Honeywell Smile Connect."""
 
     VERSION = 2
+    # 2.2 (1.0.6): entity unique IDs are scoped to the gateway - see
+    # __init__.py's async_migrate_entry(). A minor bump, so an older
+    # release can still load the entry after a downgrade.
+    MINOR_VERSION = 2
 
     async def async_step_user(self, user_input=None):
         if user_input is None:
