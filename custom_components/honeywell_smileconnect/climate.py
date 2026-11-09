@@ -1,5 +1,14 @@
 """Climate platform for Honeywell Smile Connect."""
 # Change log:
+# - 2026-11-09 (native temps): HA 2026.11 deprecated the climate entity's
+#   temperature_unit/current_temperature/target_temperature in favour of
+#   native_* (removal in 2027.11) and logged a warning for each. The entity
+#   now provides the native_* names (2026.11+ uses them, no warning) and
+#   keeps the old names as aliases for HA before 2026.11, which has no
+#   native_* API (checked against the core tags: absent in 2026.10.0,
+#   present in 2026.11.0). No version switch needed: a class providing both
+#   is not warned about. min_temp/max_temp/target_temperature_step are not
+#   deprecated and are unchanged.
 # - 2026-11-09: Pass the gateway's device-registry id
 #   (SmileConnectData.gateway_device_id) into device.regler_device_info(),
 #   which now links regler devices via `via_device_id` - HA deprecated
@@ -671,6 +680,14 @@ class SmileConnectClimate(CoordinatorEntity, ClimateEntity):
     # comment for why "thermostat" (not the German-specific "Regler") was
     # chosen for this particular label.
     _attr_translation_key = CLIMATE_TRANSLATION_KEY_THERMOSTAT
+    # HA 2026.11 renamed the temperature API to native_* (old names stop
+    # working in 2027.11); HA before 2026.11 only knows the old names. Both
+    # are provided: when a class provides the native name, 2026.11+ uses it
+    # and logs no deprecation warning, even though the old name is present
+    # too (homeassistant.helpers.deprecation.migrate_deprecated_entity_
+    # members). Older HA ignores the native_* names. Drop the old names
+    # (here and below) once hacs.json's floor is >= 2026.11.
+    _attr_native_temperature_unit = UnitOfTemperature.CELSIUS
     _attr_temperature_unit = UnitOfTemperature.CELSIUS
     _attr_target_temperature_step = 0.5
     _attr_supported_features = (
@@ -765,7 +782,7 @@ class SmileConnectClimate(CoordinatorEntity, ClimateEntity):
         )
 
     @property
-    def current_temperature(self):
+    def native_current_temperature(self):
         # This gateway's room data does not always include actualTemperature
         # (observed on a single-zone "Regler MK1" installation with no
         # dedicated room sensor) - fall back to None (HA renders as unknown)
@@ -773,8 +790,14 @@ class SmileConnectClimate(CoordinatorEntity, ClimateEntity):
         return self._room_data.get("actualTemperature")
 
     @property
-    def target_temperature(self):
+    def native_target_temperature(self):
         return self._room_data.get("desiredTemperature")
+
+    # Pre-2026.11 names, kept for HA versions without the native_* API (see
+    # _attr_temperature_unit above): plain aliases, so both names always
+    # return the same value. Remove once hacs.json's floor is >= 2026.11.
+    current_temperature = native_current_temperature
+    target_temperature = native_target_temperature
 
     @property
     def min_temp(self):

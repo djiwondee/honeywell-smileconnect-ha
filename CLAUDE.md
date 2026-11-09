@@ -2477,8 +2477,40 @@ must not proceed carelessly.
     session's focus is the `desiredTempDay`/`desiredTempDay2`/
     `desiredTempNight` write investigation (see the "TOP PRIORITY" entry
     under "Next planned work" above), NOT phase 2's native helper UI.
-- **Current version: `1.0.4`** (2026-11-09, branch
-  `bugfix/via-device-id`, merged via PR). Bugfix: HA logged, once each
+- **Current version: `1.0.5`** (2026-11-09, branch
+  `bugfix/climate-native-temperature`, merged via PR #19). Bugfix, no
+  behaviour change. **The `v1.0.5` release also ships `1.0.4`'s
+  `via_device` → `via_device_id` fix** (entry below), which was never
+  released on its own. HA 2026.11 renamed the climate entity's
+  temperature API (`temperature_unit`/`current_temperature`/
+  `target_temperature` → `native_*`; the old names stop working in
+  2027.11) and logged one deprecation warning per old name for
+  `SmileConnectClimate`. Checked against the core tags: the `native_*`
+  names are absent in `2026.10.0` and present in `2026.11.0` (the climate
+  base class moved to `climate/entity.py` there). **No version switch
+  needed**, unlike `device._SUPPORTS_VIA_DEVICE_ID` in `1.0.4`: HA's
+  `helpers.deprecation.migrate_deprecated_entity_members()` skips a class
+  that provides the native name, even when it also provides the old one.
+  So `climate.py` now provides `_attr_native_temperature_unit`,
+  `native_current_temperature` and `native_target_temperature`, and keeps
+  the old names as plain aliases for HA before 2026.11 (which ignores the
+  `native_*` names). Drop the aliases once `hacs.json`'s floor is
+  >= 2026.11. `min_temp`/`max_temp`/`target_temperature_step` are not
+  deprecated in 2026.11 and are unchanged; `target_temperature_high/low`
+  are deprecated too but this entity does not use them.
+  **Live-tested** with the official images `2026.11.0`, `2026.10.0` and
+  `2024.11.0` (the `hacs.json` floor) on a scratchpad copy of
+  `config/.storage`, the integration mounted read-only, `recorder:` added
+  to read the recorded state back: a control run of `main` on 2026.11.0
+  logged the three warnings, the fix logged none, and the climate state
+  and attributes were identical on all three versions. Re-tested after
+  rebasing onto `1.0.4` (2026.11.0 and 2024.11.0): neither the climate
+  deprecation warnings nor the `via_device` warning, the Regler device
+  still linked to the gateway, climate state unchanged.
+- **`1.0.4`** (2026-11-09, branch
+  `bugfix/via-device-id`, merged via PR #20). **Never released on its
+  own** (user decision): there is no `v1.0.4` GitHub release; the `v1.0.5`
+  release ships these changes together with `1.0.5`'s own. Bugfix: HA logged, once each
   from `climate.py`, `sensor.py` and `number.py`, that
   `device_registry.async_get_or_create` is called with the deprecated
   `via_device` parameter ("use `via_device_id` instead", stops working in
@@ -2516,7 +2548,7 @@ must not proceed carelessly.
   - **Found along the way, not fixed here:** HA 2026.11 also warns that
     `SmileConnectClimate` uses the deprecated `_attr_temperature_unit`,
     `current_temperature` and `target_temperature` (stop working in
-    2027.11; use the `native_*` variants). Separate follow-up.
+    2027.11; use the `native_*` variants). Fixed in `1.0.5`.
 - **`1.0.3`** (2026-11-06, branch
   `feature/marketplace-support`, merged via PR). Marketplace polish only:
   no integration code, behaviour, entity or Action changed. Home
