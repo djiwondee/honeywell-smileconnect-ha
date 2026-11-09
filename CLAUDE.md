@@ -2468,7 +2468,32 @@ must not proceed carelessly.
     session's focus is the `desiredTempDay`/`desiredTempDay2`/
     `desiredTempNight` write investigation (see the "TOP PRIORITY" entry
     under "Next planned work" above), NOT phase 2's native helper UI.
-- **Current version: `1.0.3`** (2026-11-06, branch
+- **Current version: `1.0.5`** (2026-11-09, branch
+  `bugfix/climate-native-temperature`, merged via PR). Single-purpose
+  bugfix, no behaviour change. HA 2026.11 renamed the climate entity's
+  temperature API (`temperature_unit`/`current_temperature`/
+  `target_temperature` → `native_*`; the old names stop working in
+  2027.11) and logged one deprecation warning per old name for
+  `SmileConnectClimate`. Checked against the core tags: the `native_*`
+  names are absent in `2026.10.0` and present in `2026.11.0` (the climate
+  base class moved to `climate/entity.py` there). **No version switch
+  needed**, unlike `device._SUPPORTS_VIA_DEVICE_ID` in `1.0.4`: HA's
+  `helpers.deprecation.migrate_deprecated_entity_members()` skips a class
+  that provides the native name, even when it also provides the old one.
+  So `climate.py` now provides `_attr_native_temperature_unit`,
+  `native_current_temperature` and `native_target_temperature`, and keeps
+  the old names as plain aliases for HA before 2026.11 (which ignores the
+  `native_*` names). Drop the aliases once `hacs.json`'s floor is
+  >= 2026.11. `min_temp`/`max_temp`/`target_temperature_step` are not
+  deprecated in 2026.11 and are unchanged; `target_temperature_high/low`
+  are deprecated too but this entity does not use them.
+  **Live-tested** with the official images `2026.11.0`, `2026.10.0` and
+  `2024.11.0` (the `hacs.json` floor) on a scratchpad copy of
+  `config/.storage`, the integration mounted read-only, `recorder:` added
+  to read the recorded state back: a control run of `main` on 2026.11.0
+  logged the three warnings, the fix logged none, and the climate state
+  and attributes were identical on all three versions.
+- **`1.0.3`** (2026-11-06, branch
   `feature/marketplace-support`, merged via PR). Marketplace polish only:
   no integration code, behaviour, entity or Action changed. Home
   Assistant 2026.11 ships HACS built in as the **Marketplace**
