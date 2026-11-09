@@ -1,5 +1,10 @@
 """Climate platform for Honeywell Smile Connect."""
 # Change log:
+# - 2026-11-09 (unique IDs): Entity unique IDs are scoped to the gateway
+#   via device.entity_unique_id() ("<gateway unique_id>_<suffix>"), so a
+#   second gateway no longer collides with the first. Existing entities are
+#   migrated by __init__.py's async_migrate_entry(). Raised in the HACS
+#   review.
 # - 2026-11-09 (native temps): HA 2026.11 deprecated the climate entity's
 #   temperature_unit/current_temperature/target_temperature in favour of
 #   native_* (removal in 2027.11) and logged a warning for each. The entity
@@ -770,7 +775,7 @@ class SmileConnectClimate(CoordinatorEntity, ClimateEntity):
 
     @property
     def unique_id(self) -> str:
-        return f"{DOMAIN}_room_{self._room_id}"
+        return device.entity_unique_id(self._gateway_unique_id, f"room_{self._room_id}")
 
     @property
     def device_info(self):

@@ -1280,6 +1280,8 @@ pytest tests/ -v
   against the real fixture's actual encrypted value directly).
   `TestUdidPassthrough` (`0.5.0`) guards against `Login()` hardcoding
   `FIXED_UDID` into the `Credentials` it builds again.
+  `TestNoSecretsInDebugLog` (`1.0.6`) asserts that neither the challenge
+  token nor `devicetoken_encrypted` reaches the debug log.
 - `test_api_request.py` — locks in the pipe-string signature construction
   rules (sorting, array rendering, `None`-filtering) and the `reqcount`
   post-increment ordering that caused the original "session is finished"
@@ -1308,7 +1310,8 @@ pytest tests/ -v
   asserted explicitly rather than just implicitly. Since `1.0.4` it tests
   both sides of the `via_device_id`/`via_device` version switch (by
   patching `device._SUPPORTS_VIA_DEVICE_ID`), including that the two keys
-  are never sent together.
+  are never sent together. `TestEntityUniqueIds` (`1.0.6`) covers the
+  gateway-scoped entity unique IDs and the legacy-ID migration mapping.
 - `test_switching_times.py` — the conversion/validation rules and the
   fixed-array-width round trip for several widths, so nothing may
   hardcode 3 or 21. `TestNightReadWrite` (renamed from
@@ -1390,7 +1393,7 @@ yet):** `climate.py`, `sensor.py`, `binary_sensor.py`, `number.py`,
 `ping_coordinator.py`, `config_flow.py` (including `OptionsFlowHandler`
 and the reauth flow), `__init__.py` (card registration partly covered by
 `scripts/test_frontend_registration_local.py`). Current `tests/` total:
-168 tests. These all import Home Assistant directly and would need
+183 tests. These all import Home Assistant directly and would need
 `pytest-homeassistant-custom-component` (already listed in
 `requirements_test.txt` but not yet wired up with fixtures/conftest
 support for it) to test properly. Until that harness exists, changes to
@@ -1665,6 +1668,11 @@ construct a `device_info` dict inline.
   links with `via_device_id` on HA ≥ 2026.9, falling back to the
   deprecated `via_device` identifier tuple on older HA
   (`_SUPPORTS_VIA_DEVICE_ID`). Never both: HA raises on that.
+  Since `1.0.6` also `entity_unique_id()` (every platform builds its
+  entity unique IDs as `"<gateway unique_id>_<suffix>"` through it) and
+  `migrated_unique_id()` (maps the pre-`1.0.6`
+  `"honeywell_smileconnect_<suffix>"` format, used by `__init__.py`'s
+  config entry `2.1` → `2.2` migration).
 - `climate.py` — one `ClimateEntity` per room/regler. **`hvac_mode`
   (AUTO/OFF) and `preset_mode` (Boost/Party/Leave/Holiday/none) are
   deliberately independent of each other** — see `docs/protocol.md` §4c
@@ -2484,7 +2492,42 @@ must not proceed carelessly.
     session's focus is the `desiredTempDay`/`desiredTempDay2`/
     `desiredTempNight` write investigation (see the "TOP PRIORITY" entry
     under "Next planned work" above), NOT phase 2's native helper UI.
-- **Current version: `1.0.5`** (2026-11-09, branch
+- **Current version: `1.0.6`** (2026-11-09, branch
+  `bugfix/hacs-review-findings`, merged via PR). Fixes the three findings
+  from the review of the `hacs/default` submission (hacs/default#13489).
+  No behaviour change for existing single-gateway installs. Contents:
+  - **No secrets in the debug log.** `api/login.py` logged the full
+    challenge and login responses, including the challenge token and
+    `devicetoken_encrypted` (the session signing key, AES-encrypted with
+    SHA-256(password) and a fixed IV, so also material for offline
+    password guessing). Now only `success`/`message` are logged, through an
+    allow-list (`_loggable()`), so a field the gateway adds later stays out
+    by default. `api_request.py`/`ping.py` still log post-login responses;
+    those carry no secrets and were left as they are.
+  - **No unescaped values in the schedule card's markup.** The block, the
+    legend and the type picker's `<option>`s are built with
+    `createElement`/`textContent`/`setAttribute` instead of `innerHTML`
+    (`slot.type` and the temperatures come from the gateway through the
+    sensor's attributes). `hour_height` is coerced to a finite number and
+    clamped (10–200, default 26) in `setConfig()`, since it is written
+    into the `<style>` block. What is still interpolated into `innerHTML`
+    is constant or validated (`step` against `ALLOWED_STEPS`, the
+    translated day names).
+  - **Entity unique IDs scoped to the gateway.** They were
+    `honeywell_smileconnect_<suffix>`, so a second gateway (the config
+    flow allows one entry per gateway) produced the same IDs and HA
+    dropped its entities as duplicates. Now
+    `"<gateway unique_id>_<suffix>"` via `device.entity_unique_id()`, the
+    same anchor the device identifiers already use. `sensor.py`'s lookup
+    of the room's climate entity (for the card) moved with it.
+    Existing entries migrate through `ConfigFlow.MINOR_VERSION = 2` and
+    `async_migrate_entry()` → `er.async_migrate_entries()`: only IDs in the
+    old format are rewritten (idempotent), the suffix is unchanged, so
+    entity IDs, history and customisations stay. Minor rather than major
+    version on purpose: after a downgrade, the older release still loads
+    the entry (its entities would then be re-created with the old IDs).
+  - `manifest.json` + README badge → `1.0.6`.
+- **`1.0.5`** (2026-11-09, branch
   `bugfix/climate-native-temperature`, merged via PR #19). Bugfix, no
   behaviour change. **The `v1.0.5` release also ships `1.0.4`'s
   `via_device` → `via_device_id` fix** (entry below), which was never

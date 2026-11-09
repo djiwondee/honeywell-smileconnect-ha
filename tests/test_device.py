@@ -1,4 +1,7 @@
 # Change log:
+# - 2026-11-09 (b): TestEntityUniqueIds - entity unique IDs are scoped to
+#   the gateway, and migrated_unique_id() maps every pre-1.0.6 format the
+#   platforms produced (and leaves already-migrated IDs alone).
 # - 2026-11-09: regler_device_info() gained a gateway_device_id argument and
 #   links via `via_device_id` on HA >= 2026.9 (deprecated `via_device`
 #   only on older HA). Both branches are tested by patching
@@ -102,3 +105,42 @@ def test_version_switch_matches_running_ha():
     from homeassistant.const import MAJOR_VERSION, MINOR_VERSION
 
     assert device._SUPPORTS_VIA_DEVICE_ID == ((MAJOR_VERSION, MINOR_VERSION) >= (2026, 9))
+
+
+class TestEntityUniqueIds:
+    """Entity unique IDs carry the gateway, and old ones migrate cleanly."""
+
+    def test_scoped_to_gateway(self):
+        assert device.entity_unique_id("abc123", "room_1") == "abc123_room_1"
+
+    def test_two_gateways_do_not_collide(self):
+        assert device.entity_unique_id("gw1", "connectivity") != device.entity_unique_id(
+            "gw2", "connectivity"
+        )
+
+    @pytest.mark.parametrize(
+        "suffix",
+        [
+            "connectivity",
+            "ping_response_time",
+            "outside_temperature",
+            "outside_temperature_min",
+            "outside_temperature_max",
+            "room_1",
+            "room_1_boost_duration",
+            "room_1_schedule",
+            "room_1_desired_temp_h",
+        ],
+    )
+    def test_legacy_id_migrates_to_what_the_platform_now_builds(self, suffix):
+        legacy = f"{DOMAIN}_{suffix}"
+        assert device.migrated_unique_id(legacy, "abc123") == device.entity_unique_id(
+            "abc123", suffix
+        )
+
+    def test_already_migrated_id_is_left_alone(self):
+        assert device.migrated_unique_id("abc123_room_1", "abc123") is None
+
+    def test_migration_is_idempotent(self):
+        once = device.migrated_unique_id(f"{DOMAIN}_room_1", "abc123")
+        assert device.migrated_unique_id(once, "abc123") is None

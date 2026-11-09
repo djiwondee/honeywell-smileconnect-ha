@@ -1,5 +1,10 @@
 """Binary sensor platform for Honeywell Smile Connect (ping-based connectivity)."""
 # Change log:
+# - 2026-11-09 (unique IDs): Entity unique IDs are scoped to the gateway
+#   via device.entity_unique_id() ("<gateway unique_id>_<suffix>"), so a
+#   second gateway no longer collides with the first. Existing entities are
+#   migrated by __init__.py's async_migrate_entry(). Raised in the HACS
+#   review.
 # - 2026-08-27: Initial version. Connectivity diagnostic entity fed by the
 #   independent ping_coordinator.py (see its module docstring for why this
 #   must not share state with the authenticated main coordinator). Raw
@@ -54,7 +59,7 @@ class SmileConnectConnectivitySensor(CoordinatorEntity, BinarySensorEntity):
     def __init__(self, ping_coordinator: SmileConnectPingCoordinator, gateway_unique_id: str) -> None:
         super().__init__(ping_coordinator)
         self._gateway_unique_id = gateway_unique_id
-        self._attr_unique_id = f"{DOMAIN}_connectivity"
+        self._attr_unique_id = device.entity_unique_id(gateway_unique_id, "connectivity")
 
     @property
     def device_info(self):

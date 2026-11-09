@@ -25,6 +25,14 @@
  * freshly-re-read response as truth rather than its own optimistic view.
  *
  * Change log:
+ *  - 2026-11-09: No value from the schedule sensor or the card config
+ *    reaches markup unescaped any more (raised in the HACS review). The
+ *    block, the legend and the type picker's <option>s are built with
+ *    createElement/textContent/setAttribute instead of innerHTML -
+ *    slot.type and the temperatures come from the gateway via the
+ *    sensor's attributes. hour_height is coerced to a finite number and
+ *    clamped in setConfig(), since it is interpolated into the <style>
+ *    block written with innerHTML.
  *  - 2026-09-25: Night ("N") blocks are placeable/draggable like H/L now
  *    that switching_times.py's VALID_TYPES includes "N" - no other change
  *    needed here, since the type picker and read-only logic already read
@@ -74,6 +82,11 @@ const WEEKDAYS = [
 
 const MINUTES_PER_DAY = 1440;
 const DEFAULT_STEP = 15;
+// hour_height is written into the card's <style> block, so it must be a
+// plain number - see setConfig(). 24 x 26px fits a day on a desktop screen.
+const DEFAULT_HOUR_HEIGHT = 26;
+const MIN_HOUR_HEIGHT = 10;
+const MAX_HOUR_HEIGHT = 200;
 const ALLOWED_STEPS = [5, 10, 15, 20, 30, 60];
 const MOVE_THRESHOLD_PX = 3;
 const COMPACT_BLOCK_MINUTES = 45;
@@ -346,16 +359,23 @@ class SmileConnectScheduleCard extends HTMLElement {
     if (!ALLOWED_STEPS.includes(step)) {
       throw new Error(`${CARD_TAG}: step_minutes must be one of ${ALLOWED_STEPS.join(", ")}`);
     }
+    // Coerced to a number here because _build() interpolates it into a
+    // <style> block via innerHTML - a string from the card config must
+    // never get there. Anything non-numeric falls back to the default.
+    const rawHourHeight = Number(config?.hour_height ?? DEFAULT_HOUR_HEIGHT);
+    const hourHeight = Number.isFinite(rawHourHeight)
+      ? clamp(rawHourHeight, MIN_HOUR_HEIGHT, MAX_HOUR_HEIGHT)
+      : DEFAULT_HOUR_HEIGHT;
     this._config = {
       entity: "",
       title: null,
       night_gaps: false,
+      colors: {},
+      ...config,
       // 24 x 26px = 624px, so a whole day fits on screen without
       // scrolling on a normal desktop viewport - a heating plan is mostly
       // read as a whole day. Raise it for a more detailed grid.
-      hour_height: 26,
-      colors: {},
-      ...config,
+      hour_height: hourHeight,
       step_minutes: step,
     };
     this._built = false;
@@ -828,13 +848,20 @@ class SmileConnectScheduleCard extends HTMLElement {
       [TYPE_L, t.typeL, temps.comfort_lo, ""],
       ["N", t.typeN, temps.night, t.typeNExperimental],
     ];
-    this._el.legend.innerHTML = entries
-      .map(
-        ([type, label, temp, title]) =>
-          `<span title="${title.replace(/"/g, "&quot;")}"><i class="swatch" style="background: var(--sc-color-${type})"></i>` +
-          `${label}${temp != null ? ` ${temp} °C` : ""}</span>`
-      )
-      .join("");
+    // Built with DOM calls, not innerHTML: the temperatures come from the
+    // sensor's attributes (i.e. from the gateway) and are never markup.
+    this._el.legend.replaceChildren(
+      ...entries.map(([type, label, temp, title]) => {
+        const entry = document.createElement("span");
+        if (title) entry.setAttribute("title", title);
+        const swatch = document.createElement("i");
+        swatch.className = "swatch";
+        // type is one of the three constants above, never sensor data.
+        swatch.style.background = `var(--sc-color-${type})`;
+        entry.append(swatch, `${label}${temp != null ? ` ${temp} °C` : ""}`);
+        return entry;
+      })
+    );
   }
 
   _buildBlock(day, index, slot, editable) {
@@ -852,9 +879,15 @@ class SmileConnectScheduleCard extends HTMLElement {
     block.style.top = `${(slot.start / MINUTES_PER_DAY) * 100}%`;
     block.style.height = `${((slot.end - slot.start) / MINUTES_PER_DAY) * 100}%`;
     const typeLabel = { H: t.typeH, L: t.typeL, N: t.typeN }[slot.type] || slot.type;
-    block.innerHTML =
-      `<div class="block-time">${minutesToHHMM(slot.start)}–${minutesToHHMM(slot.end)}</div>` +
-      `<div class="block-type">${typeLabel}</div>`;
+    // textContent, not innerHTML: an unknown slot.type from the gateway
+    // falls through to typeLabel as-is and must never be parsed as markup.
+    const timeEl = document.createElement("div");
+    timeEl.className = "block-time";
+    timeEl.textContent = `${minutesToHHMM(slot.start)}–${minutesToHHMM(slot.end)}`;
+    const typeEl = document.createElement("div");
+    typeEl.className = "block-type";
+    typeEl.textContent = typeLabel;
+    block.replaceChildren(timeEl, typeEl);
     block.tabIndex = 0;
     block.setAttribute("role", "button");
     block.setAttribute(
@@ -1158,12 +1191,17 @@ class SmileConnectScheduleCard extends HTMLElement {
     const options = existing && !this._meta.validTypes.includes(existing.type)
       ? [existing.type]
       : this._meta.validTypes;
-    typeSelect.innerHTML = options
-      .map((type) => {
-        const title = typeTitles[type] ? ` title="${typeTitles[type].replace(/"/g, "&quot;")}"` : "";
-        return `<option value="${type}"${title}>${typeLabels[type] || type}</option>`;
+    // Option elements built directly: `existing.type` can be any string
+    // the gateway reported, so it goes through .value/.textContent only.
+    typeSelect.replaceChildren(
+      ...options.map((type) => {
+        const option = document.createElement("option");
+        option.value = type;
+        option.textContent = typeLabels[type] || type;
+        if (typeTitles[type]) option.setAttribute("title", typeTitles[type]);
+        return option;
       })
-      .join("");
+    );
     typeSelect.value = existing ? existing.type : TYPE_H;
 
     errorEl.hidden = true;

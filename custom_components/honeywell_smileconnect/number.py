@@ -1,5 +1,10 @@
 """Number platform for Honeywell Smile Connect."""
 # Change log:
+# - 2026-11-09 (unique IDs): Entity unique IDs are scoped to the gateway
+#   via device.entity_unique_id() ("<gateway unique_id>_<suffix>"), so a
+#   second gateway no longer collides with the first. Existing entities are
+#   migrated by __init__.py's async_migrate_entry(). Raised in the HACS
+#   review.
 # - 2026-11-09: Pass the gateway's device-registry id
 #   (SmileConnectData.gateway_device_id) into device.regler_device_info(),
 #   which now links regler devices via `via_device_id` - HA deprecated
@@ -128,7 +133,9 @@ class SmileConnectDesiredTemperatureNumber(CoordinatorEntity, NumberEntity):
         self._attr_translation_key = _TRANSLATION_KEYS[target]
         self._attr_native_min_value = DESIRED_TEMP_APP_LIMITS[target]["min"]
         self._attr_native_max_value = DESIRED_TEMP_APP_LIMITS[target]["max"]
-        self._attr_unique_id = f"{DOMAIN}_room_{room_id}_desired_temp_{target.lower()}"
+        self._attr_unique_id = device.entity_unique_id(
+            gateway_unique_id, f"room_{room_id}_desired_temp_{target.lower()}"
+        )
 
     @property
     def device_info(self):

@@ -58,6 +58,13 @@ i.e. hashed = Base64(PBKDF2-HMAC-SHA512(
         dkLen    = 64 bytes))
 """
 # Change log:
+# - 2026-11-09: The challenge and login responses are no longer logged in
+#   full. They carry the challenge token and devicetoken_encrypted (the
+#   session signing key, AES-encrypted with SHA-256(password) and a fixed
+#   IV), so a debug log pasted into an issue handed out the session key
+#   plus material for offline password guessing. Only the non-secret
+#   `success`/`message` fields are logged now (_loggable()). Raised in the
+#   HACS default-repository review.
 # - 2026-09-24: Login() takes an optional `udid` parameter (defaulting to
 #   the existing FIXED_UDID), threaded into the Credentials it builds
 #   instead of the hardcoded constant. Fixes two HA instances (or any two
@@ -93,6 +100,19 @@ DEVICE_NAME = "Computer"
 # against the gateway's own Crypt.aes256decrypt implementation.
 _STATIC_IV_B64 = "D3GC5NQEFH13is04KD2tOg=="
 
+# The only response fields safe to write to a log. Everything else in the
+# challenge/login responses is either secret (devicetoken,
+# devicetoken_encrypted) or user-identifying (userid). An allow-list rather
+# than a deny-list, so a field the gateway adds later stays out by default.
+_LOGGABLE_FIELDS = ("success", "message")
+
+
+def _loggable(payload: object) -> dict:
+    """Return only the non-secret fields of a login-flow response."""
+    if not isinstance(payload, dict):
+        return {}
+    return {key: payload[key] for key in _LOGGABLE_FIELDS if key in payload}
+
 
 class Login:
     """Performs the challenge/response login against a Smile Connect gateway."""
@@ -116,7 +136,7 @@ class Login:
         body = {"udid": credentials.udid}
         response = requests.post(uri, headers=HEADERS, data=body, timeout=10)
         payload = json.loads(response.content)
-        _LOGGER.debug("challenge token response: %s", payload)
+        _LOGGER.debug("challenge token response: %s", _loggable(payload))
         return payload["devicetoken"]
 
     def _login(self, credentials: Credentials) -> Credentials:
@@ -132,7 +152,7 @@ class Login:
         uri = self.base_url + "/api/user/token/response"
         response = requests.post(uri, headers=HEADERS, data=login_body, timeout=10)
         payload = json.loads(response.content)
-        _LOGGER.debug("login response: %s", payload)
+        _LOGGER.debug("login response: %s", _loggable(payload))
 
         if not payload.get("success", False):
             raise ValueError(f"Login failed: {payload.get('message', 'unknown error')}")

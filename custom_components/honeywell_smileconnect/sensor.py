@@ -1,5 +1,10 @@
 """Sensor platform for Honeywell Smile Connect (weather + ping diagnostics)."""
 # Change log:
+# - 2026-11-09 (unique IDs): Entity unique IDs are scoped to the gateway
+#   via device.entity_unique_id() ("<gateway unique_id>_<suffix>"), so a
+#   second gateway no longer collides with the first. Existing entities are
+#   migrated by __init__.py's async_migrate_entry(). Raised in the HACS
+#   review.
 # - 2026-11-09: Pass the gateway's device-registry id
 #   (SmileConnectData.gateway_device_id) into device.regler_device_info(),
 #   which now links regler devices via `via_device_id` - HA deprecated
@@ -271,7 +276,7 @@ class SmileConnectWeatherSensor(CoordinatorEntity, SensorEntity):
         self._room_id = room_id
         self._room_name = room_name
         self._attr_translation_key = translation_key
-        self._attr_unique_id = f"{DOMAIN}_{unique_id_suffix}"
+        self._attr_unique_id = device.entity_unique_id(gateway_unique_id, unique_id_suffix)
 
     @property
     def device_info(self):
@@ -310,7 +315,7 @@ class SmileConnectPingResponseTimeSensor(CoordinatorEntity, SensorEntity):
     def __init__(self, ping_coordinator: SmileConnectPingCoordinator, gateway_unique_id: str) -> None:
         super().__init__(ping_coordinator)
         self._gateway_unique_id = gateway_unique_id
-        self._attr_unique_id = f"{DOMAIN}_ping_response_time"
+        self._attr_unique_id = device.entity_unique_id(gateway_unique_id, "ping_response_time")
 
     @property
     def device_info(self):
@@ -356,7 +361,9 @@ class SmileConnectPresetDurationSensor(CoordinatorEntity, SensorEntity):
         self._scene = scene
         self._attr_translation_key = _TIMED_PRESET_SENSOR_TRANSLATION_KEYS[scene]
         self._attr_native_unit_of_measurement = _TIMED_PRESET_SENSOR_UNITS[scene]
-        self._attr_unique_id = f"{DOMAIN}_room_{room_id}_{scene.value.lower()}_duration"
+        self._attr_unique_id = device.entity_unique_id(
+            gateway_unique_id, f"room_{room_id}_{scene.value.lower()}_duration"
+        )
 
     @property
     def device_info(self):
@@ -421,7 +428,7 @@ class SmileConnectRoomScheduleSensor(CoordinatorEntity, SensorEntity):
         self._gateway_device_id = gateway_device_id
         self._room_id = room_id
         self._room_name = room_name
-        self._attr_unique_id = f"{DOMAIN}_room_{room_id}_schedule"
+        self._attr_unique_id = device.entity_unique_id(gateway_unique_id, f"room_{room_id}_schedule")
 
     @property
     def device_info(self):
@@ -455,7 +462,8 @@ class SmileConnectRoomScheduleSensor(CoordinatorEntity, SensorEntity):
         The card has to target the climate entity for the write Action, and
         the frontend has no way to turn a unique_id into an entity_id on
         its own. The unique_id format is climate.py's
-        f"{DOMAIN}_room_{room_id}" - if that ever changes, this breaks
+        device.entity_unique_id(gateway, f"room_{room_id}") - if that ever
+        changes, this breaks
         quietly, which is why it is asserted in tests/test_device.py's
         spirit and called out here.
 
@@ -463,7 +471,11 @@ class SmileConnectRoomScheduleSensor(CoordinatorEntity, SensorEntity):
         (yet); the card then goes read-only rather than guessing.
         """
         registry = er.async_get(self.hass)
-        return registry.async_get_entity_id("climate", DOMAIN, f"{DOMAIN}_room_{self._room_id}")
+        return registry.async_get_entity_id(
+            "climate",
+            DOMAIN,
+            device.entity_unique_id(self._gateway_unique_id, f"room_{self._room_id}"),
+        )
 
     @property
     def extra_state_attributes(self) -> dict:
