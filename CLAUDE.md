@@ -2527,6 +2527,18 @@ must not proceed carelessly.
     version on purpose: after a downgrade, the older release still loads
     the entry (its entities would then be re-created with the old IDs).
   - `manifest.json` + README badge → `1.0.6`.
+  - **Verified:** `pytest tests/` (183), the three `scripts/test_*_local.py`
+    scripts, `ruff`, `node --check`, and CI (hacs, hassfest) green. The
+    migration was live-tested on HA 2026.11.0 in a throwaway container
+    (copy of the dev config with its own UDID): all 14 entities migrated
+    with unchanged entity IDs, the entry moved to 2.2, and a second start
+    migrated nothing. The dev instance itself migrated the same way. The
+    user then checked it in the browser: login log lines show only
+    `success`/`message`, entities and history intact with no duplicates,
+    the schedule card renders and saves (so `climate_entity_id` still
+    resolves), and `hour_height` accepts a number and ignores a
+    non-numeric value. Not testable without a second gateway: two entries
+    side by side (covered by `TestEntityUniqueIds`).
 - **`1.0.5`** (2026-11-09, branch
   `bugfix/climate-native-temperature`, merged via PR #19). Bugfix, no
   behaviour change. **The `v1.0.5` release also ships `1.0.4`'s
