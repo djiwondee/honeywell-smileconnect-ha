@@ -1,5 +1,9 @@
 """Number platform for Honeywell Smile Connect."""
 # Change log:
+# - 2026-11-09: Pass the gateway's device-registry id
+#   (SmileConnectData.gateway_device_id) into device.regler_device_info(),
+#   which now links regler devices via `via_device_id` - HA deprecated
+#   `via_device` (removal in 2027.8). See device.py's change log.
 # - 2026-09-21 (b): Route the write through
 #   SmileConnectCoordinator.async_api_call() instead of
 #   hass.async_add_executor_job() directly, so it is serialised against the
@@ -82,7 +86,12 @@ async def async_setup_entry(
     data = hass.data[DOMAIN][config_entry.entry_id]
     entities = [
         SmileConnectDesiredTemperatureNumber(
-            data.coordinator, data.unique_id, room["data"]["id"], room["name"], target
+            data.coordinator,
+            data.unique_id,
+            room["data"]["id"],
+            room["name"],
+            target,
+            gateway_device_id=data.gateway_device_id,
         )
         for room in data.coordinator.data["rooms"]
         for target in DESIRED_TEMP_TARGETS
@@ -107,9 +116,12 @@ class SmileConnectDesiredTemperatureNumber(CoordinatorEntity, NumberEntity):
         room_id,
         room_name: str,
         target: str,
+        *,
+        gateway_device_id: str,
     ) -> None:
         super().__init__(coordinator)
         self._gateway_unique_id = gateway_unique_id
+        self._gateway_device_id = gateway_device_id
         self._room_id = room_id
         self._room_name = room_name
         self._target = target
@@ -120,7 +132,9 @@ class SmileConnectDesiredTemperatureNumber(CoordinatorEntity, NumberEntity):
 
     @property
     def device_info(self):
-        return device.regler_device_info(self._gateway_unique_id, self._room_id, self._room_name)
+        return device.regler_device_info(
+            self._gateway_unique_id, self._room_id, self._room_name, self._gateway_device_id
+        )
 
     @property
     def _room_data(self) -> dict | None:

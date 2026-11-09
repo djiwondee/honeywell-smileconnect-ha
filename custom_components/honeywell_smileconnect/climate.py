@@ -9,6 +9,10 @@
 #   present in 2026.11.0). No version switch needed: a class providing both
 #   is not warned about. min_temp/max_temp/target_temperature_step are not
 #   deprecated and are unchanged.
+# - 2026-11-09: Pass the gateway's device-registry id
+#   (SmileConnectData.gateway_device_id) into device.regler_device_info(),
+#   which now links regler devices via `via_device_id` - HA deprecated
+#   `via_device` (removal in 2027.8). See device.py's change log.
 # - 2026-09-28 (b): Two follow-up fixes found by the user live-testing the
 #   lowercase preset_mode rollout below: (1) the thermostat dialog's preset
 #   dropdown order (derived from _PRESET_MODE_KEY_TO_VALUE's dict order via
@@ -616,6 +620,7 @@ async def async_setup_entry(
             room["data"]["id"],
             room["name"],
             data.unique_id,
+            gateway_device_id=data.gateway_device_id,
         )
         for room in coordinator.data["rooms"]
     )
@@ -712,6 +717,8 @@ class SmileConnectClimate(CoordinatorEntity, ClimateEntity):
         room_id,
         room_name: str,
         gateway_unique_id: str,
+        *,
+        gateway_device_id: str,
     ) -> None:
         super().__init__(coordinator)
         # Stored, not derived from the room dict: unique_id and
@@ -728,6 +735,7 @@ class SmileConnectClimate(CoordinatorEntity, ClimateEntity):
         self._scene_manager = scene_manager
         self._active_preset: str | None = None
         self._gateway_unique_id = gateway_unique_id
+        self._gateway_device_id = gateway_device_id
 
     @property
     def _room(self) -> dict | None:
@@ -767,7 +775,10 @@ class SmileConnectClimate(CoordinatorEntity, ClimateEntity):
     @property
     def device_info(self):
         return device.regler_device_info(
-            self._gateway_unique_id, self._room_id, self._room_name
+            self._gateway_unique_id,
+            self._room_id,
+            self._room_name,
+            self._gateway_device_id,
         )
 
     @property
