@@ -733,8 +733,8 @@ through, never deleted:
 - Multi-room (SRC-10) installations: weather sensors stay on the gateway
   device (see the `0.1.1` entry), Night slot writes are unverified on
   real SRC-10 hardware (see `0.6.0`).
-- `suggested_area` triggering HA's area suggestion — see "⚠️ Needs
-  runtime verification".
+- ~~`suggested_area` triggering HA's area suggestion~~ confirmed during
+  the `1.0.4` live test, see "⚠️ Needs runtime verification".
 - Live re-capture of `tests/fixtures/ping_response.json` (the only
   fixture not recorded live).
 - Housekeeping: `const.py`'s `ROOM_STATUS_*` constants are no longer read
@@ -1302,7 +1302,10 @@ pytest tests/ -v
   `regler_device_info()`'s `via_device` actually matches
   `gateway_device_info()`'s own identifier — this is precisely the kind of
   mismatch that caused the original "two unrelated devices" bug, so it's
-  asserted explicitly rather than just implicitly.
+  asserted explicitly rather than just implicitly. Since `1.0.4` it tests
+  both sides of the `via_device_id`/`via_device` version switch (by
+  patching `device._SUPPORTS_VIA_DEVICE_ID`), including that the two keys
+  are never sent together.
 - `test_switching_times.py` — the conversion/validation rules and the
   fixed-array-width round trip for several widths, so nothing may
   hardcode 3 or 21. `TestNightReadWrite` (renamed from
@@ -1384,7 +1387,7 @@ yet):** `climate.py`, `sensor.py`, `binary_sensor.py`, `number.py`,
 `ping_coordinator.py`, `config_flow.py` (including `OptionsFlowHandler`
 and the reauth flow), `__init__.py` (card registration partly covered by
 `scripts/test_frontend_registration_local.py`). Current `tests/` total:
-165 tests. These all import Home Assistant directly and would need
+168 tests. These all import Home Assistant directly and would need
 `pytest-homeassistant-custom-component` (already listed in
 `requirements_test.txt` but not yet wired up with fixtures/conftest
 support for it) to test properly. Until that harness exists, changes to
@@ -1650,7 +1653,11 @@ construct a `device_info` dict inline.
   before changing anything about how it is served.
 - `device.py` — shared `device_info` builders (`gateway_device_info()`,
   `regler_device_info()`). Single source of truth for the hub/sub-device
-  hierarchy described above — see "Known Fixes".
+  hierarchy described above — see "Known Fixes". Since `1.0.4`
+  `regler_device_info()` also takes the gateway's device-registry id and
+  links with `via_device_id` on HA ≥ 2026.9, falling back to the
+  deprecated `via_device` identifier tuple on older HA
+  (`_SUPPORTS_VIA_DEVICE_ID`). Never both: HA raises on that.
 - `climate.py` — one `ClimateEntity` per room/regler. **`hvac_mode`
   (AUTO/OFF) and `preset_mode` (Boost/Party/Leave/Holiday/none) are
   deliberately independent of each other** — see `docs/protocol.md` §4c
@@ -1789,7 +1796,8 @@ construct a `device_info` dict inline.
   reference. Also: `async_migrate_entry()` (config entry `1` → `2`,
   backfills `CONF_UDID`, `0.5.0`); creates the gateway device explicitly
   before forwarding the platforms, so `via_device` never points at a
-  missing device (`0.4.1`); registers the schedule card as a Lovelace
+  missing device (`0.4.1`), and keeps that device's registry id as
+  `SmileConnectData.gateway_device_id` for `via_device_id` (`1.0.4`); registers the schedule card as a Lovelace
   resource and removes it again in `async_remove_entry()` (`0.4.0`).
 - `const.py` — domain, config keys (`CONF_*`), defaults, `SceneName`,
   `TRACKED_SCENE_NAMES`/`TIMED_PRESET_SCENE_NAMES`,
@@ -1843,10 +1851,11 @@ install, since this was implemented without live HA available)
   **Confirmed by live use** (reconciled for `1.0.1`): the options flow has
   been used live repeatedly (schedule interval in `0.4.0`, UDID
   revalidation in `0.5.0`).
-- `suggested_area` in `device.regler_device_info()` has not yet been
-  confirmed to actually trigger HA's area-suggestion UI on first device
-  creation — verify by deleting and re-adding the integration and checking
-  whether the regler device gets an area suggestion matching the room name.
+- ~~`suggested_area` in `device.regler_device_info()` has not yet been
+  confirmed~~ **Confirmed (2026-11-09, `1.0.4` live test):** with the
+  Regler device removed from a copy of the dev config's device registry,
+  both HA 2026.11.0 and 2026.2.3 re-created it with `area_id: "haus"`,
+  matching the room name "Haus".
 
 ## Development Workflow
 
@@ -2468,7 +2477,47 @@ must not proceed carelessly.
     session's focus is the `desiredTempDay`/`desiredTempDay2`/
     `desiredTempNight` write investigation (see the "TOP PRIORITY" entry
     under "Next planned work" above), NOT phase 2's native helper UI.
-- **Current version: `1.0.3`** (2026-11-06, branch
+- **Current version: `1.0.4`** (2026-11-09, branch
+  `bugfix/via-device-id`, merged via PR). Bugfix: HA logged, once each
+  from `climate.py`, `sensor.py` and `number.py`, that
+  `device_registry.async_get_or_create` is called with the deprecated
+  `via_device` parameter ("use `via_device_id` instead", stops working in
+  HA 2027.8.0). Source was `device.regler_device_info()`'s
+  `"via_device": (DOMAIN, gateway_unique_id)`. Contents:
+  - `via_device_id` takes the gateway's **device-registry id**, not an
+    identifier tuple. `__init__.py` already created the gateway device
+    explicitly before forwarding the platforms (`0.4.1`); it now keeps the
+    returned `DeviceEntry.id` as `SmileConnectData.gateway_device_id`, and
+    every platform passes it into `regler_device_info()` (new keyword-only
+    `gateway_device_id` constructor argument on the climate entity, the
+    weather/preset-duration/schedule sensors and the number entity).
+  - **Version switch instead of raising the minimum HA version (user
+    decision):** `via_device_id` only exists since HA **2026.9.0**
+    (checked against the core git tags: absent in `2026.8.0`, present in
+    `2026.9.0`), and older HA rejects unknown device_info keys.
+    `device._SUPPORTS_VIA_DEVICE_ID` (from `homeassistant.const`'s
+    `MAJOR_VERSION`/`MINOR_VERSION`) picks `via_device_id` on ≥ 2026.9 and
+    the old `via_device` below, so `hacs.json`'s `2024.11.0` floor stays.
+    HA raises if both keys are sent, so the builder sets exactly one.
+    **Once the floor is raised to ≥ 2026.9, remove the switch and the
+    `via_device` branch.**
+  - No device migration: the regler/gateway identifiers are unchanged, so
+    existing devices are matched as before; only the link field changes.
+  - `tests/test_device.py` covers both branches. `manifest.json` + README
+    badge → `1.0.4`.
+  - **Live-tested 2026-11-09** against the real gateway in two throwaway
+    containers (official images, port 8124/8125), each on a copy of the
+    dev config with the Regler device removed from the device registry so
+    it had to be created fresh. HA **2026.11.0** (new path): no
+    `via_device` warning, Regler re-created with `via_device_id` = the
+    gateway's device id. HA **2026.2.3** (old path): no warning or error,
+    same link. Both also assigned area `haus` (see the `suggested_area`
+    item, now confirmed).
+  - **Found along the way, not fixed here:** HA 2026.11 also warns that
+    `SmileConnectClimate` uses the deprecated `_attr_temperature_unit`,
+    `current_temperature` and `target_temperature` (stop working in
+    2027.11; use the `native_*` variants). Separate follow-up.
+- **`1.0.3`** (2026-11-06, branch
   `feature/marketplace-support`, merged via PR). Marketplace polish only:
   no integration code, behaviour, entity or Action changed. Home
   Assistant 2026.11 ships HACS built in as the **Marketplace**
