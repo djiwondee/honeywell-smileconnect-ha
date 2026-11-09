@@ -22,3 +22,7 @@ scripts/*.log
 !.vscode/extensions.json
 .DS_Store
 
+
+# Claude Code: per-user local settings and session worktrees
+.claude/settings.local.json
+.claude/worktrees/
