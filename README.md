@@ -1,6 +1,6 @@
 # Honeywell Smile Connect — Home Assistant Integration
 
-[![Marketplace](https://img.shields.io/badge/Marketplace-Custom-orange.svg)](https://www.home-assistant.io/integrations/marketplace/)
+[![Marketplace Default](https://img.shields.io/badge/Marketplace-Default-blue.svg)](https://www.home-assistant.io/integrations/marketplace/)
 [![Version](https://img.shields.io/badge/version-1.0.6-blue.svg)](https://github.com/djiwondee/honeywell-smileconnect-ha/releases)
 [![Status](https://img.shields.io/badge/status-stable-brightgreen.svg)](CLAUDE.md#versioning--branching-strategy)
 [![License](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
@@ -10,8 +10,8 @@
 A Home Assistant custom integration for the **Honeywell Smile Connect**
 heating gateway (model **SCN-10**) — local polling, no cloud dependency,
 reverse-engineered from the gateway's own protocol. Install it from the
-Home Assistant Marketplace (built in since 2026.11) or, on older versions,
-through HACS.
+Home Assistant Marketplace (built in since 2026.11), where it is listed in
+the default catalog, or, on older versions, through HACS.
 
 ## ⚠️ Disclaimer
 
@@ -129,32 +129,29 @@ Requires **Home Assistant 2024.11 or newer**.
 ### Via the Marketplace (Home Assistant 2026.11 and newer)
 
 Since 2026.11, Home Assistant ships the former HACS store built in, under
-**Settings → Marketplace**. Until this repository is listed in the default
-catalog, add it as a custom repository:
+**Settings → Marketplace**. This integration is listed in its default
+catalog:
 
 [![Open this repository in the Marketplace of your Home Assistant instance.](https://my.home-assistant.io/badges/marketplace_repository.svg)](https://my.home-assistant.io/redirect/marketplace_repository/?owner=djiwondee&repository=honeywell-smileconnect-ha&category=integration)
 
-1. Click the button above, or open **Settings → Marketplace** and add
-   `https://github.com/djiwondee/honeywell-smileconnect-ha` as a custom
-   repository with the category "Integration". Adding a custom repository
-   needs a GitHub account connected to the Marketplace.
-2. Install "Honeywell Smile Connect" and confirm the Marketplace's one-time
-   community-code warning.
+1. Click the button above, or open **Settings → Marketplace** and search
+   for "Honeywell Smile Connect".
+2. Install it, and confirm any notice the Marketplace shows before
+   installing community code.
 3. Settings → Devices & Services → Add Integration → "Honeywell Smile Connect".
    A first install loads without a restart. After an update, Home Assistant
    asks for a restart through a repair notice.
 
 **Coming from HACS?** Nothing to do. On the first start of 2026.11 the
-Marketplace takes over the installed integration, the custom repository and
-its update entity, and keeps updating it.
+Marketplace takes over the installed integration and its update entity,
+and keeps updating it.
 
 ### Via HACS (Home Assistant 2024.11 to 2026.10)
 
-1. HACS → Integrations → ⋮ → Custom repositories
-2. Add this repository URL, category "Integration"
-3. Install "Honeywell Smile Connect"
-4. Restart Home Assistant
-5. Settings → Devices & Services → Add Integration → "Honeywell Smile Connect"
+1. HACS → search for "Honeywell Smile Connect"
+2. Install it
+3. Restart Home Assistant
+4. Settings → Devices & Services → Add Integration → "Honeywell Smile Connect"
 
 ### Manual
 

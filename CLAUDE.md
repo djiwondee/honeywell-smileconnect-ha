@@ -2645,6 +2645,12 @@ must not proceed carelessly.
     GitHub account, as the catalog requires. Once
     listed, switch the README badge to "Marketplace Default" and shorten
     the install section to "search for it in the Marketplace".
+    **Done (2026-11-09):** hacs/default#13489 was approved after the
+    `1.0.6` fixes (see that entry) and merged the same day. README badge
+    switched to "Marketplace Default" and the install steps for both the
+    Marketplace and HACS changed from "add a custom repository" to
+    "search for it" (branch `docs/marketplace-default`, README only, no
+    version bump).
   - Practical note for the maintainer's own instance: an installation that
     reports a commit hash as its installed version (seen here as
     `7c84222` while the latest release was `v1.0.2`) is not offered the
